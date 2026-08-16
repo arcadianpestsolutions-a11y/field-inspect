@@ -1,10 +1,12 @@
-const CACHE_NAME = 'field-inspect-v1';
+const CACHE_NAME = 'field-inspect-v2';
 const APP_SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './db.js',
+  './report-schema.js',
+  './report.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-maskable.svg',

@@ -506,3 +506,215 @@ input:focus, textarea:focus {
 @media (max-width: 340px) {
   .gallery { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------- Extra buttons / layout utilities ---------- */
+.btn-outline { background: transparent; color: var(--accent); border: 1px solid var(--accent-dim); }
+.btn-outline:disabled { color: var(--text-dim); border-color: var(--border); opacity: 0.6; }
+.btn-danger { background: var(--danger); color: #3a0a0a; }
+.btn-danger:active { background: #ef5555; }
+.full { width: 100%; margin-top: 10px; }
+.spread { justify-content: space-between; align-items: center; }
+.wrap { flex-wrap: wrap; }
+
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 1rem;
+  width: 100%;
+  font-family: inherit;
+}
+
+/* ---------- Status badges ---------- */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.status-badge.small { padding: 3px 8px; font-size: 0.65rem; }
+.status-new { background: rgba(147,161,194,0.18); color: var(--text-dim); }
+.status-in_progress { background: rgba(248,113,113,0.18); color: #ff9b9b; }
+.status-review { background: rgba(250,204,21,0.18); color: #facc15; }
+.status-completed { background: rgba(34,211,238,0.18); color: var(--accent); }
+
+.job-item-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* ---------- Inspection card ---------- */
+.inspection-card { margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+.inspection-timer { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--danger); }
+
+/* ---------- AI Draft card ---------- */
+.ai-draft-card { margin-bottom: 16px; }
+.ai-draft-hint { margin: 2px 0 10px; font-size: 0.82rem; color: var(--text-dim); }
+
+/* ---------- Report section list ---------- */
+.report-section-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.report-section-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.report-section-item:active { background: var(--bg-elev); }
+
+.section-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.section-info { flex: 1; min-width: 0; }
+.section-name { font-weight: 600; font-size: 0.95rem; }
+
+.section-status {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.status-dot-green { background: rgba(34,197,94,0.2); color: #4ade80; }
+.status-dot-yellow { background: rgba(250,204,21,0.2); color: #facc15; }
+
+/* ---------- Report section editor fields ---------- */
+.report-section-fields { display: flex; flex-direction: column; gap: 18px; }
+
+.field-row { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-size: 0.85rem; font-weight: 600; color: var(--text-dim); }
+.ai-badge {
+  display: inline-block;
+  background: rgba(34,211,238,0.18);
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+.required-dot { color: var(--danger); }
+.field-static {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: var(--text-dim);
+}
+
+.yesno-toggle { display: flex; gap: 8px; }
+.yesno-btn {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 11px;
+  font-weight: 600;
+}
+.yesno-btn.active { background: var(--accent); color: #06282f; border-color: var(--accent); }
+
+.multiselect-list { display: flex; flex-direction: column; gap: 8px; }
+.checkbox-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.92rem;
+}
+.checkbox-chip input { width: auto; }
+
+.photo-field { display: flex; flex-direction: column; gap: 10px; }
+.photo-field-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.photo-field-tile { position: relative; width: 84px; height: 84px; border-radius: 10px; overflow: hidden; }
+.photo-field-tile img { width: 100%; height: 100%; object-fit: cover; }
+.photo-field-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  font-size: 0.75rem;
+}
+
+.signature-field { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.signature-canvas {
+  width: 100%;
+  max-width: 320px;
+  background: #fff;
+  border-radius: 10px;
+  touch-action: none;
+}
+
+.summary-list { display: flex; flex-direction: column; gap: 8px; }
+.summary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.summary-flag { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.flag-red { background: var(--danger); }
+.flag-green { background: #4ade80; }
+.summary-label { flex: 1; font-size: 0.88rem; }
+.summary-value { font-size: 0.82rem; font-weight: 700; color: var(--text-dim); white-space: nowrap; }
+
+.terms-text { display: flex; flex-direction: column; gap: 12px; color: var(--text-dim); font-size: 0.9rem; line-height: 1.5; }
+
+/* ---------- Import Footage modal ---------- */
+.import-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: calc(20px + var(--safe-top)) 20px calc(20px + var(--safe-bottom));
+  background: var(--bg);
+  color: var(--text);
+  overflow-y: auto;
+}
+.import-wrap h2 { margin: 0; }
+.import-hint { color: var(--text-dim); font-size: 0.88rem; margin: 0 0 4px; }
+.import-file-list { display: flex; flex-direction: column; gap: 6px; }
+.import-file-row {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  word-break: break-all;
+}

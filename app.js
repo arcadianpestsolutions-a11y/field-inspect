@@ -8,6 +8,8 @@
   const jobForm = document.getElementById('job-form');
   const jobNameInput = document.getElementById('job-name');
   const jobAddressInput = document.getElementById('job-address');
+  const jobPhoneInput = document.getElementById('job-phone');
+  const jobEmailInput = document.getElementById('job-email');
   const jobNotesInput = document.getElementById('job-notes');
   const newJobBtn = document.getElementById('new-job-btn');
   const jobFormCancel = document.getElementById('job-form-cancel');
@@ -26,6 +28,21 @@
 
   const openCameraBtn = document.getElementById('open-camera-btn');
   const zoneMemoBtn = document.getElementById('zone-memo-btn');
+
+  const jobStatusBadge = document.getElementById('job-status-badge');
+  const inspectionTimerEl = document.getElementById('inspection-timer');
+  const startInspectionBtn = document.getElementById('start-inspection-btn');
+  const finishInspectionBtn = document.getElementById('finish-inspection-btn');
+  const importFootageBtn = document.getElementById('import-footage-btn');
+  const viewReportBtn = document.getElementById('view-report-btn');
+
+  const importModal = document.getElementById('import-modal');
+  const importZoneInput = document.getElementById('import-zone-input');
+  const importFileInput = document.getElementById('import-file-input');
+  const importChooseBtn = document.getElementById('import-choose-btn');
+  const importFileList = document.getElementById('import-file-list');
+  const importCancelBtn = document.getElementById('import-cancel');
+  const importSaveBtn = document.getElementById('import-save');
 
   const cameraModal = document.getElementById('camera-modal');
   const cameraVideo = document.getElementById('camera-video');
@@ -70,6 +87,13 @@
 
   let currentDetailCaptureId = null;
 
+  let inspectionRecorder = null;
+  let inspectionStream = null;
+  let inspectionChunks = [];
+  let inspectionTimerInterval = null;
+  let inspectionStartedAt = 0;
+  let pendingImportFiles = [];
+
   // ---------- Utils ----------
   function trackUrl(url) {
     objectUrls.push(url);
@@ -88,6 +112,7 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(() => toastEl.classList.add('hidden'), 2200);
   }
+  window.appToast = toast;
 
   function fmtDate(ts) {
     const d = new Date(ts);
@@ -122,8 +147,43 @@
     zoneInput.value = '';
     hide(viewJobList);
     show(viewJob);
+    renderInspectionControls(job);
     await renderGallery();
   }
+
+  function renderInspectionControls(job) {
+    jobStatusBadge.textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
+    jobStatusBadge.className = 'status-badge status-' + (job.status || 'new');
+
+    const isRecording = !!inspectionRecorder && inspectionRecorder.state === 'recording' && currentJobId === job.id;
+
+    if (isRecording) {
+      hide(startInspectionBtn);
+      show(finishInspectionBtn);
+      show(inspectionTimerEl);
+    } else if (job.status === 'new') {
+      show(startInspectionBtn);
+      hide(finishInspectionBtn);
+      hide(inspectionTimerEl);
+    } else {
+      hide(startInspectionBtn);
+      hide(finishInspectionBtn);
+      hide(inspectionTimerEl);
+    }
+
+    if (job.status === 'review' || job.status === 'completed') {
+      show(viewReportBtn);
+      viewReportBtn.textContent = job.status === 'completed' ? '✓ View Finalized Report' : '📄 Open Report';
+    } else {
+      hide(viewReportBtn);
+    }
+  }
+
+  window.refreshJobViewStatus = async function (jobId) {
+    if (jobId !== currentJobId) return;
+    const job = await DB.getJob(jobId);
+    if (job) renderInspectionControls(job);
+  };
 
   // ---------- Job list ----------
   async function renderJobList() {
@@ -139,7 +199,10 @@
       const li = document.createElement('li');
       li.className = 'job-item';
       li.innerHTML = `
-        <span class="job-item-name"></span>
+        <span class="job-item-top">
+          <span class="job-item-name"></span>
+          <span class="status-badge status-${job.status || 'new'} small"></span>
+        </span>
         <span class="job-item-meta">
           <span class="job-item-date"></span>
           <span>·</span>
@@ -147,6 +210,7 @@
         </span>
       `;
       li.querySelector('.job-item-name').textContent = job.name;
+      li.querySelector('.status-badge').textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
       li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
       li.addEventListener('click', () => showJobView(job.id));
       jobListEl.appendChild(li);
@@ -156,6 +220,8 @@
   newJobBtn.addEventListener('click', () => {
     jobNameInput.value = '';
     jobAddressInput.value = '';
+    jobPhoneInput.value = '';
+    jobEmailInput.value = '';
     jobNotesInput.value = '';
     show(jobForm);
     jobNameInput.focus();
@@ -170,6 +236,8 @@
       name,
       address: jobAddressInput.value.trim(),
       notes: jobNotesInput.value.trim(),
+      clientPhone: jobPhoneInput.value.trim(),
+      clientEmail: jobEmailInput.value.trim(),
     });
     hide(jobForm);
     await renderJobList();
@@ -412,6 +480,132 @@
   recordCancelBtn.addEventListener('click', cancelRecording);
 
   zoneMemoBtn.addEventListener('click', () => startRecording({ mode: 'new' }));
+
+  // ---------- Start / Finish Inspection (continuous video+audio) ----------
+  async function startInspection() {
+    try {
+      inspectionStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: true,
+      });
+    } catch (err) {
+      toast('Could not access camera/microphone for inspection recording');
+      return;
+    }
+
+    inspectionChunks = [];
+    const mimeType = pickVideoMimeType();
+    inspectionRecorder = mimeType
+      ? new MediaRecorder(inspectionStream, { mimeType })
+      : new MediaRecorder(inspectionStream);
+
+    inspectionRecorder.addEventListener('dataavailable', (e) => {
+      if (e.data && e.data.size > 0) inspectionChunks.push(e.data);
+    });
+
+    inspectionRecorder.start(1000);
+    inspectionStartedAt = Date.now();
+    inspectionTimerInterval = setInterval(() => {
+      inspectionTimerEl.textContent = fmtTimer(Date.now() - inspectionStartedAt);
+    }, 500);
+
+    await DB.updateJob(currentJobId, { status: 'in_progress', inspectionStartedAt: Date.now() });
+    const job = await DB.getJob(currentJobId);
+    renderInspectionControls(job);
+    toast('Inspection started — recording video & audio');
+  }
+
+  function pickVideoMimeType() {
+    const candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+    for (const c of candidates) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
+    }
+    return '';
+  }
+
+  async function finishInspection() {
+    if (!inspectionRecorder) return;
+    const stopped = new Promise((resolve) => {
+      inspectionRecorder.addEventListener('stop', resolve, { once: true });
+    });
+    if (inspectionRecorder.state !== 'inactive') inspectionRecorder.stop();
+    await stopped;
+
+    clearInterval(inspectionTimerInterval);
+    if (inspectionStream) {
+      inspectionStream.getTracks().forEach((t) => t.stop());
+      inspectionStream = null;
+    }
+
+    if (inspectionChunks.length) {
+      const blob = new Blob(inspectionChunks, { type: inspectionRecorder.mimeType || 'video/webm' });
+      await DB.addFootage({
+        jobId: currentJobId,
+        zone: '',
+        source: 'live',
+        kind: 'video',
+        blob,
+        note: 'Live inspection recording',
+      });
+    }
+    inspectionChunks = [];
+    inspectionRecorder = null;
+
+    await DB.updateJob(currentJobId, { status: 'review', inspectionEndedAt: Date.now() });
+    toast('Inspection finished — opening report for review');
+    await ReportUI.openReview(currentJobId);
+  }
+
+  startInspectionBtn.addEventListener('click', startInspection);
+  finishInspectionBtn.addEventListener('click', finishInspection);
+
+  // ---------- Import Footage (mid-inspection, drone / other camera) ----------
+  importFootageBtn.addEventListener('click', () => {
+    importZoneInput.value = zoneInput.value.trim();
+    pendingImportFiles = [];
+    importFileInput.value = '';
+    importFileList.innerHTML = '';
+    importSaveBtn.disabled = true;
+    show(importModal);
+  });
+
+  importChooseBtn.addEventListener('click', () => importFileInput.click());
+
+  importFileInput.addEventListener('change', () => {
+    pendingImportFiles = Array.from(importFileInput.files || []);
+    importFileList.innerHTML = pendingImportFiles
+      .map((f) => `<div class="import-file-row">${escapeHtml(f.name)}</div>`)
+      .join('');
+    importSaveBtn.disabled = pendingImportFiles.length === 0;
+  });
+
+  importCancelBtn.addEventListener('click', () => {
+    hide(importModal);
+    pendingImportFiles = [];
+  });
+
+  importSaveBtn.addEventListener('click', async () => {
+    if (!pendingImportFiles.length) return;
+    const zone = importZoneInput.value.trim();
+    for (const file of pendingImportFiles) {
+      const kind = file.type.startsWith('video') ? 'video' : 'photo';
+      await DB.addFootage({
+        jobId: currentJobId,
+        zone,
+        source: 'imported',
+        kind,
+        blob: file,
+        fileName: file.name,
+      });
+    }
+    hide(importModal);
+    toast(`${pendingImportFiles.length} file${pendingImportFiles.length === 1 ? '' : 's'} imported into this inspection`);
+    pendingImportFiles = [];
+    await renderGallery();
+  });
+
+  // ---------- View Report ----------
+  viewReportBtn.addEventListener('click', () => ReportUI.openReview(currentJobId));
 
   // ---------- Capture detail ----------
   async function openDetail(captureId) {

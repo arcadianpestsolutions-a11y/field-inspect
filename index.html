@@ -23,8 +23,10 @@
 
   <main class="content">
     <div id="job-form" class="card job-form hidden">
-      <input id="job-name" type="text" placeholder="Job / site name" autocomplete="off" />
-      <input id="job-address" type="text" placeholder="Address (optional)" autocomplete="off" />
+      <input id="job-name" type="text" placeholder="Client / site name" autocomplete="off" />
+      <input id="job-address" type="text" placeholder="Property address (optional)" autocomplete="off" />
+      <input id="job-phone" type="tel" placeholder="Client phone (optional)" autocomplete="off" />
+      <input id="job-email" type="email" placeholder="Client email (optional)" autocomplete="off" />
       <textarea id="job-notes" placeholder="Notes (optional)" rows="2"></textarea>
       <div class="row gap">
         <button id="job-form-cancel" class="btn btn-secondary flex1">Cancel</button>
@@ -52,6 +54,19 @@
   </header>
 
   <main class="content">
+    <div class="card inspection-card">
+      <div class="row spread">
+        <span id="job-status-badge" class="status-badge status-new">New</span>
+        <span id="inspection-timer" class="inspection-timer hidden">0:00</span>
+      </div>
+      <div class="row gap wrap">
+        <button id="start-inspection-btn" class="btn btn-primary flex1">▶ Start Inspection</button>
+        <button id="finish-inspection-btn" class="btn btn-danger flex1 hidden">■ Finish Inspection</button>
+        <button id="import-footage-btn" class="btn btn-secondary flex1">⤒ Import Footage</button>
+      </div>
+      <button id="view-report-btn" class="btn btn-outline full hidden">📄 Open Report</button>
+    </div>
+
     <div class="zone-bar">
       <label for="zone-input" class="zone-label">Zone / Area</label>
       <input id="zone-input" list="zone-suggestions" type="text" placeholder="e.g. Attic, North Foundation, Kitchen…" autocomplete="off" />
@@ -71,6 +86,23 @@
       <span class="action-icon">🎙️</span>
       <span>Zone Note</span>
     </button>
+  </div>
+</section>
+
+<!-- ============ IMPORT FOOTAGE MODAL ============ -->
+<section id="import-modal" class="modal hidden">
+  <div class="import-wrap">
+    <h2>Import Footage</h2>
+    <p class="import-hint">Bring in drone or other camera footage for this inspection. It's merged into this job's footage alongside anything recorded live.</p>
+    <label for="import-zone-input" class="zone-label">Zone / Area this footage covers</label>
+    <input id="import-zone-input" list="zone-suggestions" type="text" placeholder="e.g. Roof Void, Whole Property…" autocomplete="off" />
+    <input id="import-file-input" type="file" accept="video/*,image/*" multiple class="hidden" />
+    <button id="import-choose-btn" class="btn btn-primary full">Choose Video / Photo Files</button>
+    <div id="import-file-list" class="import-file-list"></div>
+    <div class="row gap">
+      <button id="import-cancel" class="btn btn-secondary flex1">Cancel</button>
+      <button id="import-save" class="btn btn-primary flex1" disabled>Add to Inspection</button>
+    </div>
   </div>
 </section>
 
@@ -119,9 +151,59 @@
   </div>
 </section>
 
+<!-- ============ REPORT REVIEW VIEW ============ -->
+<section id="view-report" class="view hidden">
+  <header class="topbar">
+    <button id="report-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Termite Inspection Report</h1>
+      <span id="report-subtitle" class="subtitle"></span>
+    </div>
+    <button id="report-export-btn" class="icon-btn" aria-label="Export PDF" title="Export PDF">⤓</button>
+  </header>
+
+  <main class="content">
+    <div class="card ai-draft-card">
+      <div class="row spread">
+        <div>
+          <strong>AI Draft</strong>
+          <p class="ai-draft-hint">Have AI watch the footage and draft this report for you to review.</p>
+        </div>
+      </div>
+      <button id="ai-draft-btn" class="btn btn-outline full" disabled>🤖 AI Draft (requires setup)</button>
+    </div>
+
+    <ul id="report-section-list" class="report-section-list"></ul>
+
+    <button id="finalize-report-btn" class="btn btn-primary full" disabled>Finalize Report</button>
+    <p id="finalize-hint" class="empty-hint">All sections need a green tick before the report can be finalized.</p>
+  </main>
+</section>
+
+<!-- ============ REPORT SECTION EDITOR VIEW ============ -->
+<section id="view-report-section" class="view hidden">
+  <header class="topbar">
+    <button id="section-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1 id="section-title">Section</h1>
+      <span id="section-subtitle" class="subtitle"></span>
+    </div>
+  </header>
+
+  <main class="content">
+    <div id="report-section-fields" class="report-section-fields"></div>
+  </main>
+
+  <div class="action-bar">
+    <button id="section-save-btn" class="btn btn-primary full">Save & Back to Report</button>
+  </div>
+</section>
+
 <div id="toast" class="toast hidden"></div>
 
 <script src="db.js"></script>
+<script src="report-schema.js"></script>
+<script src="report.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
