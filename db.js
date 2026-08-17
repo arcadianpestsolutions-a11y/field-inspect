@@ -89,6 +89,15 @@ const DB = {
       updatedAt: now,
     };
     await reqToPromise(store.add(job));
+    if (window.Sync) window.Sync.pushJob(job);
+    return job;
+  },
+
+  // Low-level put used only by the sync layer to write a record pulled from
+  // the cloud without re-stamping updatedAt or triggering another push.
+  async putJobRaw(job) {
+    const store = await tx('jobs', 'readwrite');
+    await reqToPromise(store.put(job));
     return job;
   },
 
@@ -109,6 +118,7 @@ const DB = {
     if (!existing) return null;
     const updated = { ...existing, ...changes, updatedAt: Date.now() };
     await reqToPromise(store.put(updated));
+    if (window.Sync) window.Sync.pushJob(updated);
     return updated;
   },
 
@@ -126,6 +136,8 @@ const DB = {
 
     const jstore = await tx('jobs', 'readwrite');
     await reqToPromise(jstore.delete(id));
+
+    if (window.Sync) window.Sync.deleteJobRemote(id);
   },
 
   // ---------- Photo / voice captures ----------
@@ -210,11 +222,25 @@ const DB = {
     const store = await tx('reports', 'readwrite');
     const toSave = { ...report, updatedAt: Date.now() };
     await reqToPromise(store.put(toSave));
+    if (window.Sync) window.Sync.pushReport(toSave);
     return toSave;
+  },
+
+  // Low-level put used only by the sync layer.
+  async putReportRaw(report) {
+    const store = await tx('reports', 'readwrite');
+    await reqToPromise(store.put(report));
+    return report;
   },
 
   async deleteReport(jobId) {
     const store = await tx('reports', 'readwrite');
     await reqToPromise(store.delete(jobId));
+  },
+
+  async getAllReports() {
+    const store = await tx('reports', 'readonly');
+    const all = await reqToPromise(store.getAll());
+    return all.sort((a, b) => (b.finalizedAt || b.updatedAt || 0) - (a.finalizedAt || a.updatedAt || 0));
   },
 };

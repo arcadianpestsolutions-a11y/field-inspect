@@ -2,8 +2,19 @@
   'use strict';
 
   // ---------- Element refs ----------
+  const viewLogin = document.getElementById('view-login');
   const viewJobList = document.getElementById('view-joblist');
   const viewJob = document.getElementById('view-job');
+
+  const loginEmailInput = document.getElementById('login-email');
+  const loginPasswordInput = document.getElementById('login-password');
+  const loginBtn = document.getElementById('login-btn');
+  const loginErrorEl = document.getElementById('login-error');
+
+  const syncBar = document.getElementById('sync-bar');
+  const syncStatusText = document.getElementById('sync-status-text');
+  const syncNowBtn = document.getElementById('sync-now-btn');
+  const logoutBtn = document.getElementById('logout-btn');
 
   const jobForm = document.getElementById('job-form');
   const jobNameInput = document.getElementById('job-name');
@@ -12,6 +23,7 @@
   const jobEmailInput = document.getElementById('job-email');
   const jobNotesInput = document.getElementById('job-notes');
   const newJobBtn = document.getElementById('new-job-btn');
+  const openArchiveBtn = document.getElementById('open-archive-btn');
   const jobFormCancel = document.getElementById('job-form-cancel');
   const jobFormSave = document.getElementById('job-form-save');
   const jobListEl = document.getElementById('job-list');
@@ -43,6 +55,15 @@
   const importFileList = document.getElementById('import-file-list');
   const importCancelBtn = document.getElementById('import-cancel');
   const importSaveBtn = document.getElementById('import-save');
+
+  const inspectionModal = document.getElementById('inspection-modal');
+  const inspectionVideo = document.getElementById('inspection-video');
+  const inspectionModalTimer = document.getElementById('inspection-modal-timer');
+  const inspectionZonePill = document.getElementById('inspection-zone-pill');
+  const inspectionZoneInput = document.getElementById('inspection-zone-input');
+  const inspectionStillBtn = document.getElementById('inspection-still-btn');
+  const inspectionFinishBtn = document.getElementById('inspection-finish-btn');
+  const inspectionImportBtn = document.getElementById('inspection-import-btn');
 
   const cameraModal = document.getElementById('camera-modal');
   const cameraVideo = document.getElementById('camera-video');
@@ -93,6 +114,8 @@
   let inspectionTimerInterval = null;
   let inspectionStartedAt = 0;
   let pendingImportFiles = [];
+  let importOpenedFromInspection = false;
+  let loggedInEmail = '';
 
   // ---------- Utils ----------
   function trackUrl(url) {
@@ -132,11 +155,91 @@
   // ---------- View routing ----------
   function showJobListView() {
     hide(viewJob);
+    hide(viewLogin);
+    document.getElementById('view-report').classList.add('hidden');
+    document.getElementById('view-report-section').classList.add('hidden');
+    document.getElementById('view-archive').classList.add('hidden');
     show(viewJobList);
     currentJobId = null;
     stopCameraStream();
     renderJobList();
   }
+  window.showJobListView = showJobListView;
+
+  // ---------- Auth / sync UI ----------
+  function showLoginView() {
+    hide(viewJobList);
+    hide(viewJob);
+    hide(syncBar);
+    document.getElementById('view-report').classList.add('hidden');
+    document.getElementById('view-report-section').classList.add('hidden');
+    document.getElementById('view-archive').classList.add('hidden');
+    show(viewLogin);
+    loginPasswordInput.value = '';
+    hide(loginErrorEl);
+  }
+
+  function showLoggedInUI(session) {
+    loggedInEmail = session && session.user ? session.user.email : '';
+    hide(viewLogin);
+    show(syncBar);
+    updateSyncBarText();
+  }
+
+  function showLoginError(msg) {
+    loginErrorEl.textContent = msg;
+    show(loginErrorEl);
+  }
+
+  function updateSyncBarText() {
+    if (!syncBar) return;
+    const status = window.Sync ? window.Sync.getStatus() : { state: 'idle' };
+    let statusPart;
+    if (!navigator.onLine) statusPart = 'Offline — saved locally';
+    else if (status.state === 'syncing') statusPart = 'Syncing…';
+    else if (status.state === 'synced' && status.lastSyncedAt) {
+      statusPart = 'Synced ' + new Date(status.lastSyncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } else if (status.state === 'error') statusPart = 'Sync error — will retry';
+    else statusPart = 'Not synced yet';
+    syncStatusText.textContent = (loggedInEmail ? 'Signed in as ' + loggedInEmail : '') + (statusPart ? ' · ' + statusPart : '');
+  }
+
+  loginBtn.addEventListener('click', async () => {
+    const email = loginEmailInput.value.trim();
+    const password = loginPasswordInput.value;
+    if (!email || !password) { showLoginError('Enter your email and password'); return; }
+    hide(loginErrorEl);
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Signing in…';
+    try {
+      await Sync.signIn(email, password);
+      // Sync.onAuthChange listener (registered in initAuth) handles showing the app.
+    } catch (err) {
+      showLoginError(err.message || 'Could not sign in — check your email and password.');
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Log In';
+    }
+  });
+
+  loginPasswordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loginBtn.click();
+  });
+
+  logoutBtn.addEventListener('click', async () => {
+    if (window.Sync) await Sync.signOut();
+  });
+
+  syncNowBtn.addEventListener('click', async () => {
+    if (!window.Sync) return;
+    await Sync.pullAll();
+    await renderJobList();
+    if (currentJobId) await renderGallery();
+    toast('Sync complete');
+  });
+
+  window.addEventListener('online', updateSyncBarText);
+  window.addEventListener('offline', updateSyncBarText);
 
   async function showJobView(jobId) {
     currentJobId = jobId;
@@ -216,6 +319,8 @@
       jobListEl.appendChild(li);
     }
   }
+
+  openArchiveBtn.addEventListener('click', () => ReportUI.openArchive());
 
   newJobBtn.addEventListener('click', () => {
     jobNameInput.value = '';
@@ -481,7 +586,7 @@
 
   zoneMemoBtn.addEventListener('click', () => startRecording({ mode: 'new' }));
 
-  // ---------- Start / Finish Inspection (continuous video+audio) ----------
+  // ---------- Start / Finish Inspection (continuous video+audio, live preview) ----------
   async function startInspection() {
     try {
       inspectionStream = await navigator.mediaDevices.getUserMedia({
@@ -492,6 +597,11 @@
       toast('Could not access camera/microphone for inspection recording');
       return;
     }
+
+    inspectionVideo.srcObject = inspectionStream;
+    inspectionZoneInput.value = zoneInput.value.trim();
+    inspectionZonePill.textContent = inspectionZoneInput.value || 'Untagged';
+    show(inspectionModal);
 
     inspectionChunks = [];
     const mimeType = pickVideoMimeType();
@@ -506,7 +616,9 @@
     inspectionRecorder.start(1000);
     inspectionStartedAt = Date.now();
     inspectionTimerInterval = setInterval(() => {
-      inspectionTimerEl.textContent = fmtTimer(Date.now() - inspectionStartedAt);
+      const t = fmtTimer(Date.now() - inspectionStartedAt);
+      inspectionTimerEl.textContent = t;
+      inspectionModalTimer.textContent = t;
     }, 500);
 
     await DB.updateJob(currentJobId, { status: 'in_progress', inspectionStartedAt: Date.now() });
@@ -514,6 +626,35 @@
     renderInspectionControls(job);
     toast('Inspection started — recording video & audio');
   }
+
+  inspectionZoneInput.addEventListener('input', () => {
+    zoneInput.value = inspectionZoneInput.value;
+    inspectionZonePill.textContent = inspectionZoneInput.value.trim() || 'Untagged';
+  });
+
+  inspectionStillBtn.addEventListener('click', async () => {
+    if (!inspectionStream || !inspectionVideo.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = inspectionVideo.videoWidth;
+    canvas.height = inspectionVideo.videoHeight;
+    canvas.getContext('2d').drawImage(inspectionVideo, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(async (blob) => {
+      if (!blob) { toast('Capture failed, try again'); return; }
+      await DB.addCapture({
+        jobId: currentJobId,
+        zone: inspectionZoneInput.value.trim(),
+        type: 'photo',
+        photoBlob: blob,
+      });
+      toast('Photo saved');
+    }, 'image/jpeg', 0.88);
+  });
+
+  inspectionImportBtn.addEventListener('click', () => {
+    importOpenedFromInspection = true;
+    hide(inspectionModal);
+    openImportModal();
+  });
 
   function pickVideoMimeType() {
     const candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
@@ -536,6 +677,8 @@
       inspectionStream.getTracks().forEach((t) => t.stop());
       inspectionStream = null;
     }
+    inspectionVideo.srcObject = null;
+    hide(inspectionModal);
 
     if (inspectionChunks.length) {
       const blob = new Blob(inspectionChunks, { type: inspectionRecorder.mimeType || 'video/webm' });
@@ -558,16 +701,27 @@
 
   startInspectionBtn.addEventListener('click', startInspection);
   finishInspectionBtn.addEventListener('click', finishInspection);
+  inspectionFinishBtn.addEventListener('click', finishInspection);
 
   // ---------- Import Footage (mid-inspection, drone / other camera) ----------
-  importFootageBtn.addEventListener('click', () => {
-    importZoneInput.value = zoneInput.value.trim();
+  function openImportModal() {
+    importZoneInput.value = (importOpenedFromInspection ? inspectionZoneInput.value : zoneInput.value).trim();
     pendingImportFiles = [];
     importFileInput.value = '';
     importFileList.innerHTML = '';
     importSaveBtn.disabled = true;
     show(importModal);
-  });
+  }
+
+  function closeImportModal() {
+    hide(importModal);
+    if (importOpenedFromInspection) {
+      importOpenedFromInspection = false;
+      if (inspectionRecorder && inspectionRecorder.state === 'recording') show(inspectionModal);
+    }
+  }
+
+  importFootageBtn.addEventListener('click', openImportModal);
 
   importChooseBtn.addEventListener('click', () => importFileInput.click());
 
@@ -580,7 +734,7 @@
   });
 
   importCancelBtn.addEventListener('click', () => {
-    hide(importModal);
+    closeImportModal();
     pendingImportFiles = [];
   });
 
@@ -598,7 +752,7 @@
         fileName: file.name,
       });
     }
-    hide(importModal);
+    closeImportModal();
     toast(`${pendingImportFiles.length} file${pendingImportFiles.length === 1 ? '' : 's'} imported into this inspection`);
     pendingImportFiles = [];
     await renderGallery();
@@ -669,7 +823,37 @@
   });
 
   // ---------- Init ----------
-  showJobListView();
+  async function initAuth() {
+    if (!window.Sync) {
+      // Supabase not configured — fall back to fully local-only mode.
+      showJobListView();
+      return;
+    }
+
+    Sync.onStatusChange(updateSyncBarText);
+
+    Sync.onAuthChange((session) => {
+      if (session) {
+        showLoggedInUI(session);
+        showJobListView();
+        Sync.pullAll().then(() => renderJobList());
+      } else {
+        loggedInEmail = '';
+        showLoginView();
+      }
+    });
+
+    const session = await Sync.getSession();
+    if (session) {
+      showLoggedInUI(session);
+      showJobListView();
+      Sync.pullAll().then(() => renderJobList());
+    } else {
+      showLoginView();
+    }
+  }
+
+  initAuth();
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

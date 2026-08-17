@@ -15,11 +15,35 @@
 </head>
 <body>
 
+<!-- ============ LOGIN VIEW ============ -->
+<section id="view-login" class="view">
+  <main class="content login-content">
+    <div class="login-card">
+      <h1 class="login-title">Field Inspect</h1>
+      <p class="login-sub">Sign in with your Arcadian Pest Solutions account to sync jobs and reports across devices.</p>
+      <input id="login-email" type="email" placeholder="Email" autocomplete="username" />
+      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" />
+      <button id="login-btn" class="btn btn-primary full">Log In</button>
+      <p id="login-error" class="login-error hidden"></p>
+      <p class="login-hint">Don't have an account yet? Ask your admin to set one up for you.</p>
+    </div>
+  </main>
+</section>
+
 <!-- ============ JOB LIST VIEW ============ -->
-<section id="view-joblist" class="view">
+<section id="view-joblist" class="view hidden">
   <header class="topbar">
     <h1>Field Inspect</h1>
+    <button id="open-archive-btn" class="icon-btn" aria-label="Saved Reports" title="Saved Reports">🗂</button>
   </header>
+
+  <div id="sync-bar" class="sync-bar hidden">
+    <span id="sync-status-text" class="sync-status-text">Signed in</span>
+    <span class="sync-actions">
+      <button id="sync-now-btn" class="link-btn">Sync now</button>
+      <button id="logout-btn" class="link-btn">Log out</button>
+    </span>
+  </div>
 
   <main class="content">
     <div id="job-form" class="card job-form hidden">
@@ -103,6 +127,24 @@
       <button id="import-cancel" class="btn btn-secondary flex1">Cancel</button>
       <button id="import-save" class="btn btn-primary flex1" disabled>Add to Inspection</button>
     </div>
+  </div>
+</section>
+
+<!-- ============ INSPECTION RECORDING (live preview) ============ -->
+<section id="inspection-modal" class="modal hidden">
+  <div class="camera-wrap">
+    <video id="inspection-video" playsinline autoplay muted></video>
+    <div class="inspection-rec-pill">
+      <span class="rec-dot"></span>
+      <span id="inspection-modal-timer">0:00</span>
+    </div>
+    <div class="camera-zone-pill" id="inspection-zone-pill"></div>
+    <input id="inspection-zone-input" list="zone-suggestions" type="text" placeholder="Zone / area you're in now…" autocomplete="off" />
+  </div>
+  <div class="camera-controls">
+    <button id="inspection-still-btn" class="icon-btn light" aria-label="Take still photo">📷</button>
+    <button id="inspection-finish-btn" class="stop-btn" aria-label="Finish inspection"></button>
+    <button id="inspection-import-btn" class="icon-btn light" aria-label="Import footage">⤒</button>
   </div>
 </section>
 
@@ -199,10 +241,29 @@
   </div>
 </section>
 
+<!-- ============ SAVED REPORTS ARCHIVE VIEW ============ -->
+<section id="view-archive" class="view hidden">
+  <header class="topbar">
+    <button id="archive-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Saved Reports</h1>
+      <span class="subtitle">Every report you've started or submitted, stored on this device</span>
+    </div>
+  </header>
+
+  <main class="content">
+    <ul id="archive-list" class="report-section-list archive-list"></ul>
+    <p id="archive-empty" class="empty-hint hidden">No reports saved yet. Reports appear here as soon as you start filling one in — finished or not.</p>
+  </main>
+</section>
+
 <div id="toast" class="toast hidden"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="supabase-config.js"></script>
 <script src="db.js"></script>
 <script src="report-schema.js"></script>
+<script src="sync.js"></script>
 <script src="report.js"></script>
 <script src="app.js"></script>
 </body>
