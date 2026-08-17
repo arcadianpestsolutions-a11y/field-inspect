@@ -144,6 +144,54 @@ input:focus, textarea:focus {
   border-color: var(--accent);
 }
 
+/* ---------- Address autocomplete ---------- */
+.address-field {
+  position: relative;
+}
+
+.address-suggestions {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.4);
+}
+
+.address-suggestion-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.address-suggestion-item:active,
+.address-suggestion-item.active {
+  background: var(--bg-elev);
+}
+
+.address-suggestion-empty {
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.address-attribution {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+  padding-left: 2px;
+}
+
 .row { display: flex; }
 .gap { gap: 10px; }
 .flex1 { flex: 1; }
@@ -232,6 +280,46 @@ input:focus, textarea:focus {
   padding: 4px 0;
 }
 .link-btn:active { opacity: 0.6; }
+
+/* ---------- Job list toolbar (search + status filters) ---------- */
+.joblist-toolbar {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.job-search-input {
+  -webkit-appearance: none;
+}
+
+.status-filter-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.status-filter-row::-webkit-scrollbar { display: none; }
+
+.status-filter-chip {
+  flex-shrink: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-filter-chip.active {
+  background: var(--accent);
+  color: #06282f;
+  border-color: var(--accent);
+}
 
 /* ---------- Job list ---------- */
 .job-list {
@@ -350,6 +438,141 @@ input:focus, textarea:focus {
   font-size: 0.75rem;
 }
 
+/* ---------- Zone coverage chips ---------- */
+.zone-chip-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin-bottom: 12px;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.zone-chip-row::-webkit-scrollbar { display: none; }
+
+.zone-chip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 8px 7px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.zone-chip-count {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.zone-chip.active {
+  background: var(--accent);
+  color: #06282f;
+  border-color: var(--accent);
+}
+.zone-chip.active .zone-chip-count { background: rgba(6,40,47,0.25); color: #06282f; }
+
+/* ---------- Gallery toolbar ---------- */
+.gallery-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.gallery-count { font-size: 0.8rem; color: var(--text-dim); }
+
+/* ---------- Gallery multi-select ---------- */
+.capture-tile.selectable { cursor: pointer; }
+
+.capture-tile-select-mark {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.85);
+  background: rgba(0,0,0,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  color: transparent;
+  z-index: 2;
+}
+
+.capture-tile.selected {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+.capture-tile.selected .capture-tile-select-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06282f;
+}
+
+.capture-tile-saved-badge {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15,23,42,0.45);
+  color: #4ade80;
+  font-size: 2rem;
+  z-index: 3;
+  animation: savedFade 1.4s ease forwards;
+  pointer-events: none;
+}
+
+@keyframes savedFade {
+  0% { opacity: 0; transform: scale(0.7); }
+  20% { opacity: 1; transform: scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------- Selection action bar ---------- */
+.selection-bar {
+  align-items: center;
+  gap: 8px;
+}
+.selection-count {
+  flex: 1;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ---------- Bulk zone-change modal ---------- */
+.bulk-zone-modal {
+  background: rgba(0,0,0,0.6);
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.bulk-zone-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bulk-zone-card h2 { margin: 0; font-size: 1.1rem; }
+
 /* ---------- Action bar (bottom) ---------- */
 .action-bar {
   display: flex;
@@ -449,6 +672,53 @@ input:focus, textarea:focus {
   line-height: 1.5;
 }
 
+.camera-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.camera-flash.flashing {
+  animation: cameraFlash 0.28s ease-out;
+}
+@keyframes cameraFlash {
+  0% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+.shot-counter {
+  position: absolute;
+  top: calc(14px + var(--safe-top));
+  left: 16px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.recent-shot {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid rgba(255,255,255,0.8);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+}
+.recent-shot.pop { animation: shotFlyIn 0.35s ease-out; }
+.recent-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+@keyframes shotFlyIn {
+  0% { opacity: 0; transform: scale(0.4) translateY(10px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
 /* ---------- Record modal ---------- */
 .record-wrap {
   flex: 1;
@@ -540,6 +810,17 @@ input:focus, textarea:focus {
   gap: 20px;
   padding: 16px;
   overflow-y: auto;
+  position: relative;
+}
+
+.detail-photo-zoom-wrap {
+  width: 100%;
+  max-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
 }
 
 .detail-photo {
@@ -547,6 +828,38 @@ input:focus, textarea:focus {
   max-height: 60vh;
   border-radius: 12px;
   object-fit: contain;
+  touch-action: none;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.detail-nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+  border: none;
+  font-size: 1.6rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.detail-nav-prev { left: 8px; }
+.detail-nav-next { right: 8px; }
+.detail-nav-btn:disabled { opacity: 0; pointer-events: none; }
+
+.detail-counter {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: rgba(255,255,255,0.65);
+  margin-top: 2px;
 }
 
 .detail-audio-wrap { width: 100%; max-width: 420px; }

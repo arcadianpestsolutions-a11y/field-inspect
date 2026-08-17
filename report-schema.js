@@ -33,6 +33,18 @@ const REPORT_SCHEMA = [
       { id: 'inspectionDate', label: 'Inspection Date', type: 'date', required: true },
       { id: 'inspectionTime', label: 'Inspection Time', type: 'time' },
       { id: 'weather', label: 'Weather Conditions at time of inspection', type: 'text', aiFillable: true },
+      {
+        id: 'inspectionClassification',
+        label: 'Inspection Classification (AS 3660.2-2017)',
+        type: 'select',
+        required: true,
+        options: [
+          'Pre-purchase / one-off inspection',
+          'Regular inspection (recommended at least every 12 months)',
+          'Special inspection (elevated risk — up to every 6 months)',
+        ],
+        default: 'Regular inspection (recommended at least every 12 months)',
+      },
     ],
   },
   {
@@ -42,11 +54,11 @@ const REPORT_SCHEMA = [
     subtitle: 'Defining the Purpose, Scope, Areas Covered and Limitations of the Inspection.',
     icon: 'ℹ️',
     color: '#1f7a4d',
+    fixed: true,
     fields: [
       {
-        id: 'inspectionType', label: 'Inspection Type Requested', type: 'select',
-        options: ['Standard Termite Inspection In accordance with AS 3660.2-2017'],
-        default: 'Standard Termite Inspection In accordance with AS 3660.2-2017',
+        id: 'inspectionType', label: 'Inspection Type Requested', type: 'static',
+        default: 'Standard Termite Inspection in accordance with AS 3660.2-2017',
       },
       { id: 'providerName', label: 'Inspection Provider', type: 'static', default: 'Arcadian Pest Solutions' },
       { id: 'providerAddress', label: 'Address', type: 'static', default: 'Buxton' },
@@ -99,12 +111,9 @@ const REPORT_SCHEMA = [
         options: ['Timber Floor', 'Concrete Slab', 'Suspended Concrete', 'Mixed Timber/Concrete'],
       },
       {
-        id: 'roofFrame', label: 'Roof Type', type: 'select', aiFillable: true,
-        options: ['Trusses', 'Timber Frame', 'Steel Frame'],
-      },
-      {
-        id: 'roofCovering', label: 'Roof Covering', type: 'select', aiFillable: true,
-        options: ['Cement Tile', 'Terracotta Tile', 'Metal/Colorbond', 'Other'],
+        id: 'roofConstruction', label: 'Roof Frame / Covering', type: 'select', aiFillable: true,
+        options: ['Timber Truss — Cement Tile', 'Timber Truss — Terracotta Tile', 'Timber Truss — Metal/Colorbond',
+          'Steel Truss — Metal/Colorbond', 'Timber Frame — Tile', 'Other/Mixed'],
       },
       {
         id: 'furnishingStatus', label: 'Property Furnishing Status', type: 'select', aiFillable: true,
@@ -119,8 +128,19 @@ const REPORT_SCHEMA = [
     ],
   },
   {
-    id: 'access',
+    id: 'siteSketch',
     number: 5,
+    title: 'Site Sketch (Mud Map)',
+    subtitle: 'A simple hand-drawn plan of the property — sketch the outline as you walk and drop labels for rooms, moisture readings, damage, or anything worth marking on the map.',
+    icon: '🗺️',
+    color: '#0d9488',
+    fields: [
+      { id: 'sketchImage', label: 'Site Sketch', type: 'sketch' },
+    ],
+  },
+  {
+    id: 'access',
+    number: 6,
     title: 'Areas We Were Unable to Inspect',
     subtitle: 'Details outlining the limitations and hindrances related to the Inspection, and why.',
     icon: '⊘',
@@ -142,13 +162,15 @@ const REPORT_SCHEMA = [
   },
   {
     id: 'findings',
-    number: 6,
+    number: 7,
     title: 'Findings & Observations',
     subtitle: 'Report on the location and details of termite activity detected at the time of the Inspection.',
     icon: '🔍',
     color: '#154a8a',
     fields: [
       { id: 'liveTermitesFound', label: 'Were live termites found at the time of the inspection?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'termiteSpecies', label: 'Termite species (genus/species), if determinable', type: 'text', showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'riskOfAssociatedDamage', label: 'Potential for associated damage arising from this activity', type: 'select', options: ['Low', 'Moderate', 'High'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'nestFound', label: 'Was a termite nest found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'nestLocation', label: 'Nest Location(s)', type: 'textarea', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
       { id: 'nestPhotos', label: 'Nest Photos', type: 'photos', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
@@ -161,14 +183,16 @@ const REPORT_SCHEMA = [
       { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true },
       { id: 'treatmentComments', label: 'Treatment Comments', type: 'textarea', showIf: { field: 'treatmentRecommended', equals: 'Yes' }, aiFillable: true },
       { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'existingManagementSystem', label: 'Existing termite management system present, type & condition', type: 'textarea', aiFillable: true },
       { id: 'durableNoticeFound', label: 'Was a durable Notice found at the time of this inspection?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'otherTimberPestsObserved', label: 'Evidence of other timber pests observed (e.g. drywood termites, borers) — outside the scope of this Standard but noted as a duty to warn', type: 'textarea', aiFillable: true },
       { id: 'reinspectionInterval', label: 'A full inspection and written report should be conducted at this property every', type: 'select', options: ['3 months', '6 months', '12 months'], default: '12 months' },
       { id: 'susceptibility', label: 'In our opinion, the susceptibility of this property to termites is considered to be', type: 'select', required: true, options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true },
     ],
   },
   {
     id: 'conducive',
-    number: 7,
+    number: 8,
     title: 'Conducive Conditions',
     subtitle: 'Conditions identified that are conducive to Termite activity.',
     icon: '⚠️',
@@ -191,7 +215,7 @@ const REPORT_SCHEMA = [
   },
   {
     id: 'terms',
-    number: 8,
+    number: 9,
     title: 'Terms & Conditions',
     subtitle: 'Terms and condition details related to the Inspection undertaken and Report provided.',
     icon: '📖',
@@ -201,7 +225,7 @@ const REPORT_SCHEMA = [
   },
   {
     id: 'inspector',
-    number: 9,
+    number: 10,
     title: 'Inspector Details',
     subtitle: 'Contact details of the Inspection Provider and the Inspector that undertook the Inspection.',
     icon: '🧑‍🔧',
@@ -218,7 +242,7 @@ const REPORT_SCHEMA = [
   },
   {
     id: 'acknowledgement',
-    number: 10,
+    number: 11,
     title: 'Client Acknowledgement',
     subtitle: 'Acknowledgement and acceptance of the Report to be completed by the Client.',
     icon: '✅',

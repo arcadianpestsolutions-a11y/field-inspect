@@ -19,6 +19,7 @@
   const jobForm = document.getElementById('job-form');
   const jobNameInput = document.getElementById('job-name');
   const jobAddressInput = document.getElementById('job-address');
+  const jobAddressSuggestions = document.getElementById('job-address-suggestions');
   const jobPhoneInput = document.getElementById('job-phone');
   const jobEmailInput = document.getElementById('job-email');
   const jobNotesInput = document.getElementById('job-notes');
@@ -28,6 +29,8 @@
   const jobFormSave = document.getElementById('job-form-save');
   const jobListEl = document.getElementById('job-list');
   const jobEmptyEl = document.getElementById('job-empty');
+  const jobSearchInput = document.getElementById('job-search-input');
+  const jobStatusFilters = document.getElementById('job-status-filters');
 
   const backBtn = document.getElementById('back-btn');
   const deleteJobBtn = document.getElementById('delete-job-btn');
@@ -35,11 +38,26 @@
   const jobSubtitleEl = document.getElementById('job-subtitle');
   const zoneInput = document.getElementById('zone-input');
   const zoneSuggestions = document.getElementById('zone-suggestions');
+  const zoneChipRow = document.getElementById('zone-chip-row');
   const galleryEl = document.getElementById('gallery');
   const galleryEmptyEl = document.getElementById('gallery-empty');
+  const galleryCountEl = document.getElementById('gallery-count');
+  const gallerySelectToggle = document.getElementById('gallery-select-toggle');
 
   const openCameraBtn = document.getElementById('open-camera-btn');
   const zoneMemoBtn = document.getElementById('zone-memo-btn');
+  const actionBar = document.getElementById('action-bar');
+  const selectionBar = document.getElementById('selection-bar');
+  const selectionCancelBtn = document.getElementById('selection-cancel-btn');
+  const selectionCountEl = document.getElementById('selection-count');
+  const selectionZoneBtn = document.getElementById('selection-zone-btn');
+  const selectionDeleteBtn = document.getElementById('selection-delete-btn');
+
+  const bulkZoneModal = document.getElementById('bulk-zone-modal');
+  const bulkZoneHint = document.getElementById('bulk-zone-hint');
+  const bulkZoneInput = document.getElementById('bulk-zone-input');
+  const bulkZoneCancel = document.getElementById('bulk-zone-cancel');
+  const bulkZoneSave = document.getElementById('bulk-zone-save');
 
   const jobStatusBadge = document.getElementById('job-status-badge');
   const inspectionTimerEl = document.getElementById('inspection-timer');
@@ -73,6 +91,10 @@
   const cameraShutterBtn = document.getElementById('camera-shutter');
   const cameraSwitchBtn = document.getElementById('camera-switch');
   const cameraErrorEl = document.getElementById('camera-error');
+  const cameraFlashEl = document.getElementById('camera-flash');
+  const shotCounterEl = document.getElementById('shot-counter');
+  const recentShotEl = document.getElementById('recent-shot');
+  const recentShotImg = document.getElementById('recent-shot-img');
 
   const recordModal = document.getElementById('record-modal');
   const recordTargetLabel = document.getElementById('record-target-label');
@@ -88,6 +110,10 @@
   const detailAudio = document.getElementById('detail-audio');
   const detailAddMemoBtn = document.getElementById('detail-add-memo');
   const detailDeleteBtn = document.getElementById('detail-delete');
+  const detailBody = document.getElementById('detail-body');
+  const detailPhotoZoomWrap = document.getElementById('detail-photo-zoom-wrap');
+  const detailPrevBtn = document.getElementById('detail-prev');
+  const detailNextBtn = document.getElementById('detail-next');
 
   const toastEl = document.getElementById('toast');
 
@@ -107,6 +133,17 @@
   let recordingTarget = null; // { mode: 'new' } | { mode: 'attach', captureId }
 
   let currentDetailCaptureId = null;
+  let currentDetailIndex = -1;
+
+  let jobsCache = [];
+  let jobSearchQuery = '';
+  let jobStatusFilter = 'all';
+
+  let activeZoneFilter = null;
+  let selectMode = false;
+  const selectedCaptureIds = new Set();
+
+  let sessionShotCount = 0;
 
   let inspectionRecorder = null;
   let inspectionStream = null;
@@ -151,6 +188,44 @@
 
   function show(el) { el.classList.remove('hidden'); }
   function hide(el) { el.classList.add('hidden'); }
+
+  // ---------- Haptic + shutter-sound feedback ----------
+  function haptic(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* unsupported, ignore */ }
+  }
+
+  let audioCtx = null;
+  function playClick(freq, duration) {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
+    } catch (e) { /* Web Audio unsupported, ignore */ }
+  }
+
+  function shutterFeedback() {
+    haptic(18);
+    playClick(1800, 0.05);
+  }
+
+  function recordStartFeedback() {
+    haptic([12, 40, 12]);
+    playClick(880, 0.07);
+  }
+
+  function recordStopFeedback() {
+    haptic(18);
+    playClick(440, 0.09);
+  }
 
   // ---------- View routing ----------
   function showJobListView() {
@@ -248,6 +323,12 @@
     jobTitleEl.textContent = job.name;
     jobSubtitleEl.textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
     zoneInput.value = '';
+    activeZoneFilter = null;
+    selectMode = false;
+    selectedCaptureIds.clear();
+    gallerySelectToggle.textContent = 'Select';
+    hide(selectionBar);
+    show(actionBar);
     hide(viewJobList);
     show(viewJob);
     renderInspectionControls(job);
@@ -291,14 +372,30 @@
   // ---------- Job list ----------
   async function renderJobList() {
     const jobs = await DB.getJobs();
+    jobsCache = await Promise.all(jobs.map(async (job) => ({ job, count: await DB.getCaptureCount(job.id) })));
+    applyJobListFilters();
+  }
+
+  function applyJobListFilters() {
+    const q = jobSearchQuery.trim().toLowerCase();
+    const filtered = jobsCache.filter(({ job }) => {
+      if (jobStatusFilter !== 'all' && (job.status || 'new') !== jobStatusFilter) return false;
+      if (!q) return true;
+      return job.name.toLowerCase().includes(q) || (job.address || '').toLowerCase().includes(q);
+    });
+
     jobListEl.innerHTML = '';
-    if (jobs.length === 0) {
+    if (jobsCache.length === 0) {
+      jobEmptyEl.textContent = 'No jobs yet. Tap "+ New Job" to start your first inspection.';
+      show(jobEmptyEl);
+    } else if (filtered.length === 0) {
+      jobEmptyEl.textContent = 'No jobs match your search or filter.';
       show(jobEmptyEl);
     } else {
       hide(jobEmptyEl);
     }
-    for (const job of jobs) {
-      const count = await DB.getCaptureCount(job.id);
+
+    for (const { job, count } of filtered) {
       const li = document.createElement('li');
       li.className = 'job-item';
       li.innerHTML = `
@@ -320,6 +417,19 @@
     }
   }
 
+  jobSearchInput.addEventListener('input', () => {
+    jobSearchQuery = jobSearchInput.value;
+    applyJobListFilters();
+  });
+
+  jobStatusFilters.addEventListener('click', (e) => {
+    const btn = e.target.closest('.status-filter-chip');
+    if (!btn) return;
+    jobStatusFilter = btn.dataset.status;
+    jobStatusFilters.querySelectorAll('.status-filter-chip').forEach((el) => el.classList.toggle('active', el === btn));
+    applyJobListFilters();
+  });
+
   openArchiveBtn.addEventListener('click', () => ReportUI.openArchive());
 
   newJobBtn.addEventListener('click', () => {
@@ -328,11 +438,12 @@
     jobPhoneInput.value = '';
     jobEmailInput.value = '';
     jobNotesInput.value = '';
+    hideAddressSuggestions();
     show(jobForm);
     jobNameInput.focus();
   });
 
-  jobFormCancel.addEventListener('click', () => hide(jobForm));
+  jobFormCancel.addEventListener('click', () => { hide(jobForm); hideAddressSuggestions(); });
 
   jobFormSave.addEventListener('click', async () => {
     const name = jobNameInput.value.trim();
@@ -349,6 +460,100 @@
     showJobView(job.id);
   });
 
+  // ---------- Address autocomplete (AU/NZ, via OpenStreetMap Nominatim) ----------
+  // Free, no API key required. Nominatim's usage policy caps public-server
+  // traffic at ~1 request/sec, so this debounces keystrokes and aborts any
+  // in-flight lookup before firing the next one.
+  let addressDebounceTimer = null;
+  let addressAbortController = null;
+  let addressSuggestionItems = [];
+  let addressActiveIndex = -1;
+
+  function hideAddressSuggestions() {
+    hide(jobAddressSuggestions);
+    jobAddressSuggestions.innerHTML = '';
+    addressSuggestionItems = [];
+    addressActiveIndex = -1;
+  }
+
+  function renderAddressSuggestions(items) {
+    addressSuggestionItems = items;
+    addressActiveIndex = -1;
+    jobAddressSuggestions.innerHTML = '';
+
+    if (items.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'address-suggestion-empty';
+      li.textContent = 'No matches found';
+      jobAddressSuggestions.appendChild(li);
+      show(jobAddressSuggestions);
+      return;
+    }
+
+    items.forEach((item, i) => {
+      const li = document.createElement('li');
+      li.className = 'address-suggestion-item';
+      li.textContent = item.display_name;
+      li.addEventListener('mousedown', (e) => {
+        // mousedown (not click) so this fires before the input's blur handler
+        e.preventDefault();
+        jobAddressInput.value = item.display_name;
+        hideAddressSuggestions();
+      });
+      jobAddressSuggestions.appendChild(li);
+    });
+    show(jobAddressSuggestions);
+  }
+
+  async function searchAddress(query) {
+    if (addressAbortController) addressAbortController.abort();
+    addressAbortController = new AbortController();
+    try {
+      const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=0&countrycodes=au,nz&limit=6&q=' + encodeURIComponent(query);
+      const res = await fetch(url, { signal: addressAbortController.signal, headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error('address lookup failed');
+      const results = await res.json();
+      renderAddressSuggestions(results);
+    } catch (err) {
+      if (err.name !== 'AbortError') hideAddressSuggestions();
+    }
+  }
+
+  jobAddressInput.addEventListener('input', () => {
+    const query = jobAddressInput.value.trim();
+    clearTimeout(addressDebounceTimer);
+    if (query.length < 4) { hideAddressSuggestions(); return; }
+    addressDebounceTimer = setTimeout(() => searchAddress(query), 450);
+  });
+
+  jobAddressInput.addEventListener('keydown', (e) => {
+    if (jobAddressSuggestions.classList.contains('hidden') || !addressSuggestionItems.length) return;
+    const items = jobAddressSuggestions.querySelectorAll('.address-suggestion-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      addressActiveIndex = Math.min(addressActiveIndex + 1, items.length - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      addressActiveIndex = Math.max(addressActiveIndex - 1, 0);
+    } else if (e.key === 'Enter' && addressActiveIndex >= 0) {
+      e.preventDefault();
+      jobAddressInput.value = addressSuggestionItems[addressActiveIndex].display_name;
+      hideAddressSuggestions();
+      return;
+    } else if (e.key === 'Escape') {
+      hideAddressSuggestions();
+      return;
+    } else {
+      return;
+    }
+    items.forEach((el, i) => el.classList.toggle('active', i === addressActiveIndex));
+  });
+
+  jobAddressInput.addEventListener('blur', () => {
+    // slight delay so a suggestion's mousedown can still register first
+    setTimeout(hideAddressSuggestions, 150);
+  });
+
   backBtn.addEventListener('click', showJobListView);
 
   deleteJobBtn.addEventListener('click', async () => {
@@ -363,17 +568,90 @@
   async function renderGallery() {
     currentCaptures = await DB.getCaptures(currentJobId);
     revokeAllUrls();
+    renderZoneChips();
+    renderGalleryTiles();
+    populateZoneSuggestions();
+  }
+
+  function computeZoneCounts() {
+    const counts = new Map();
+    for (const c of currentCaptures) {
+      const z = c.zone || 'Untagged';
+      counts.set(z, (counts.get(z) || 0) + 1);
+    }
+    return counts;
+  }
+
+  function renderZoneChips() {
+    const counts = computeZoneCounts();
+    const zones = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b));
+    zoneChipRow.innerHTML = '';
+
+    if (zones.length < 2) { hide(zoneChipRow); return; }
+
+    const allChip = document.createElement('button');
+    allChip.className = 'zone-chip' + (activeZoneFilter === null ? ' active' : '');
+    allChip.innerHTML = `<span>All</span><span class="zone-chip-count">${currentCaptures.length}</span>`;
+    allChip.addEventListener('click', () => {
+      activeZoneFilter = null;
+      renderZoneChips();
+      renderGalleryTiles();
+    });
+    zoneChipRow.appendChild(allChip);
+
+    for (const zone of zones) {
+      const chip = document.createElement('button');
+      chip.className = 'zone-chip' + (activeZoneFilter === zone ? ' active' : '');
+      chip.innerHTML = `<span>${escapeHtml(zone)}</span><span class="zone-chip-count">${counts.get(zone)}</span>`;
+      chip.addEventListener('click', () => {
+        activeZoneFilter = activeZoneFilter === zone ? null : zone;
+        renderZoneChips();
+        renderGalleryTiles();
+      });
+      zoneChipRow.appendChild(chip);
+    }
+    show(zoneChipRow);
+  }
+
+  function getVisibleCaptures() {
+    return activeZoneFilter === null
+      ? currentCaptures
+      : currentCaptures.filter((c) => (c.zone || 'Untagged') === activeZoneFilter);
+  }
+
+  function renderGalleryTiles() {
     galleryEl.innerHTML = '';
+    const visible = getVisibleCaptures();
 
     if (currentCaptures.length === 0) {
+      galleryEmptyEl.textContent = 'No captures yet for this job. Use the buttons below to take a photo or record a zone note.';
+      show(galleryEmptyEl);
+    } else if (visible.length === 0) {
+      galleryEmptyEl.textContent = 'No captures in this zone yet.';
       show(galleryEmptyEl);
     } else {
       hide(galleryEmptyEl);
     }
 
-    for (const capture of currentCaptures) {
+    galleryCountEl.textContent = currentCaptures.length
+      ? `${visible.length === currentCaptures.length ? currentCaptures.length : visible.length + ' of ' + currentCaptures.length} capture${currentCaptures.length === 1 ? '' : 's'} · saved on this device`
+      : '';
+
+    if (currentCaptures.length > 0) show(gallerySelectToggle);
+    else { hide(gallerySelectToggle); if (selectMode) exitSelectMode(); }
+
+    for (const capture of visible) {
       const tile = document.createElement('div');
-      tile.className = 'capture-tile' + (capture.type === 'memo' ? ' memo-only' : '');
+      tile.className = 'capture-tile'
+        + (capture.type === 'memo' ? ' memo-only' : '')
+        + (selectMode ? ' selectable' : '')
+        + (selectedCaptureIds.has(capture.id) ? ' selected' : '');
+      tile.dataset.id = capture.id;
+
+      const mark = document.createElement('span');
+      mark.className = 'capture-tile-select-mark';
+      mark.textContent = '✓';
+      tile.appendChild(mark);
 
       if (capture.photoBlob) {
         const url = trackUrl(URL.createObjectURL(capture.photoBlob));
@@ -399,12 +677,102 @@
       zoneLabel.textContent = capture.zone || 'Untagged';
       tile.appendChild(zoneLabel);
 
-      tile.addEventListener('click', () => openDetail(capture.id));
+      tile.addEventListener('click', () => {
+        if (selectMode) toggleCaptureSelection(capture.id, tile);
+        else openDetail(capture.id);
+      });
+
+      let pressTimer = null;
+      tile.addEventListener('touchstart', () => {
+        pressTimer = setTimeout(() => {
+          enterSelectMode();
+          toggleCaptureSelection(capture.id, galleryEl.querySelector(`[data-id="${capture.id}"]`));
+          haptic(20);
+        }, 500);
+      }, { passive: true });
+      tile.addEventListener('touchend', () => clearTimeout(pressTimer));
+      tile.addEventListener('touchmove', () => clearTimeout(pressTimer));
+
       galleryEl.appendChild(tile);
     }
-
-    populateZoneSuggestions();
   }
+
+  // ---------- Gallery multi-select + bulk actions ----------
+  function enterSelectMode() {
+    if (selectMode) return;
+    selectMode = true;
+    gallerySelectToggle.textContent = 'Cancel';
+    hide(actionBar);
+    show(selectionBar);
+    renderGalleryTiles();
+  }
+
+  function exitSelectMode() {
+    selectMode = false;
+    selectedCaptureIds.clear();
+    gallerySelectToggle.textContent = 'Select';
+    hide(selectionBar);
+    show(actionBar);
+    updateSelectionCount();
+    renderGalleryTiles();
+  }
+
+  function toggleCaptureSelection(id, tileEl) {
+    if (selectedCaptureIds.has(id)) {
+      selectedCaptureIds.delete(id);
+      if (tileEl) tileEl.classList.remove('selected');
+    } else {
+      selectedCaptureIds.add(id);
+      if (tileEl) tileEl.classList.add('selected');
+    }
+    updateSelectionCount();
+  }
+
+  function updateSelectionCount() {
+    selectionCountEl.textContent = `${selectedCaptureIds.size} selected`;
+    selectionZoneBtn.disabled = selectedCaptureIds.size === 0;
+    selectionDeleteBtn.disabled = selectedCaptureIds.size === 0;
+  }
+
+  gallerySelectToggle.addEventListener('click', () => {
+    if (selectMode) exitSelectMode(); else enterSelectMode();
+  });
+
+  selectionCancelBtn.addEventListener('click', exitSelectMode);
+
+  selectionZoneBtn.addEventListener('click', () => {
+    if (!selectedCaptureIds.size) return;
+    bulkZoneHint.textContent = `Set the zone for ${selectedCaptureIds.size} selected capture${selectedCaptureIds.size === 1 ? '' : 's'}.`;
+    bulkZoneInput.value = '';
+    show(bulkZoneModal);
+    bulkZoneInput.focus();
+  });
+
+  bulkZoneCancel.addEventListener('click', () => hide(bulkZoneModal));
+
+  bulkZoneSave.addEventListener('click', async () => {
+    const zone = bulkZoneInput.value.trim();
+    const count = selectedCaptureIds.size;
+    for (const id of selectedCaptureIds) {
+      await DB.updateCapture(id, { zone });
+    }
+    hide(bulkZoneModal);
+    toast(`Zone updated for ${count} capture${count === 1 ? '' : 's'}`);
+    exitSelectMode();
+    await renderGallery();
+  });
+
+  selectionDeleteBtn.addEventListener('click', async () => {
+    const n = selectedCaptureIds.size;
+    if (!n) return;
+    if (!confirm(`Delete ${n} selected capture${n === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    for (const id of selectedCaptureIds) {
+      await DB.deleteCapture(id);
+    }
+    toast(`${n} capture${n === 1 ? '' : 's'} deleted`);
+    exitSelectMode();
+    await renderGallery();
+  });
 
   function populateZoneSuggestions() {
     const zones = Array.from(new Set(currentCaptures.map((c) => c.zone).filter(Boolean))).sort();
@@ -418,11 +786,34 @@
   }
 
   // ---------- Camera ----------
+  let shutterBusy = false;
+
   async function openCamera() {
     cameraErrorEl.classList.add('hidden');
     cameraZonePill.textContent = zoneInput.value.trim() || 'Untagged';
+    sessionShotCount = 0;
+    hide(shotCounterEl);
+    hide(recentShotEl);
+    cameraCancelBtn.textContent = '✕';
+    cameraCancelBtn.setAttribute('aria-label', 'Cancel');
     show(cameraModal);
     await startCameraStream();
+  }
+
+  function triggerFlash() {
+    cameraFlashEl.classList.remove('flashing');
+    void cameraFlashEl.offsetWidth; // restart the CSS animation
+    cameraFlashEl.classList.add('flashing');
+  }
+
+  function showRecentShot(blob) {
+    const url = URL.createObjectURL(blob);
+    if (recentShotImg.dataset.blobUrl) URL.revokeObjectURL(recentShotImg.dataset.blobUrl);
+    recentShotImg.src = url;
+    recentShotImg.dataset.blobUrl = url;
+    recentShotEl.classList.remove('hidden', 'pop');
+    void recentShotEl.offsetWidth;
+    recentShotEl.classList.add('pop');
   }
 
   async function startCameraStream() {
@@ -447,9 +838,10 @@
     }
   }
 
-  function closeCamera() {
+  async function closeCamera() {
     stopCameraStream();
     hide(cameraModal);
+    if (sessionShotCount > 0) await renderGallery();
   }
 
   cameraCancelBtn.addEventListener('click', closeCamera);
@@ -459,14 +851,22 @@
     startCameraStream();
   });
 
+  // Camera stays open after each shot (rapid-fire) so a whole zone can be
+  // photographed without re-tapping "Photo" between shots — closing is a
+  // separate, deliberate action via the ✕/Done button.
   cameraShutterBtn.addEventListener('click', async () => {
-    if (!cameraStream || !cameraVideo.videoWidth) return;
+    if (!cameraStream || !cameraVideo.videoWidth || shutterBusy) return;
+    shutterBusy = true;
     cameraCanvas.width = cameraVideo.videoWidth;
     cameraCanvas.height = cameraVideo.videoHeight;
     const ctx = cameraCanvas.getContext('2d');
     ctx.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
 
+    triggerFlash();
+    shutterFeedback();
+
     cameraCanvas.toBlob(async (blob) => {
+      shutterBusy = false;
       if (!blob) { toast('Capture failed, try again'); return; }
       await DB.addCapture({
         jobId: currentJobId,
@@ -474,9 +874,12 @@
         type: 'photo',
         photoBlob: blob,
       });
-      closeCamera();
-      toast('Photo saved');
-      await renderGallery();
+      sessionShotCount += 1;
+      shotCounterEl.textContent = `${sessionShotCount} photo${sessionShotCount === 1 ? '' : 's'}`;
+      show(shotCounterEl);
+      showRecentShot(blob);
+      cameraCancelBtn.textContent = '✓';
+      cameraCancelBtn.setAttribute('aria-label', 'Done');
     }, 'image/jpeg', 0.88);
   });
 
@@ -519,6 +922,7 @@
 
     mediaRecorder.start();
     recordingStartedAt = Date.now();
+    recordStartFeedback();
     recordingTimerInterval = setInterval(() => {
       recordTimerEl.textContent = fmtTimer(Date.now() - recordingStartedAt);
     }, 250);
@@ -534,6 +938,7 @@
 
   async function onRecordingStopped() {
     stopRecordingStream();
+    recordStopFeedback();
     hide(recordModal);
 
     if (!recordedChunks.length) {
@@ -767,7 +1172,18 @@
     if (!capture) return;
     currentDetailCaptureId = captureId;
 
-    detailZoneEl.textContent = capture.zone || 'Untagged';
+    const list = getVisibleCaptures();
+    currentDetailIndex = list.findIndex((c) => c.id === captureId);
+
+    const zoneText = capture.zone || 'Untagged';
+    detailZoneEl.textContent = list.length > 1
+      ? `${zoneText} · ${currentDetailIndex + 1} of ${list.length}`
+      : zoneText;
+
+    detailPrevBtn.disabled = currentDetailIndex <= 0;
+    detailNextBtn.disabled = currentDetailIndex < 0 || currentDetailIndex >= list.length - 1;
+
+    resetZoom(false);
 
     if (capture.photoBlob) {
       const url = trackUrl(URL.createObjectURL(capture.photoBlob));
@@ -795,6 +1211,113 @@
 
     show(detailModal);
   }
+
+  function navigateDetail(delta) {
+    const list = getVisibleCaptures();
+    const newIndex = currentDetailIndex + delta;
+    if (newIndex < 0 || newIndex >= list.length) return;
+    haptic(10);
+    openDetail(list[newIndex].id);
+  }
+
+  detailPrevBtn.addEventListener('click', () => navigateDetail(-1));
+  detailNextBtn.addEventListener('click', () => navigateDetail(1));
+
+  // ---------- Pinch-zoom / pan / swipe-to-navigate on the detail photo ----------
+  let zoomScale = 1;
+  let panX = 0;
+  let panY = 0;
+  let touchMode = null; // 'pinch' | 'pan' | 'swipe'
+  let pinchStartDist = null;
+  let pinchStartScale = 1;
+  let panStartX = 0, panStartY = 0, panOriginX = 0, panOriginY = 0;
+  let swipeStartX = 0, swipeStartY = 0;
+  let lastTapTime = 0;
+
+  function distanceBetween(t1, t2) {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function applyZoomTransform(animate) {
+    detailPhoto.style.transition = animate ? 'transform 0.2s ease' : 'none';
+    detailPhoto.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
+  }
+
+  function resetZoom(animate) {
+    zoomScale = 1;
+    panX = 0;
+    panY = 0;
+    applyZoomTransform(animate);
+  }
+
+  detailPhotoZoomWrap.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      touchMode = 'pinch';
+      pinchStartDist = distanceBetween(e.touches[0], e.touches[1]);
+      pinchStartScale = zoomScale;
+      return;
+    }
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const now = Date.now();
+    if (now - lastTapTime < 300) {
+      lastTapTime = 0;
+      if (zoomScale > 1) {
+        resetZoom(true);
+      } else {
+        zoomScale = 2.5;
+        panX = 0;
+        panY = 0;
+        applyZoomTransform(true);
+      }
+      touchMode = null;
+      return;
+    }
+    lastTapTime = now;
+    if (zoomScale > 1.02) {
+      touchMode = 'pan';
+      panStartX = t.clientX;
+      panStartY = t.clientY;
+      panOriginX = panX;
+      panOriginY = panY;
+    } else {
+      touchMode = 'swipe';
+      swipeStartX = t.clientX;
+      swipeStartY = t.clientY;
+    }
+  }, { passive: true });
+
+  detailPhotoZoomWrap.addEventListener('touchmove', (e) => {
+    if (touchMode === 'pinch' && e.touches.length === 2) {
+      e.preventDefault();
+      const dist = distanceBetween(e.touches[0], e.touches[1]);
+      zoomScale = Math.min(4, Math.max(1, pinchStartScale * (dist / pinchStartDist)));
+      applyZoomTransform(false);
+    } else if (touchMode === 'pan' && e.touches.length === 1) {
+      e.preventDefault();
+      const t = e.touches[0];
+      panX = panOriginX + (t.clientX - panStartX);
+      panY = panOriginY + (t.clientY - panStartY);
+      applyZoomTransform(false);
+    }
+  }, { passive: false });
+
+  detailPhotoZoomWrap.addEventListener('touchend', (e) => {
+    if (touchMode === 'pinch') {
+      if (zoomScale <= 1.02) resetZoom(true);
+      pinchStartDist = null;
+    } else if (touchMode === 'swipe') {
+      const t = e.changedTouches[0];
+      const dx = t.clientX - swipeStartX;
+      const dy = t.clientY - swipeStartY;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 0) navigateDetail(-1); else navigateDetail(1);
+      }
+    }
+    touchMode = null;
+  });
 
   async function findCaptureById(id) {
     currentCaptures = await DB.getCaptures(currentJobId);

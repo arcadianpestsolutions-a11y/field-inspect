@@ -46,9 +46,24 @@
   </div>
 
   <main class="content">
+    <div class="joblist-toolbar">
+      <input id="job-search-input" type="search" class="job-search-input" placeholder="Search jobs by name or address…" autocomplete="off" />
+      <div id="job-status-filters" class="status-filter-row">
+        <button class="status-filter-chip active" data-status="all">All</button>
+        <button class="status-filter-chip" data-status="new">New</button>
+        <button class="status-filter-chip" data-status="in_progress">In Progress</button>
+        <button class="status-filter-chip" data-status="review">Review</button>
+        <button class="status-filter-chip" data-status="completed">Completed</button>
+      </div>
+    </div>
+
     <div id="job-form" class="card job-form hidden">
       <input id="job-name" type="text" placeholder="Client / site name" autocomplete="off" />
-      <input id="job-address" type="text" placeholder="Property address (optional)" autocomplete="off" />
+      <div class="address-field">
+        <input id="job-address" type="text" placeholder="Property address (optional)" autocomplete="off" />
+        <ul id="job-address-suggestions" class="address-suggestions hidden"></ul>
+        <span class="address-attribution">Address search © OpenStreetMap contributors</span>
+      </div>
       <input id="job-phone" type="tel" placeholder="Client phone (optional)" autocomplete="off" />
       <input id="job-email" type="email" placeholder="Client email (optional)" autocomplete="off" />
       <textarea id="job-notes" placeholder="Notes (optional)" rows="2"></textarea>
@@ -97,11 +112,18 @@
       <datalist id="zone-suggestions"></datalist>
     </div>
 
+    <div id="zone-chip-row" class="zone-chip-row hidden"></div>
+
+    <div class="gallery-toolbar">
+      <span id="gallery-count" class="gallery-count"></span>
+      <button id="gallery-select-toggle" class="link-btn hidden">Select</button>
+    </div>
+
     <div id="gallery" class="gallery"></div>
     <p id="gallery-empty" class="empty-hint">No captures yet for this job. Use the buttons below to take a photo or record a zone note.</p>
   </main>
 
-  <div class="action-bar">
+  <div id="action-bar" class="action-bar">
     <button id="open-camera-btn" class="action-btn">
       <span class="action-icon">📷</span>
       <span>Photo</span>
@@ -110,6 +132,26 @@
       <span class="action-icon">🎙️</span>
       <span>Zone Note</span>
     </button>
+  </div>
+
+  <div id="selection-bar" class="action-bar selection-bar hidden">
+    <button id="selection-cancel-btn" class="icon-btn" aria-label="Cancel selection">✕</button>
+    <span id="selection-count" class="selection-count">0 selected</span>
+    <button id="selection-zone-btn" class="btn btn-secondary">Change Zone</button>
+    <button id="selection-delete-btn" class="btn btn-danger">Delete</button>
+  </div>
+</section>
+
+<!-- ============ BULK ZONE-CHANGE MODAL ============ -->
+<section id="bulk-zone-modal" class="modal bulk-zone-modal hidden">
+  <div class="bulk-zone-card">
+    <h2>Change Zone</h2>
+    <p id="bulk-zone-hint" class="import-hint"></p>
+    <input id="bulk-zone-input" list="zone-suggestions" type="text" placeholder="e.g. Attic, North Foundation…" autocomplete="off" />
+    <div class="row gap">
+      <button id="bulk-zone-cancel" class="btn btn-secondary flex1">Cancel</button>
+      <button id="bulk-zone-save" class="btn btn-primary flex1">Apply</button>
+    </div>
   </div>
 </section>
 
@@ -153,10 +195,13 @@
   <div class="camera-wrap">
     <video id="camera-video" playsinline autoplay muted></video>
     <canvas id="camera-canvas" class="hidden"></canvas>
+    <div class="camera-flash" id="camera-flash"></div>
     <div class="camera-zone-pill" id="camera-zone-pill"></div>
+    <div id="shot-counter" class="shot-counter hidden">0 photos</div>
+    <div id="recent-shot" class="recent-shot hidden"><img id="recent-shot-img" alt="Last photo taken" /></div>
   </div>
   <div class="camera-controls">
-    <button id="camera-cancel" class="icon-btn light" aria-label="Cancel">✕</button>
+    <button id="camera-cancel" class="icon-btn light" aria-label="Done">✕</button>
     <button id="camera-shutter" aria-label="Take photo"></button>
     <button id="camera-switch" class="icon-btn light" aria-label="Switch camera">🔄</button>
   </div>
@@ -184,8 +229,12 @@
     <span id="detail-zone" class="detail-zone-label"></span>
     <button id="detail-delete" class="icon-btn light" aria-label="Delete capture">🗑</button>
   </header>
-  <div class="detail-body">
-    <img id="detail-photo" class="detail-photo hidden" alt="Capture photo" />
+  <div class="detail-body" id="detail-body">
+    <button id="detail-prev" class="detail-nav-btn detail-nav-prev" aria-label="Previous capture">‹</button>
+    <div class="detail-photo-zoom-wrap" id="detail-photo-zoom-wrap">
+      <img id="detail-photo" class="detail-photo hidden" alt="Capture photo" />
+    </div>
+    <button id="detail-next" class="detail-nav-btn detail-nav-next" aria-label="Next capture">›</button>
     <div id="detail-audio-wrap" class="detail-audio-wrap hidden">
       <audio id="detail-audio" controls></audio>
     </div>

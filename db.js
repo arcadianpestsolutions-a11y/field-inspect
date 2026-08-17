@@ -8,7 +8,9 @@
 //   reports   (jobId [key], sections: {sectionId: {fieldId: value}}, sectionStatus,
 //              aiDraft, finalizedAt, updatedAt)
 
-const DB_NAME = 'field-inspect-db';
+// A page loaded with ?test=1 gets its own IndexedDB so the automated test
+// suite (tests/run-tests.html) never touches real job data.
+const DB_NAME = new URLSearchParams(location.search).get('test') ? 'field-inspect-db-test' : 'field-inspect-db';
 const DB_VERSION = 2;
 
 let dbPromise = null;
@@ -243,4 +245,21 @@ const DB = {
     const all = await reqToPromise(store.getAll());
     return all.sort((a, b) => (b.finalizedAt || b.updatedAt || 0) - (a.finalizedAt || a.updatedAt || 0));
   },
+
+  // Test-only: closes the open connection so the test suite can safely
+  // delete-and-recreate the isolated test database between runs. Never
+  // called from production code paths.
+  async __resetConnection() {
+    if (dbPromise) {
+      const db = await dbPromise;
+      db.close();
+    }
+    dbPromise = null;
+  },
 };
+
+// `const DB` alone stays out of window's property list (a top-level const/let
+// in a classic script doesn't attach to the global object), so code in this
+// document sees it fine via lexical scope, but frame.contentWindow.DB from
+// outside an iframe would come back undefined without this explicit export.
+window.DB = DB;

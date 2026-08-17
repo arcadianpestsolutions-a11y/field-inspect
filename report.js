@@ -22,6 +22,11 @@
   const sectionFieldsEl = document.getElementById('report-section-fields');
   const sectionSaveBtn = document.getElementById('section-save-btn');
 
+  const viewArchive = document.getElementById('view-archive');
+  const archiveBackBtn = document.getElementById('archive-back-btn');
+  const archiveList = document.getElementById('archive-list');
+  const archiveEmpty = document.getElementById('archive-empty');
+
   // ---------- State ----------
   let currentJobId = null;
   let currentReport = null; // { jobId, sections: {id: {fieldId: value}}, finalizedAt, updatedAt }
@@ -78,6 +83,12 @@
     return d.toISOString().slice(0, 10);
   }
 
+  function fmtDate(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
   // ---------- Public entry point ----------
   window.ReportUI = {
     async openReview(jobId) {
@@ -89,6 +100,11 @@
       hideAllAppViews();
       show(viewReport);
     },
+    async openArchive() {
+      await renderArchiveList();
+      hideAllAppViews();
+      show(viewArchive);
+    },
   };
 
   function hideAllAppViews() {
@@ -96,7 +112,43 @@
     document.getElementById('view-job').classList.add('hidden');
     hide(viewReport);
     hide(viewReportSection);
+    hide(viewArchive);
   }
+
+  // ---------- Saved Reports archive ----------
+  async function renderArchiveList() {
+    const reports = await DB.getAllReports();
+    archiveList.innerHTML = '';
+    archiveEmpty.classList.toggle('hidden', reports.length > 0);
+
+    for (const report of reports) {
+      const job = await DB.getJob(report.jobId);
+      const clientDetails = report.sections && report.sections.clientDetails ? report.sections.clientDetails : {};
+      const clientName = (job && job.name) || clientDetails.clientName || 'Unknown client';
+      const address = (job && job.address) || clientDetails.propertyAddress || '';
+      const finalized = !!report.finalizedAt;
+      const dateLabel = fmtDate(finalized ? report.finalizedAt : report.updatedAt);
+
+      const li = document.createElement('li');
+      li.className = 'report-section-item archive-item';
+      li.innerHTML = `
+        <span class="section-icon" style="background:${finalized ? '#1f7a4d' : '#8a7a2a'}">${finalized ? '✓' : '✎'}</span>
+        <span class="section-info">
+          <span class="section-name">${escapeHtml(clientName)}</span>
+          <span class="archive-meta">${escapeHtml(address ? address + ' · ' : '')}${finalized ? 'Submitted' : 'Draft'} ${escapeHtml(dateLabel)}</span>
+        </span>
+        <span class="section-status archive-chevron">›</span>
+      `;
+      li.addEventListener('click', () => ReportUI.openReview(report.jobId));
+      archiveList.appendChild(li);
+    }
+  }
+
+  archiveBackBtn.addEventListener('click', () => {
+    hide(viewArchive);
+    if (window.showJobListView) window.showJobListView();
+    else show(document.getElementById('view-joblist'));
+  });
 
   function renderSectionList() {
     reportSectionList.innerHTML = '';
@@ -160,7 +212,7 @@
 
     if (section.id === 'summary') {
       renderSummary();
-    } else if (section.fixed) {
+    } else if (section.id === 'terms') {
       renderFixedTerms();
     } else {
       for (const field of section.fields) {
@@ -284,6 +336,8 @@
       row.appendChild(renderPhotosField(field));
     } else if (field.type === 'signature') {
       row.appendChild(renderSignatureField(field));
+    } else if (field.type === 'sketch') {
+      row.appendChild(renderSketchField(field));
     }
 
     sectionFieldsEl.appendChild(row);
@@ -407,6 +461,127 @@
     return wrap;
   }
 
+  function renderSketchField(field) {
+    const wrap = document.createElement('div');
+    wrap.className = 'sketch-field';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 340;
+    canvas.height = 420;
+    canvas.className = 'sketch-canvas';
+    wrap.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // faint grid to help freehand proportions
+    ctx.strokeStyle = '#eef1f6';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= canvas.width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+    for (let y = 0; y <= canvas.height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+
+    const existing = pendingSectionValues[field.id];
+    if (existing) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = existing;
+    }
+
+    let mode = 'draw'; // 'draw' | 'label'
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    function saveSnapshot() { pendingSectionValues[field.id] = canvas.toDataURL('image/png'); }
+
+    function pos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const point = e.touches ? e.touches[0] : e;
+      return { x: (point.clientX - rect.left) * (canvas.width / rect.width), y: (point.clientY - rect.top) * (canvas.height / rect.height) };
+    }
+
+    let drawing = false;
+    function start(e) {
+      if (mode === 'label') {
+        const p = pos(e);
+        const text = window.prompt('Label for this spot (e.g. Kitchen, High moisture, Damage):', '');
+        if (text) {
+          ctx.fillStyle = '#c0552a';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.font = '13px sans-serif';
+          ctx.fillText(text, p.x + 8, p.y + 4);
+          saveSnapshot();
+        }
+        e.preventDefault();
+        return;
+      }
+      drawing = true;
+      const p = pos(e);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      e.preventDefault();
+    }
+    function move(e) { if (!drawing || mode !== 'draw') return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
+    function end() { if (!drawing) return; drawing = false; saveSnapshot(); }
+
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', start, { passive: false });
+    canvas.addEventListener('touchmove', move, { passive: false });
+    canvas.addEventListener('touchend', end);
+
+    const controls = document.createElement('div');
+    controls.className = 'row gap sketch-controls';
+
+    const drawBtn = document.createElement('button');
+    drawBtn.type = 'button';
+    drawBtn.className = 'btn btn-secondary flex1 active';
+    drawBtn.textContent = '✏️ Draw';
+
+    const labelBtn = document.createElement('button');
+    labelBtn.type = 'button';
+    labelBtn.className = 'btn btn-secondary flex1';
+    labelBtn.textContent = '🏷️ Add Label';
+
+    function setMode(next) {
+      mode = next;
+      drawBtn.classList.toggle('active', mode === 'draw');
+      labelBtn.classList.toggle('active', mode === 'label');
+    }
+    drawBtn.addEventListener('click', () => setMode('draw'));
+    labelBtn.addEventListener('click', () => setMode('label'));
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'btn btn-secondary';
+    clearBtn.textContent = 'Clear';
+    clearBtn.addEventListener('click', () => {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#eef1f6';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= canvas.width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+      for (let y = 0; y <= canvas.height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 2.5;
+      pendingSectionValues[field.id] = '';
+    });
+
+    controls.appendChild(drawBtn);
+    controls.appendChild(labelBtn);
+    controls.appendChild(clearBtn);
+    wrap.appendChild(controls);
+    wrap.appendChild(Object.assign(document.createElement('p'), {
+      className: 'empty-hint',
+      textContent: 'Draw the outline with your finger, then switch to Add Label and tap anywhere to name a room or flag something.',
+    }));
+    return wrap;
+  }
+
   function renderSummary() {
     const s = (id) => currentReport.sections[id] || {};
     const access = s('access');
@@ -446,14 +621,19 @@
     sectionFieldsEl.appendChild(wrap);
   }
 
+  const FIXED_TERMS_HTML = `
+    <p><strong>1. Nature of the Inspection.</strong> This Report does not conclusively determine that the Property is free of Termites and damage caused by Termites. The Inspection undertaken was a Non-Invasive Inspection of the Property for evidence of Termites, Termite activity, and damage caused by Termites, carried out in accordance with AS 3660.2-2017. Use of and reliance upon this Report is solely at the reader's own risk, and only the Client (not any third party) may rely on it.</p>
+    <p><strong>2. Scope exclusions.</strong> Drywood termites are outside the scope of AS 3660.2-2017. Where evidence of drywood termites or other timber pests is observed during the Inspection, this is noted in the Report as a courtesy (duty to warn) — a specific drywood termite inspection by a suitably qualified provider is recommended if such evidence is found.</p>
+    <p><strong>3. Records retention.</strong> Records of this Inspection, including photographs and this Report, are retained by the Inspection Provider for a minimum of three (3) years in accordance with AS 3660.2-2017.</p>
+    <p><strong>4. Australian Consumer Law.</strong> Nothing in this Report or these Terms excludes, restricts or modifies any guarantee, warranty, term or condition implied or imposed by the Australian Consumer Law (or any other applicable law) that cannot lawfully be excluded. Where permitted, the Inspection Provider's liability is limited, at its option, to resupply of the Inspection or Report, or payment of the cost of resupply.</p>
+    <p><strong>5. Limitations.</strong> The Inspection did not include areas that were inaccessible, obstructed, restricted, or deemed unsafe at the time of Inspection (see "Areas We Were Unable to Inspect"). Non-detectable Termite activity and damage may be present at the Property despite this Inspection.</p>
+    <p class="empty-hint">This wording reflects common industry practice and the AS 3660.2-2017 records-retention requirement, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
+  `;
+
   function renderFixedTerms() {
     const wrap = document.createElement('div');
     wrap.className = 'terms-text';
-    wrap.innerHTML = `
-      <p>This Report does not conclusively determine that the Property is free of Termites and damage caused by Termites. Use of and reliance upon this Report is solely at the reader's own risk.</p>
-      <p>The Inspection undertaken was a Non-Invasive Inspection of the Property for evidence of Termites, Termite activity, and damage caused by Termites, carried out in accordance with AS 3660.2-2017.</p>
-      <p>This section is fixed and applies to every report — it does not need to be filled in.</p>
-    `;
+    wrap.innerHTML = FIXED_TERMS_HTML;
     sectionFieldsEl.appendChild(wrap);
   }
 
@@ -495,6 +675,8 @@
         .photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
         .photos img{width:140px;height:100px;object-fit:cover;border-radius:4px;}
         img.sig{max-width:280px;border:1px solid #ddd;}
+        .sketch-page{page-break-before:always;}
+        .sketch-img{max-width:100%;border:1px solid #ddd;border-radius:4px;}
         @media print { .no-print{display:none;} }
       </style></head><body>
       <div class="brand">ARCADIAN PEST SOLUTIONS</div>
@@ -508,8 +690,14 @@
 
       if (section.id === 'summary') {
         html += `<p>See Findings, Access and Conducive Conditions sections for full detail.</p>`;
+      } else if (section.id === 'terms') {
+        html += FIXED_TERMS_HTML;
       } else if (section.fixed) {
-        html += `<p>This Report does not conclusively determine that the Property is free of Termites. Non-Invasive Inspection carried out in accordance with AS 3660.2-2017.</p>`;
+        for (const field of section.fields) {
+          const val = values[field.id] !== undefined ? values[field.id] : field.default;
+          if (!val) continue;
+          html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">${escapeHtml(val)}</div></div>`;
+        }
       } else {
         for (const field of section.fields) {
           if (!isFieldVisible(field, values)) continue;
@@ -526,6 +714,9 @@
           } else if (field.type === 'signature') {
             if (!val) continue;
             html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><img class="sig" src="${val}"></div>`;
+          } else if (field.type === 'sketch') {
+            if (!val) continue;
+            html += `<div class="field sketch-page"><div class="field-label">${escapeHtml(field.label)}</div><img class="sketch-img" src="${val}"></div>`;
           } else {
             html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">${escapeHtml(fmtVal(val))}</div></div>`;
           }

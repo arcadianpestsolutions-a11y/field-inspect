@@ -1,4 +1,4 @@
-const CACHE_NAME = 'field-inspect-v4';
+const CACHE_NAME = 'field-inspect-v5';
 const APP_SHELL = [
   './',
   './index.html',
