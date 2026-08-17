@@ -1,4 +1,7 @@
-const CACHE_NAME = 'field-inspect-v7';
+// Keep this in sync with version.js's APP_VERSION — that's what drives the
+// login screen's build-color/label indicator, so a mismatched bump here
+// defeats the whole point of it.
+const CACHE_NAME = 'field-inspect-v8';
 const APP_SHELL = [
   './',
   './index.html',
@@ -9,6 +12,7 @@ const APP_SHELL = [
   './report.js',
   './sync.js',
   './ai.js',
+  './version.js',
   './supabase-config.js',
   './manifest.json',
   './icons/icon.svg',
