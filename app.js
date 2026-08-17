@@ -44,9 +44,6 @@
   const galleryCountEl = document.getElementById('gallery-count');
   const gallerySelectToggle = document.getElementById('gallery-select-toggle');
 
-  const openCameraBtn = document.getElementById('open-camera-btn');
-  const zoneMemoBtn = document.getElementById('zone-memo-btn');
-  const actionBar = document.getElementById('action-bar');
   const selectionBar = document.getElementById('selection-bar');
   const selectionCancelBtn = document.getElementById('selection-cancel-btn');
   const selectionCountEl = document.getElementById('selection-count');
@@ -329,7 +326,6 @@
     selectedCaptureIds.clear();
     gallerySelectToggle.textContent = 'Select';
     hide(selectionBar);
-    show(actionBar);
     hide(viewJobList);
     show(viewJob);
     renderInspectionControls(job);
@@ -739,7 +735,6 @@
     if (selectMode) return;
     selectMode = true;
     gallerySelectToggle.textContent = 'Cancel';
-    hide(actionBar);
     show(selectionBar);
     renderGalleryTiles();
   }
@@ -749,7 +744,6 @@
     selectedCaptureIds.clear();
     gallerySelectToggle.textContent = 'Select';
     hide(selectionBar);
-    show(actionBar);
     updateSelectionCount();
     renderGalleryTiles();
   }
@@ -920,7 +914,10 @@
     }, 'image/jpeg', 0.88);
   });
 
-  openCameraBtn.addEventListener('click', openCamera);
+  // openCamera() is currently unreachable — its trigger button (Photo, in
+  // the old bottom action bar) was removed since capture now happens via
+  // Start/Finish Inspection or Import Footage. Left in place rather than
+  // purged in case this rapid-fire capture UI gets re-exposed elsewhere.
 
   // ---------- Voice recording ----------
   function pickMimeType() {
@@ -1027,7 +1024,9 @@
 
   recordCancelBtn.addEventListener('click', cancelRecording);
 
-  zoneMemoBtn.addEventListener('click', () => startRecording({ mode: 'new' }));
+  // The standalone "Zone Note" button (bottom action bar) was removed;
+  // startRecording({mode:'attach'}) below is still used by the capture
+  // detail modal's "Attach Voice Note" flow, so that stays intact.
 
   // ---------- Start / Finish Inspection (continuous video+audio, live preview) ----------
   async function startInspection() {
@@ -1121,18 +1120,45 @@
     inspectionFinishBtn.disabled = true;
     const jobIdAtStart = currentJobId;
 
+    // Outer safety net covering the WHOLE function: if anything below hangs
+    // (a DB call, a UI transition, anything) for longer than this, force
+    // the button back to a usable state and say so plainly, rather than
+    // leaving it stuck disabled with no way to tell what happened.
+    let watchdogFired = false;
+    const watchdog = setTimeout(() => {
+      watchdogFired = true;
+      console.warn('[inspection] finishInspection watchdog fired after 12s — something hung.');
+      toast('That took too long and got stuck — try again. If it keeps happening, tell me exactly what you see.');
+      finishInspectionInProgress = false;
+      finishInspectionBtn.disabled = false;
+      inspectionFinishBtn.disabled = false;
+    }, 12000);
+
     try {
       if (!inspectionRecorder) {
         // No live recording in this session — most likely the tab was
         // backgrounded, reloaded, or the recording was started on another
-        // device. Recover instead of doing nothing: whatever footage chunks
-        // exist so far (there may be none) already reflect what could be
-        // saved, so just close out the inspection cleanly.
-        toast('No active recording found for this session — marking the inspection as finished.');
+        // device. Recover instead of doing nothing. Each step below has its
+        // own try/catch so a failure anywhere still leaves a specific,
+        // visible clue about which step broke instead of a blanket failure.
+        toast('No active recording found — finishing this inspection.');
         clearInterval(inspectionTimerInterval);
         hide(inspectionModal);
-        await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
-        await ReportUI.openReview(jobIdAtStart);
+
+        try {
+          await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
+        } catch (err) {
+          console.error('[inspection] updateJob failed:', err);
+          if (!watchdogFired) toast('Could not update the job status: ' + (err.message || err));
+          return;
+        }
+
+        try {
+          await ReportUI.openReview(jobIdAtStart);
+        } catch (err) {
+          console.error('[inspection] openReview failed:', err);
+          if (!watchdogFired) toast('Job marked finished, but the report view failed to open — open it from the job screen instead.');
+        }
         return;
       }
 
@@ -1192,13 +1218,31 @@
       inspectionChunks = [];
       inspectionRecorder = null;
 
-      await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
+      try {
+        await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
+      } catch (err) {
+        console.error('[inspection] updateJob failed:', err);
+        if (!watchdogFired) toast('Recording saved, but could not update the job status: ' + (err.message || err));
+        return;
+      }
+
       toast('Inspection finished — opening report for review');
-      await ReportUI.openReview(jobIdAtStart);
+      try {
+        await ReportUI.openReview(jobIdAtStart);
+      } catch (err) {
+        console.error('[inspection] openReview failed:', err);
+        if (!watchdogFired) toast('Inspection finished, but the report view failed to open — open it from the job screen instead.');
+      }
     } finally {
-      finishInspectionInProgress = false;
-      finishInspectionBtn.disabled = false;
-      inspectionFinishBtn.disabled = false;
+      clearTimeout(watchdog);
+      // If the watchdog already fired and reset everything, don't stomp on
+      // state a second time (e.g. re-disabling nothing, or resetting a flag
+      // a fresh tap may have already set back to true).
+      if (!watchdogFired) {
+        finishInspectionInProgress = false;
+        finishInspectionBtn.disabled = false;
+        inspectionFinishBtn.disabled = false;
+      }
     }
   }
 
