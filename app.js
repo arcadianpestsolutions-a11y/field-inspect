@@ -345,10 +345,22 @@
       hide(startInspectionBtn);
       show(finishInspectionBtn);
       show(inspectionTimerEl);
+      finishInspectionBtn.textContent = '■ Finish Inspection';
     } else if (job.status === 'new') {
       show(startInspectionBtn);
       hide(finishInspectionBtn);
       hide(inspectionTimerEl);
+    } else if (job.status === 'in_progress') {
+      // Status says in_progress but this device/session has no live recorder
+      // for it — e.g. the tab was backgrounded/reloaded and the in-memory
+      // recording state was lost. Without this branch the job was a dead
+      // end: no Start button (not "new"), no Finish button (isRecording is
+      // false), nothing to tap at all. finishInspection() below handles the
+      // no-recorder case by recovering gracefully instead of no-op'ing.
+      hide(startInspectionBtn);
+      show(finishInspectionBtn);
+      hide(inspectionTimerEl);
+      finishInspectionBtn.textContent = '⚠ Recover / Finish Inspection';
     } else {
       hide(startInspectionBtn);
       hide(finishInspectionBtn);
@@ -1086,51 +1098,105 @@
     return '';
   }
 
+  let finishInspectionInProgress = false;
+
   async function finishInspection() {
-    if (!inspectionRecorder) return;
-    const stopped = new Promise((resolve) => {
-      inspectionRecorder.addEventListener('stop', resolve, { once: true });
-    });
-    if (inspectionRecorder.state !== 'inactive') inspectionRecorder.stop();
-    await stopped;
+    // Guard against double-taps and make sure a tap is NEVER silently
+    // swallowed — previously, a null inspectionRecorder (session state lost
+    // to backgrounding/reload) made this function return with zero
+    // feedback, which is exactly what "I tapped Finish and nothing
+    // happened" looks like from the outside.
+    if (finishInspectionInProgress) return;
+    finishInspectionInProgress = true;
+    finishInspectionBtn.disabled = true;
+    inspectionFinishBtn.disabled = true;
+    const jobIdAtStart = currentJobId;
 
-    clearInterval(inspectionTimerInterval);
-    if (inspectionStream) {
-      inspectionStream.getTracks().forEach((t) => t.stop());
-      inspectionStream = null;
-    }
-    inspectionVideo.srcObject = null;
-    hide(inspectionModal);
-
-    if (inspectionChunks.length) {
-      const blob = new Blob(inspectionChunks, { type: inspectionRecorder.mimeType || 'video/webm' });
-      await DB.addFootage({
-        jobId: currentJobId,
-        zone: '',
-        source: 'live',
-        kind: 'video',
-        blob,
-        note: 'Live inspection recording',
-      });
-
-      // Fire-and-forget: analyze in the background so Finish doesn't block
-      // on it. currentJobId is captured now since the user may navigate
-      // elsewhere before this resolves.
-      if (window.AI && window.ReportUI) {
-        const jobIdForAi = currentJobId;
-        window.AI.analyzeInspection(blob)
-          .then((result) => window.ReportUI.applyAiDraft(jobIdForAi, result))
-          .then(() => toast('AI draft ready — review suggested values in the report'))
-          .catch((err) => console.warn('[ai draft] background analysis failed:', err.message || err));
+    try {
+      if (!inspectionRecorder) {
+        // No live recording in this session — most likely the tab was
+        // backgrounded, reloaded, or the recording was started on another
+        // device. Recover instead of doing nothing: whatever footage chunks
+        // exist so far (there may be none) already reflect what could be
+        // saved, so just close out the inspection cleanly.
+        toast('No active recording found for this session — marking the inspection as finished.');
+        clearInterval(inspectionTimerInterval);
+        hide(inspectionModal);
+        await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
+        await ReportUI.openReview(jobIdAtStart);
+        return;
       }
-    }
-    inspectionChunks = [];
-    inspectionRecorder = null;
 
-    await DB.updateJob(currentJobId, { status: 'review', inspectionEndedAt: Date.now() });
-    toast('Inspection finished — opening report for review');
-    await ReportUI.openReview(currentJobId);
+      // Never wait forever on the 'stop' event — MediaRecorder implementations
+      // (iOS Safari in particular) can fail to fire it reliably in some
+      // states. Race against a timeout so Finish always completes with
+      // visible feedback instead of hanging silently.
+      const stopped = new Promise((resolve) => {
+        inspectionRecorder.addEventListener('stop', resolve, { once: true });
+      });
+      if (inspectionRecorder.state !== 'inactive') inspectionRecorder.stop();
+      const stoppedInTime = await Promise.race([
+        stopped.then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), 5000)),
+      ]);
+      if (!stoppedInTime) {
+        console.warn('[inspection] MediaRecorder did not fire "stop" within 5s — proceeding with whatever was captured.');
+      }
+
+      clearInterval(inspectionTimerInterval);
+      if (inspectionStream) {
+        inspectionStream.getTracks().forEach((t) => t.stop());
+        inspectionStream = null;
+      }
+      inspectionVideo.srcObject = null;
+      hide(inspectionModal);
+
+      if (inspectionChunks.length) {
+        const blob = new Blob(inspectionChunks, { type: (inspectionRecorder && inspectionRecorder.mimeType) || 'video/webm' });
+        await DB.addFootage({
+          jobId: jobIdAtStart,
+          zone: '',
+          source: 'live',
+          kind: 'video',
+          blob,
+          note: 'Live inspection recording',
+        });
+
+        // Fire-and-forget: analyze in the background so Finish doesn't block
+        // on it. jobIdAtStart is captured since the user may navigate
+        // elsewhere before this resolves.
+        if (window.AI && window.ReportUI) {
+          window.AI.analyzeInspection(blob)
+            .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
+            .then(() => toast('AI draft ready — review suggested values in the report'))
+            .catch((err) => console.warn('[ai draft] background analysis failed:', err.message || err));
+        }
+      } else {
+        toast('Inspection finished — no video was captured (recording may have been interrupted).');
+      }
+      inspectionChunks = [];
+      inspectionRecorder = null;
+
+      await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
+      toast('Inspection finished — opening report for review');
+      await ReportUI.openReview(jobIdAtStart);
+    } finally {
+      finishInspectionInProgress = false;
+      finishInspectionBtn.disabled = false;
+      inspectionFinishBtn.disabled = false;
+    }
   }
+
+  // Best-effort safety net: if the tab is about to be backgrounded while
+  // actively recording, force-flush whatever MediaRecorder has buffered so
+  // far into inspectionChunks. Doesn't protect against the tab being fully
+  // killed (no client-side JS can), but covers the far more common
+  // "switched apps for a minute and came back" case.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && inspectionRecorder && inspectionRecorder.state === 'recording') {
+      try { inspectionRecorder.requestData(); } catch (err) { /* not fatal — best effort only */ }
+    }
+  });
 
   startInspectionBtn.addEventListener('click', startInspection);
   finishInspectionBtn.addEventListener('click', finishInspection);
