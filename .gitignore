@@ -1,0 +1,6 @@
+# Local-only dev tooling (e.g. the Supabase CLI binary) — never deploy this,
+# it's large and platform-specific.
+.tools/
+
+# Supabase CLI local state (created by `supabase link`/`supabase functions deploy`)
+supabase/.temp/

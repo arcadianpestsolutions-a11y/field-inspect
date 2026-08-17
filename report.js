@@ -29,9 +29,12 @@
 
   // ---------- State ----------
   let currentJobId = null;
-  let currentReport = null; // { jobId, sections: {id: {fieldId: value}}, finalizedAt, updatedAt }
+  let currentJob = null; // full job record, needed for address coords (aerial mud-map backdrop)
+  let currentReport = null; // { jobId, sections: {id: {fieldId: value}}, finalizedAt, updatedAt, aiDraft }
   let currentSectionId = null;
   let pendingSectionValues = {};
+  let aiAppliedFieldIds = new Set(); // fields in the currently-open section pre-filled from an AI suggestion, not yet reviewed
+  let aiDraftInProgress = false;
   const objectUrls = [];
 
   function trackUrl(url) { objectUrls.push(url); return url; }
@@ -95,8 +98,10 @@
       currentJobId = jobId;
       currentReport = await loadOrCreateReport(jobId);
       const job = await DB.getJob(jobId);
+      currentJob = job || null;
       reportSubtitle.textContent = job ? job.name : '';
       renderSectionList();
+      updateAiDraftButton();
       hideAllAppViews();
       show(viewReport);
     },
@@ -105,7 +110,60 @@
       hideAllAppViews();
       show(viewArchive);
     },
+    // Called by app.js once footage analysis comes back — either the
+    // background run right after "Finish Inspection", or a manual re-run
+    // from the AI Draft button. Never writes into report.sections directly;
+    // suggestions only apply when a section is opened (see openSectionEditor).
+    async applyAiDraft(jobId, result) {
+      const report = await loadOrCreateReport(jobId);
+      report.aiDraft = {
+        generatedAt: Date.now(),
+        transcript: result.transcript || '',
+        draftFields: result.draftFields || {},
+        frameNotes: result.frameNotes || [],
+      };
+      await DB.saveReport(report);
+      if (currentJobId === jobId) {
+        currentReport = report;
+        updateAiDraftButton();
+      }
+    },
   };
+
+  // ---------- AI Draft ----------
+  function updateAiDraftButton() {
+    if (!window.AI) {
+      aiDraftBtn.textContent = '🤖 AI Draft (not configured)';
+      aiDraftBtn.disabled = true;
+      return;
+    }
+    aiDraftBtn.disabled = aiDraftInProgress;
+    if (aiDraftInProgress) { aiDraftBtn.textContent = '🤖 Analyzing footage…'; return; }
+    aiDraftBtn.textContent = currentReport && currentReport.aiDraft ? '🤖 Regenerate AI Draft' : '🤖 Generate AI Draft';
+  }
+
+  aiDraftBtn.addEventListener('click', async () => {
+    if (!window.AI || aiDraftInProgress) return;
+    const footage = await DB.getFootage(currentJobId);
+    const liveVideo = footage
+      .filter((f) => f.kind === 'video' && f.source === 'live')
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!liveVideo) { toast('No recorded inspection footage found for this job yet — run Start/Finish Inspection first.'); return; }
+
+    aiDraftInProgress = true;
+    updateAiDraftButton();
+    try {
+      const result = await window.AI.analyzeInspection(liveVideo.blob);
+      await ReportUI.applyAiDraft(currentJobId, result);
+      toast('AI draft ready — suggested values will appear when you open each section');
+    } catch (err) {
+      console.error('[ai draft]', err);
+      toast('AI draft failed: ' + (err.message || err));
+    } finally {
+      aiDraftInProgress = false;
+      updateAiDraftButton();
+    }
+  });
 
   function hideAllAppViews() {
     document.getElementById('view-joblist').classList.add('hidden');
@@ -204,6 +262,21 @@
     const section = findSection(sectionId);
     pendingSectionValues = { ...(currentReport.sections[sectionId] || {}) };
 
+    // Pre-fill any AI-suggested value for fields the technician hasn't
+    // already answered — flagged via aiAppliedFieldIds so renderField can
+    // mark them, and cleared the moment the technician touches that field.
+    aiAppliedFieldIds = new Set();
+    const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
+    for (const [fieldId, suggestedValue] of Object.entries(aiFieldsForSection)) {
+      const current = pendingSectionValues[fieldId];
+      const isEmpty = current === undefined || current === null || current === '' ||
+        (Array.isArray(current) && current.length === 0);
+      if (isEmpty && suggestedValue !== undefined && suggestedValue !== null && suggestedValue !== '') {
+        pendingSectionValues[fieldId] = suggestedValue;
+        aiAppliedFieldIds.add(fieldId);
+      }
+    }
+
     sectionTitleEl.textContent = `${section.number}. ${section.title}`;
     sectionSubtitleEl.textContent = section.subtitle || '';
 
@@ -243,6 +316,28 @@
     labelEl.innerHTML = escapeHtml(field.label) + (field.aiFillable ? ' <span class="ai-badge">AI</span>' : '') +
       (field.required ? ' <span class="required-dot">*</span>' : '');
     row.appendChild(labelEl);
+
+    if (aiAppliedFieldIds.has(field.id)) {
+      row.classList.add('ai-suggested-value');
+      const note = document.createElement('span');
+      note.className = 'ai-suggested-note';
+      note.textContent = '✨ AI suggested — review and edit if needed';
+      row.appendChild(note);
+
+      // A single delegated listener covers every field type (text inputs,
+      // selects, yesno buttons, multiselect checkboxes) without needing to
+      // touch each renderer's own event handler — once the technician
+      // interacts with it at all, it's no longer just a suggestion.
+      const clearMark = () => {
+        aiAppliedFieldIds.delete(field.id);
+        row.classList.remove('ai-suggested-value');
+        note.remove();
+      };
+      row.addEventListener('input', clearMark, { once: true });
+      row.addEventListener('change', clearMark, { once: true });
+      row.addEventListener('click', (e) => { if (e.target.closest('button, input[type="checkbox"]')) clearMark(); });
+    }
+
     return row;
   }
 
@@ -472,19 +567,90 @@
     wrap.appendChild(canvas);
 
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // faint grid to help freehand proportions
-    ctx.strokeStyle = '#eef1f6';
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= canvas.width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
-    for (let y = 0; y <= canvas.height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+
+    function drawGrid() {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#eef1f6';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= canvas.width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+      for (let y = 0; y <= canvas.height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+    }
+    drawGrid();
+
+    function saveSnapshot() { pendingSectionValues[field.id] = canvas.toDataURL('image/png'); }
+
+    // ---------- Aerial backdrop (Phase 3) ----------
+    // Default footprint: a generous centered rectangle, used for voice-guided
+    // room subdivision when only a satellite image loaded (no real vector
+    // outline) — better than nothing, just less precise than an OSM footprint.
+    let footprintPolygon = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
+    let backdropKind = null; // null | 'osm' | 'satellite'
+    let backdropImage = null;
+    let backdropReady = false;
+
+    function drawFootprintPolygon(polygon) {
+      ctx.save();
+      ctx.strokeStyle = '#2c7a4b';
+      ctx.lineWidth = 2.5;
+      ctx.fillStyle = 'rgba(44,122,75,0.06)';
+      ctx.beginPath();
+      polygon.forEach(([x, y], i) => {
+        const px = x * canvas.width, py = y * canvas.height;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function redrawBase() {
+      drawGrid();
+      if (backdropKind === 'osm') drawFootprintPolygon(footprintPolygon);
+      else if (backdropKind === 'satellite' && backdropImage) ctx.drawImage(backdropImage, 0, 0, canvas.width, canvas.height);
+    }
+
+    // shouldDraw=false is used when restoring an already-saved sketch: we
+    // still want fresh footprint data available for "Describe Rooms", but
+    // must not touch the canvas (it already shows the technician's saved work).
+    async function loadFootprintData(shouldDraw) {
+      if (!(window.AI && currentJob && typeof currentJob.addressLat === 'number' && typeof currentJob.addressLng === 'number')) return;
+      try {
+        const footprint = await window.AI.fetchFootprint(currentJob.addressLat, currentJob.addressLng);
+        if (footprint.source === 'osm' && footprint.polygon && footprint.polygon.length >= 3) {
+          footprintPolygon = footprint.polygon;
+          backdropKind = 'osm';
+          if (shouldDraw) { redrawBase(); saveSnapshot(); }
+          backdropReady = true;
+          updateDescribeRoomsBtn();
+        } else if (footprint.source === 'satellite' && footprint.imageUrl) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            backdropImage = img;
+            backdropKind = 'satellite';
+            if (shouldDraw) { redrawBase(); saveSnapshot(); }
+            backdropReady = true;
+            updateDescribeRoomsBtn();
+          };
+          img.onerror = () => console.warn('[report] aerial backdrop image failed to load');
+          img.src = footprint.imageUrl;
+        }
+      } catch (err) {
+        console.warn('[report] aerial backdrop fetch failed:', err.message || err);
+      }
+    }
 
     const existing = pendingSectionValues[field.id];
     if (existing) {
       const img = new Image();
       img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       img.src = existing;
+      backdropReady = true; // an already-flattened sketch counts as "has content" for the Describe Rooms gate
+      loadFootprintData(false);
+    } else {
+      loadFootprintData(true);
     }
 
     let mode = 'draw'; // 'draw' | 'label'
@@ -492,8 +658,6 @@
     ctx.lineWidth = 2.5;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-
-    function saveSnapshot() { pendingSectionValues[field.id] = canvas.toDataURL('image/png'); }
 
     function pos(e) {
       const rect = canvas.getBoundingClientRect();
@@ -560,24 +724,127 @@
     clearBtn.className = 'btn btn-secondary';
     clearBtn.textContent = 'Clear';
     clearBtn.addEventListener('click', () => {
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = '#eef1f6';
-      ctx.lineWidth = 1;
-      for (let x = 0; x <= canvas.width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
-      for (let y = 0; y <= canvas.height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+      // Clear wipes the technician's own drawing/labels/room polygons back
+      // to the base layer — it does not lose an already-loaded backdrop.
+      redrawBase();
       ctx.strokeStyle = '#1a1a1a';
       ctx.lineWidth = 2.5;
-      pendingSectionValues[field.id] = '';
+      saveSnapshot();
     });
 
     controls.appendChild(drawBtn);
     controls.appendChild(labelBtn);
     controls.appendChild(clearBtn);
     wrap.appendChild(controls);
+
+    // ---------- Voice-guided room subdivision (Phase 4) ----------
+    const aiControls = document.createElement('div');
+    aiControls.className = 'row gap sketch-controls';
+
+    const describeRoomsBtn = document.createElement('button');
+    describeRoomsBtn.type = 'button';
+    describeRoomsBtn.className = 'btn btn-outline full';
+    describeRoomsBtn.textContent = '🎙️ Describe Rooms';
+    describeRoomsBtn.disabled = !(window.AI && backdropReady);
+    aiControls.appendChild(describeRoomsBtn);
+    wrap.appendChild(aiControls);
+
+    let roomRecordingState = 'idle'; // 'idle' | 'recording' | 'processing'
+    let roomRecorder = null;
+    let roomRecordedChunks = [];
+    let roomRecordingStream = null;
+
+    function updateDescribeRoomsBtn() {
+      if (roomRecordingState !== 'idle') return; // label already set by the recording flow itself
+      describeRoomsBtn.disabled = !(window.AI && backdropReady);
+    }
+
+    function drawRoomPolygon(room) {
+      if (!room.polygon || room.polygon.length < 3) return;
+      ctx.save();
+      ctx.strokeStyle = '#154a8a';
+      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(21,74,138,0.08)';
+      ctx.beginPath();
+      room.polygon.forEach(([x, y], i) => {
+        const px = x * canvas.width, py = y * canvas.height;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      if (room.label) {
+        const cx = (room.polygon.reduce((s, p) => s + p[0], 0) / room.polygon.length) * canvas.width;
+        const cy = (room.polygon.reduce((s, p) => s + p[1], 0) / room.polygon.length) * canvas.height;
+        ctx.fillStyle = '#0d2a4d';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(room.label, cx, cy);
+        ctx.textAlign = 'left';
+      }
+      ctx.restore();
+    }
+
+    async function startRoomRecording() {
+      try {
+        roomRecordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        toast('Microphone access denied');
+        return;
+      }
+      roomRecordedChunks = [];
+      const mimeType = window.pickAudioMimeType ? window.pickAudioMimeType() : '';
+      roomRecorder = mimeType ? new MediaRecorder(roomRecordingStream, { mimeType }) : new MediaRecorder(roomRecordingStream);
+      roomRecorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size > 0) roomRecordedChunks.push(e.data); });
+      roomRecorder.addEventListener('stop', onRoomRecordingStopped);
+      roomRecorder.start();
+      roomRecordingState = 'recording';
+      describeRoomsBtn.disabled = false;
+      describeRoomsBtn.textContent = '⏹ Stop & Generate';
+      describeRoomsBtn.classList.add('active');
+    }
+
+    async function onRoomRecordingStopped() {
+      if (roomRecordingStream) { roomRecordingStream.getTracks().forEach((t) => t.stop()); roomRecordingStream = null; }
+      if (!roomRecordedChunks.length) {
+        roomRecordingState = 'idle';
+        describeRoomsBtn.textContent = '🎙️ Describe Rooms';
+        describeRoomsBtn.classList.remove('active');
+        updateDescribeRoomsBtn();
+        toast('No audio recorded');
+        return;
+      }
+      const blob = new Blob(roomRecordedChunks, { type: roomRecorder.mimeType || 'audio/webm' });
+      roomRecordedChunks = [];
+      roomRecordingState = 'processing';
+      describeRoomsBtn.disabled = true;
+      describeRoomsBtn.textContent = '🤖 Generating rooms…';
+
+      try {
+        const result = await window.AI.subdivideRooms(blob, footprintPolygon);
+        const rooms = result.rooms || [];
+        for (const room of rooms) drawRoomPolygon(room);
+        saveSnapshot();
+        toast(`Added ${rooms.length} room${rooms.length === 1 ? '' : 's'} — adjust with Draw/Label as needed`);
+      } catch (err) {
+        console.error('[room subdivision]', err);
+        toast('Room subdivision failed: ' + (err.message || err));
+      } finally {
+        roomRecordingState = 'idle';
+        describeRoomsBtn.textContent = '🎙️ Describe Rooms';
+        describeRoomsBtn.classList.remove('active');
+        updateDescribeRoomsBtn();
+      }
+    }
+
+    describeRoomsBtn.addEventListener('click', () => {
+      if (roomRecordingState === 'idle') startRoomRecording();
+      else if (roomRecordingState === 'recording' && roomRecorder && roomRecorder.state !== 'inactive') roomRecorder.stop();
+    });
+
     wrap.appendChild(Object.assign(document.createElement('p'), {
       className: 'empty-hint',
-      textContent: 'Draw the outline with your finger, then switch to Add Label and tap anywhere to name a room or flag something.',
+      textContent: 'Draw the outline with your finger, then switch to Add Label and tap anywhere to name a room or flag something. If a real property outline loaded above, try 🎙️ Describe Rooms and talk through the room layout for a first-pass sketch — it\'s a draft, single-shot per recording, so touch it up with Draw/Label afterward (re-recording clears and starts over).',
     }));
     return wrap;
   }

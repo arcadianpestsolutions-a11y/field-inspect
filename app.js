@@ -438,6 +438,7 @@
     jobPhoneInput.value = '';
     jobEmailInput.value = '';
     jobNotesInput.value = '';
+    selectedAddressCoords = null;
     hideAddressSuggestions();
     show(jobForm);
     jobNameInput.focus();
@@ -451,6 +452,8 @@
     const job = await DB.addJob({
       name,
       address: jobAddressInput.value.trim(),
+      addressLat: selectedAddressCoords ? selectedAddressCoords.lat : null,
+      addressLng: selectedAddressCoords ? selectedAddressCoords.lng : null,
       notes: jobNotesInput.value.trim(),
       clientPhone: jobPhoneInput.value.trim(),
       clientEmail: jobEmailInput.value.trim(),
@@ -468,6 +471,11 @@
   let addressAbortController = null;
   let addressSuggestionItems = [];
   let addressActiveIndex = -1;
+  // Coordinates of the currently-selected suggestion, if any — captured here
+  // (rather than re-geocoding later) so the aerial mud-map backdrop doesn't
+  // need a second network round-trip. Cleared whenever the address text is
+  // edited without picking a fresh suggestion, since it'd no longer be trustworthy.
+  let selectedAddressCoords = null;
 
   function hideAddressSuggestions() {
     hide(jobAddressSuggestions);
@@ -498,6 +506,9 @@
         // mousedown (not click) so this fires before the input's blur handler
         e.preventDefault();
         jobAddressInput.value = item.display_name;
+        const lat = parseFloat(item.lat);
+        const lng = parseFloat(item.lon);
+        selectedAddressCoords = (Number.isFinite(lat) && Number.isFinite(lng)) ? { lat, lng } : null;
         hideAddressSuggestions();
       });
       jobAddressSuggestions.appendChild(li);
@@ -520,6 +531,7 @@
   }
 
   jobAddressInput.addEventListener('input', () => {
+    selectedAddressCoords = null;
     const query = jobAddressInput.value.trim();
     clearTimeout(addressDebounceTimer);
     if (query.length < 4) { hideAddressSuggestions(); return; }
@@ -537,7 +549,11 @@
       addressActiveIndex = Math.max(addressActiveIndex - 1, 0);
     } else if (e.key === 'Enter' && addressActiveIndex >= 0) {
       e.preventDefault();
-      jobAddressInput.value = addressSuggestionItems[addressActiveIndex].display_name;
+      const chosen = addressSuggestionItems[addressActiveIndex];
+      jobAddressInput.value = chosen.display_name;
+      const lat = parseFloat(chosen.lat);
+      const lng = parseFloat(chosen.lon);
+      selectedAddressCoords = (Number.isFinite(lat) && Number.isFinite(lng)) ? { lat, lng } : null;
       hideAddressSuggestions();
       return;
     } else if (e.key === 'Escape') {
@@ -893,6 +909,7 @@
     }
     return '';
   }
+  window.pickAudioMimeType = pickMimeType; // shared with report.js's voice-guided room subdivision
 
   async function startRecording(target) {
     recordingTarget = target;
@@ -1095,6 +1112,17 @@
         blob,
         note: 'Live inspection recording',
       });
+
+      // Fire-and-forget: analyze in the background so Finish doesn't block
+      // on it. currentJobId is captured now since the user may navigate
+      // elsewhere before this resolves.
+      if (window.AI && window.ReportUI) {
+        const jobIdForAi = currentJobId;
+        window.AI.analyzeInspection(blob)
+          .then((result) => window.ReportUI.applyAiDraft(jobIdForAi, result))
+          .then(() => toast('AI draft ready — review suggested values in the report'))
+          .catch((err) => console.warn('[ai draft] background analysis failed:', err.message || err));
+      }
     }
     inspectionChunks = [];
     inspectionRecorder = null;

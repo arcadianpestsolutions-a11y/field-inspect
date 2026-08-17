@@ -939,6 +939,21 @@ select {
 .ai-draft-card { margin-bottom: 16px; }
 .ai-draft-hint { margin: 2px 0 10px; font-size: 0.82rem; color: var(--text-dim); }
 
+/* ---------- AI-suggested field values (pre-filled, unreviewed) ---------- */
+.field-row.ai-suggested-value {
+  background: rgba(34,211,238,0.06);
+  border: 1px dashed var(--accent-dim);
+  border-radius: 12px;
+  padding: 10px;
+  margin: -10px -10px 0;
+}
+.ai-suggested-note {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--accent);
+  margin: -4px 0 6px;
+}
+
 /* ---------- Report section list ---------- */
 .report-section-list {
   list-style: none;

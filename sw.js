@@ -1,4 +1,4 @@
-const CACHE_NAME = 'field-inspect-v5';
+const CACHE_NAME = 'field-inspect-v6';
 const APP_SHELL = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const APP_SHELL = [
   './report-schema.js',
   './report.js',
   './sync.js',
+  './ai.js',
   './supabase-config.js',
   './manifest.json',
   './icons/icon.svg',

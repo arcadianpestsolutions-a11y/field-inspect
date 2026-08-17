@@ -14,6 +14,11 @@
   }
 
   const supabaseClient = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_PUBLISHABLE_KEY);
+  // Exposed so other modules (ai.js) reuse this same client instead of
+  // creating their own — a second client on the same auth storage key
+  // triggers Supabase's "multiple GoTrueClient instances" warning and risks
+  // undefined behavior on token refresh.
+  window.supabaseClient = supabaseClient;
 
   let currentSession = null;
   let authListeners = [];
@@ -43,6 +48,8 @@
       id: job.id,
       name: job.name,
       address: job.address || '',
+      address_lat: typeof job.addressLat === 'number' ? job.addressLat : null,
+      address_lng: typeof job.addressLng === 'number' ? job.addressLng : null,
       notes: job.notes || '',
       client_phone: job.clientPhone || '',
       client_email: job.clientEmail || '',
@@ -63,6 +70,8 @@
       id: rj.id,
       name: rj.name,
       address: rj.address || '',
+      addressLat: typeof rj.address_lat === 'number' ? rj.address_lat : null,
+      addressLng: typeof rj.address_lng === 'number' ? rj.address_lng : null,
       notes: rj.notes || '',
       clientPhone: rj.client_phone || '',
       clientEmail: rj.client_email || '',
@@ -120,6 +129,9 @@
     return {
       job_id: report.jobId,
       sections: sanitizeSectionsForPush(report.sections),
+      // aiDraft is text-only (transcript + suggested field values) — no
+      // blobs involved, so unlike sections it needs no sanitizing before push.
+      ai_draft: report.aiDraft || null,
       finalized_at: report.finalizedAt || null,
       updated_by: currentUserId(),
       updated_at: report.updatedAt || Date.now(),
@@ -130,6 +142,7 @@
     return {
       jobId: rr.job_id,
       sections: mergeRemoteSections(rr.sections, existingLocal ? existingLocal.sections : {}),
+      aiDraft: rr.ai_draft || (existingLocal ? existingLocal.aiDraft : null),
       finalizedAt: rr.finalized_at || null,
       updatedAt: rr.updated_at,
     };

@@ -71,13 +71,19 @@ const DB = {
   JOB_STATUS_LABELS,
 
   // ---------- Jobs ----------
-  async addJob({ name, address, notes, clientPhone, clientEmail }) {
+  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail }) {
     const store = await tx('jobs', 'readwrite');
     const now = Date.now();
     const job = {
       id: uid(),
       name,
       address: address || '',
+      // Geocoded once at address-selection time (see app.js's Nominatim
+      // suggestion handler) so the aerial mud-map backdrop never needs a
+      // second network round-trip. Null if the technician typed a free-text
+      // address without picking a suggestion.
+      addressLat: typeof addressLat === 'number' ? addressLat : null,
+      addressLng: typeof addressLng === 'number' ? addressLng : null,
       notes: notes || '',
       clientPhone: clientPhone || '',
       clientEmail: clientEmail || '',
