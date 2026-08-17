@@ -127,8 +127,30 @@
         currentReport = report;
         updateAiDraftButton();
       }
+      await applySuggestedZones(jobId, report.aiDraft.frameNotes);
     },
   };
+
+  // Matches untagged captures to a frameNotes time range (relative seconds
+  // into the inspection recording) and persists a suggestedZone onto the
+  // capture — a suggestion only, never writing over an existing zone tag
+  // and never applied as the real zone until the technician taps to accept
+  // it (see the gallery badge / detail-modal affordance in app.js).
+  async function applySuggestedZones(jobId, frameNotes) {
+    if (!frameNotes || !frameNotes.length) return;
+    const job = await DB.getJob(jobId);
+    if (!job || !job.inspectionStartedAt) return;
+
+    const captures = await DB.getCaptures(jobId);
+    for (const capture of captures) {
+      if (capture.zone) continue; // already tagged, real or accepted-suggestion — leave it alone
+      const elapsedSeconds = (capture.createdAt - job.inspectionStartedAt) / 1000;
+      const match = frameNotes.find((n) => elapsedSeconds >= n.startSeconds && elapsedSeconds <= n.endSeconds);
+      if (match && match.zone && capture.suggestedZone !== match.zone) {
+        await DB.updateCapture(capture.id, { suggestedZone: match.zone });
+      }
+    }
+  }
 
   // ---------- AI Draft ----------
   function updateAiDraftButton() {
@@ -263,15 +285,21 @@
     pendingSectionValues = { ...(currentReport.sections[sectionId] || {}) };
 
     // Pre-fill any AI-suggested value for fields the technician hasn't
-    // already answered — flagged via aiAppliedFieldIds so renderField can
-    // mark them, and cleared the moment the technician touches that field.
+    // genuinely answered yet — either still empty, or still sitting at the
+    // schema's generic typical default (see defaultValuesForSection in
+    // report-schema.js). A real human edit away from the default is never
+    // overwritten; only untouched fields get the AI's evidence-based value,
+    // flagged via aiAppliedFieldIds so renderField can mark them, cleared
+    // the moment the technician actually touches that field.
     aiAppliedFieldIds = new Set();
     const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
     for (const [fieldId, suggestedValue] of Object.entries(aiFieldsForSection)) {
       const current = pendingSectionValues[fieldId];
+      const fieldDef = section.fields.find((f) => f.id === fieldId);
       const isEmpty = current === undefined || current === null || current === '' ||
         (Array.isArray(current) && current.length === 0);
-      if (isEmpty && suggestedValue !== undefined && suggestedValue !== null && suggestedValue !== '') {
+      const isUntouchedDefault = fieldDef && fieldDef.default !== undefined && current === fieldDef.default;
+      if ((isEmpty || isUntouchedDefault) && suggestedValue !== undefined && suggestedValue !== null && suggestedValue !== '') {
         pendingSectionValues[fieldId] = suggestedValue;
         aiAppliedFieldIds.add(fieldId);
       }

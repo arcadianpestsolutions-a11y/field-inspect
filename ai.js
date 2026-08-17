@@ -129,17 +129,49 @@
     ]);
   }
 
+  // GeoJSON rings are [lng, lat] tuples (note the order) — convert to the
+  // same {lat, lon} shape Overpass's geometry uses so normalizePolygon()
+  // works for either source unchanged.
+  function geoJsonRingToLatLon(ring) {
+    return ring.map(([lng, lat]) => ({ lat, lon: lng }));
+  }
+
+  // Second-tier footprint source: Nominatim's reverse geocode can return
+  // real polygon geometry (not just a point) when the matched OSM feature
+  // is a way/relation with area — same free/keyless service already used
+  // for address autocomplete, just a different endpoint/param.
+  async function fetchNominatimPolygon(lat, lng) {
+    // zoom=18 was tested and found to over-zoom to a bare Point for some
+    // buildings (e.g. the Sydney Opera House) instead of matching the
+    // building way itself; zoom=17 reliably resolved to a real Polygon in
+    // testing while staying precise enough not to match a whole suburb.
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&polygon_geojson=1&zoom=17`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const geojson = data && data.geojson;
+    if (!geojson) return null;
+    let ring = null;
+    if (geojson.type === 'Polygon' && geojson.coordinates[0] && geojson.coordinates[0].length >= 3) {
+      ring = geojson.coordinates[0];
+    } else if (geojson.type === 'MultiPolygon' && geojson.coordinates[0] && geojson.coordinates[0][0] && geojson.coordinates[0][0].length >= 3) {
+      ring = geojson.coordinates[0][0];
+    }
+    return ring ? geoJsonRingToLatLon(ring) : null;
+  }
+
   // Fetches a real building footprint (preferred) or a satellite-image
   // fallback for the given coordinates, to use as the mud-map sketch's
-  // background layer. Free, no API key: OSM's Overpass API for the vector
-  // footprint (same usage-policy philosophy as the existing Nominatim
-  // address search — public instance, not for heavy automated traffic),
-  // falling back to a keyless Esri World Imagery static tile when no
-  // building is mapped at that location (common outside dense-data areas).
+  // background layer. Three tiers, all free/keyless:
+  //   1. OSM Overpass — vector building outline (best case).
+  //   2. Nominatim reverse polygon — a second shot at vector geometry when
+  //      Overpass's node placement missed the building.
+  //   3. A tightly-cropped satellite photo of just the property — last
+  //      resort only, when neither service has area data for this address.
   // Returns { source: 'osm', polygon } | { source: 'satellite', imageUrl } | { source: 'none' }.
   async function fetchFootprint(lat, lng) {
     try {
-      const overpassQuery = `[out:json][timeout:15];way["building"](around:40,${lat},${lng});out geom;`;
+      const overpassQuery = `[out:json][timeout:15];way["building"](around:60,${lat},${lng});out geom;`;
       const res = await fetch('https://overpass-api.de/api/interpreter', {
         method: 'POST',
         body: 'data=' + encodeURIComponent(overpassQuery),
@@ -150,11 +182,20 @@
         if (way) return { source: 'osm', polygon: normalizePolygon(way.geometry) };
       }
     } catch (err) {
-      console.warn('[ai] Overpass footprint lookup failed, falling back to satellite imagery:', err.message || err);
+      console.warn('[ai] Overpass footprint lookup failed, trying Nominatim polygon next:', err.message || err);
+    }
+
+    try {
+      const geometry = await fetchNominatimPolygon(lat, lng);
+      if (geometry) return { source: 'osm', polygon: normalizePolygon(geometry) };
+    } catch (err) {
+      console.warn('[ai] Nominatim polygon lookup failed, falling back to satellite imagery:', err.message || err);
     }
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { source: 'none' };
-    const pad = 0.0009; // ~60-70m either side — roughly the property plus immediate surrounds
+    // ~25-30m either side (~55m total span) — tight enough to frame just the
+    // target property and its immediate surrounds, not the whole street.
+    const pad = 0.00025;
     const bbox = [lng - pad, lat - pad, lng + pad, lat + pad].join(',');
     const imageUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export' +
       `?bbox=${bbox}&bboxSR=4326&size=680,840&format=jpg&f=image`;

@@ -109,6 +109,7 @@
   const detailAudioWrap = document.getElementById('detail-audio-wrap');
   const detailAudio = document.getElementById('detail-audio');
   const detailAddMemoBtn = document.getElementById('detail-add-memo');
+  const detailApplySuggestedZoneBtn = document.getElementById('detail-apply-suggested-zone');
   const detailDeleteBtn = document.getElementById('detail-delete');
   const detailBody = document.getElementById('detail-body');
   const detailPhotoZoomWrap = document.getElementById('detail-photo-zoom-wrap');
@@ -700,9 +701,17 @@
         tile.appendChild(icon);
       }
 
+      if (!capture.zone && capture.suggestedZone) {
+        const suggestBadge = document.createElement('span');
+        suggestBadge.className = 'capture-tile-suggest-badge';
+        suggestBadge.textContent = '✨';
+        suggestBadge.title = `AI suggests: ${capture.suggestedZone}`;
+        tile.appendChild(suggestBadge);
+      }
+
       const zoneLabel = document.createElement('span');
       zoneLabel.className = 'capture-tile-zone';
-      zoneLabel.textContent = capture.zone || 'Untagged';
+      zoneLabel.textContent = capture.zone || (capture.suggestedZone ? `Untagged — ✨ ${capture.suggestedZone}?` : 'Untagged');
       tile.appendChild(zoneLabel);
 
       tile.addEventListener('click', () => {
@@ -1169,7 +1178,13 @@
           window.AI.analyzeInspection(blob)
             .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
             .then(() => toast('AI draft ready — review suggested values in the report'))
-            .catch((err) => console.warn('[ai draft] background analysis failed:', err.message || err));
+            .catch((err) => {
+              // Previously this only logged to console — a failure here was
+              // indistinguishable from "AI Draft doesn't do anything at all"
+              // from the user's side. Always surface it.
+              console.warn('[ai draft] background analysis failed:', err.message || err);
+              toast('AI draft failed to generate — you can retry from the report’s "Generate AI Draft" button.');
+            });
         }
       } else {
         toast('Inspection finished — no video was captured (recording may have been interrupted).');
@@ -1303,8 +1318,25 @@
       hide(detailAddMemoBtn);
     }
 
+    if (!capture.zone && capture.suggestedZone) {
+      detailApplySuggestedZoneBtn.textContent = `✨ Apply suggested zone: ${capture.suggestedZone}`;
+      show(detailApplySuggestedZoneBtn);
+    } else {
+      hide(detailApplySuggestedZoneBtn);
+    }
+
     show(detailModal);
   }
+
+  detailApplySuggestedZoneBtn.addEventListener('click', async () => {
+    if (!currentDetailCaptureId) return;
+    const capture = currentCaptures.find((c) => c.id === currentDetailCaptureId) || await findCaptureById(currentDetailCaptureId);
+    if (!capture || !capture.suggestedZone) return;
+    await DB.updateCapture(currentDetailCaptureId, { zone: capture.suggestedZone });
+    toast(`Zone set to ${capture.suggestedZone}`);
+    await renderGallery();
+    await openDetail(currentDetailCaptureId);
+  });
 
   function navigateDetail(delta) {
     const list = getVisibleCaptures();
