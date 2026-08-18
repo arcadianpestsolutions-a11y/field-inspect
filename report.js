@@ -142,6 +142,14 @@
       await DB.saveReport(report);
       if (currentJobId === jobId) currentReport = report;
     },
+    // Generates a real PDF Blob for a job's report (for emailing — see
+    // email.js) — jobId defaults to whichever report is currently open.
+    async generatePdfBlob(jobId) {
+      const targetJobId = jobId || currentJobId;
+      const job = await DB.getJob(targetJobId);
+      const report = await loadOrCreateReport(targetJobId);
+      return generateReportPdfBlob(job, report);
+    },
   };
 
   // Matches untagged captures to a frameNotes time range (relative seconds
@@ -287,8 +295,54 @@
     toast('Report finalized');
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
+    await offerEmailReport(currentJobId);
     offerForemanFollowUpTask(currentJobId);
   });
+
+  // Prompts to email the finalized report's PDF to the client, prefilled
+  // with the job's saved clientEmail if there is one. Cancelling the prompt
+  // (or leaving it blank) skips sending entirely — this is a real message
+  // to a real client, so it's always an explicit per-report confirmation,
+  // never silent/automatic.
+  async function offerEmailReport(jobId) {
+    if (!window.EmailService) return; // Supabase not configured, or the email Edge Function isn't set up
+    try {
+      const job = await DB.getJob(jobId);
+      const defaultEmail = job.clientEmail || '';
+      const recipientEmail = window.prompt(
+        'Email this finalized report to the client now?\n\nEnter their email address (or Cancel to skip):',
+        defaultEmail
+      );
+      if (!recipientEmail || !recipientEmail.trim()) return;
+
+      // toast() auto-hides after ~2.2s, but PDF generation + uploading a
+      // multi-MB attachment over a real mobile connection can genuinely take
+      // much longer than that — re-toast on an interval so the message
+      // doesn't vanish while it's still working and get mistaken for a hang.
+      toast('Generating PDF and sending…');
+      let waitedSeconds = 0;
+      const keepAlive = setInterval(() => {
+        waitedSeconds += 3;
+        toast('Still sending the report… (' + waitedSeconds + 's)');
+      }, 3000);
+      try {
+        const pdfBlob = await generateReportPdfBlob(job, currentReport);
+        const clientDetails = currentReport.sections.clientDetails || {};
+        await window.EmailService.sendReportEmail({
+          recipientEmail: recipientEmail.trim(),
+          recipientName: clientDetails.clientName || job.name,
+          jobName: job.name,
+          pdfBlob,
+        });
+      } finally {
+        clearInterval(keepAlive);
+      }
+      toast('Report emailed to ' + recipientEmail.trim());
+    } catch (err) {
+      console.error('[report] email send failed:', err);
+      toast('Could not email the report: ' + (err.message || err));
+    }
+  }
 
   // Cross-app hook (optional, non-blocking): Foreman and Field Inspect now
   // share one Supabase project (own `foreman` schema, same login) — see the
@@ -1122,35 +1176,37 @@
     return String(v);
   }
 
-  async function exportPdf() {
-    const job = await DB.getJob(currentJobId);
-    const printWin = window.open('', '_blank');
-    if (!printWin) { toast('Allow pop-ups to export the PDF'); return; }
+  const REPORT_PDF_STYLE = `
+    body{font-family:Arial,Helvetica,sans-serif;color:#222;margin:0;padding:24px;}
+    h1{color:#c0552a;} h2{margin:0;color:#fff;}
+    .brand{font-weight:bold;font-size:20px;color:#c0552a;margin-bottom:4px;}
+    .section{margin-bottom:28px;page-break-inside:avoid;}
+    .section-head{padding:8px 14px;border-radius:4px;margin-bottom:8px;}
+    .field{padding:6px 0;border-bottom:1px dotted #ccc;}
+    .field-label{color:#555;font-size:13px;}
+    .field-value{font-size:15px;}
+    .photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+    .photos img{width:140px;height:100px;object-fit:cover;border-radius:4px;}
+    img.sig{max-width:280px;border:1px solid #ddd;}
+    .sketch-page{page-break-before:always;}
+    .sketch-img{max-width:100%;border:1px solid #ddd;border-radius:4px;}
+    @media print { .no-print{display:none;} }
+  `;
 
-    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Termite Inspection Report</title>
-      <style>
-        body{font-family:Arial,Helvetica,sans-serif;color:#222;margin:0;padding:24px;}
-        h1{color:#c0552a;} h2{margin:0;color:#fff;}
-        .brand{font-weight:bold;font-size:20px;color:#c0552a;margin-bottom:4px;}
-        .section{margin-bottom:28px;page-break-inside:avoid;}
-        .section-head{padding:8px 14px;border-radius:4px;margin-bottom:8px;}
-        .field{padding:6px 0;border-bottom:1px dotted #ccc;}
-        .field-label{color:#555;font-size:13px;}
-        .field-value{font-size:15px;}
-        .photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
-        .photos img{width:140px;height:100px;object-fit:cover;border-radius:4px;}
-        img.sig{max-width:280px;border:1px solid #ddd;}
-        .sketch-page{page-break-before:always;}
-        .sketch-img{max-width:100%;border:1px solid #ddd;border-radius:4px;}
-        @media print { .no-print{display:none;} }
-      </style></head><body>
-      <div class="brand">ARCADIAN PEST SOLUTIONS</div>
+  // Builds the report's HTML body content (no <html>/<head> wrapper) — the
+  // single source of truth for both the print-preview export and the
+  // PDF-for-email generation below, so they can never drift apart.
+  // trackedUrls, if provided, collects any object URLs created for photos so
+  // the caller can revoke them once done (the print-window path doesn't
+  // bother, since closing that tab/window naturally releases them; the PDF
+  // path does, since it runs in the current page's lifetime).
+  function buildReportBodyHtml(job, report, trackedUrls) {
+    let html = `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
       <h1>Termite Inspection Report</h1>
-      <p>In Accordance with AS 3660.2-2017<br>${escapeHtml(job ? job.address : '')}</p>
-      <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>`;
+      <p>In Accordance with AS 3660.2-2017<br>${escapeHtml(job ? job.address : '')}</p>`;
 
     for (const section of SCHEMA) {
-      const values = currentReport.sections[section.id] || {};
+      const values = report.sections[section.id] || {};
       html += `<div class="section"><div class="section-head" style="background:${section.color}"><h2>${section.number}. ${escapeHtml(section.title)}</h2></div>`;
 
       if (section.id === 'summary') {
@@ -1172,7 +1228,8 @@
             if (!photos.length) continue;
             html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="photos">`;
             for (const p of photos) {
-              const url = trackUrl(URL.createObjectURL(p.blob));
+              const url = URL.createObjectURL(p.blob);
+              if (trackedUrls) trackedUrls.push(url); else trackUrl(url);
               html += `<img src="${url}">`;
             }
             html += `</div></div>`;
@@ -1189,9 +1246,72 @@
       }
       html += `</div>`;
     }
+    return html;
+  }
 
-    html += `</body></html>`;
+  async function exportPdf() {
+    const job = await DB.getJob(currentJobId);
+    const printWin = window.open('', '_blank');
+    if (!printWin) { toast('Allow pop-ups to export the PDF'); return; }
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Termite Inspection Report</title>
+      <style>${REPORT_PDF_STYLE}</style></head><body>
+      <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>
+      ${buildReportBodyHtml(job, currentReport)}
+      </body></html>`;
+
     printWin.document.write(html);
     printWin.document.close();
+  }
+
+  // Renders the report and rasterizes it into a real PDF Blob via
+  // html2pdf.js (loaded in index.html) — needed for emailing, since a
+  // print-preview window requires the user's own "Save as PDF" interaction
+  // and produces no Blob we could ever attach to anything programmatically.
+  //
+  // html2canvas (which html2pdf uses internally) captures based on the
+  // element's actual on-screen position — an element parked at a large
+  // negative offset to "hide" it isn't in real viewport space and captures
+  // blank. So this renders as a genuine full-screen overlay instead (with a
+  // "Generating…" backdrop, since it's only up for well under a second) —
+  // the reliable pattern for this, not a cosmetic choice.
+  async function generateReportPdfBlob(job, report) {
+    if (!window.html2pdf) throw new Error('PDF library not loaded');
+    const trackedUrls = [];
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;overflow:auto;';
+    const container = document.createElement('div');
+    container.style.width = '800px';
+    container.style.margin = '0 auto';
+    const style = document.createElement('style');
+    style.textContent = REPORT_PDF_STYLE;
+    container.appendChild(style);
+    const content = document.createElement('div');
+    content.innerHTML = buildReportBodyHtml(job, report, trackedUrls);
+    container.appendChild(content);
+    overlay.appendChild(container);
+    document.body.appendChild(overlay);
+
+    try {
+      // Let every <img> (photos, signature, sketch) actually finish loading
+      // before rasterizing — html2canvas captures whatever's rendered at
+      // that instant, so a still-loading image would just come out blank.
+      const images = Array.from(container.querySelectorAll('img'));
+      await Promise.all(images.map((img) => img.complete ? Promise.resolve() : new Promise((resolve) => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      })));
+      // One extra frame so layout/paint has genuinely settled before capture.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const blob = await window.html2pdf()
+        .set({ margin: 10, filename: 'report.pdf', html2canvas: { scale: 2 }, jsPDF: { unit: 'pt', format: 'a4' } })
+        .from(container)
+        .outputPdf('blob');
+      return blob;
+    } finally {
+      document.body.removeChild(overlay);
+      trackedUrls.forEach((url) => URL.revokeObjectURL(url));
+    }
   }
 })();
