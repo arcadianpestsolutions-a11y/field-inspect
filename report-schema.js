@@ -61,7 +61,7 @@ const REPORT_SCHEMA = [
         default: 'Standard Termite Inspection in accordance with AS 3660.2-2017',
       },
       { id: 'providerName', label: 'Inspection Provider', type: 'static', default: 'Arcadian Pest Solutions' },
-      { id: 'providerAddress', label: 'Address', type: 'static', default: 'Buxton' },
+      { id: 'providerAddress', label: 'Address', type: 'static', default: '' },
       { id: 'providerPhone', label: 'Phone', type: 'static', default: '0291271320' },
       { id: 'providerEmail', label: 'Email', type: 'static', default: 'tal@arcadianpestsolutions.com.au' },
     ],
@@ -153,6 +153,7 @@ const REPORT_SCHEMA = [
     icon: '⊘',
     color: '#2662c9',
     fields: [
+      { id: 'accessPhotos', label: 'Photos of Areas Inspected / Obstructions', type: 'photos', triggersAiFill: true },
       { id: 'hinderedObstructions', label: 'Were there any obstructions that may conceal possible termite attack?', type: 'yesno', required: true, aiFillable: true },
       { id: 'hinderedAreas', label: 'Hindered Areas', type: 'multiselect', options: ['The Interior', 'The Exterior', 'Subfloor', 'Roof Void'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'interiorObstructions', label: 'Interior Obstructions', type: 'multiselect', options: ['Furniture', 'Flooring', 'Fixtures', 'Items/belongings stored against wall', 'Items/belongings stored in cupboards'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
@@ -175,6 +176,7 @@ const REPORT_SCHEMA = [
     icon: '🔍',
     color: '#154a8a',
     fields: [
+      { id: 'findingsPhotos', label: 'Findings Photos', type: 'photos', triggersAiFill: true },
       { id: 'liveTermitesFound', label: 'Were live termites found at the time of the inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'termiteSpecies', label: 'Termite species (genus/species), if determinable', type: 'text', showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'riskOfAssociatedDamage', label: 'Potential for associated damage arising from this activity', type: 'select', options: ['Low', 'Moderate', 'High'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
@@ -205,6 +207,7 @@ const REPORT_SCHEMA = [
     icon: '⚠️',
     color: '#123a66',
     fields: [
+      { id: 'conducivePhotos', label: 'Conducive Conditions Photos', type: 'photos', triggersAiFill: true },
       { id: 'waterLeaksFound', label: 'Were water leaks found at the time of inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'waterTankPresent', label: 'Was a water tank(s) located at the time of inspection?', type: 'yesno', aiFillable: true },
       { id: 'tankDrainageWorkNeeded', label: 'Is there a need for work to rectify overflow drainage?', type: 'yesno', showIf: { field: 'waterTankPresent', equals: 'Yes' }, aiFillable: true },

@@ -36,7 +36,6 @@
   const deleteJobBtn = document.getElementById('delete-job-btn');
   const jobTitleEl = document.getElementById('job-title');
   const jobSubtitleEl = document.getElementById('job-subtitle');
-  const zoneInput = document.getElementById('zone-input');
   const zoneSuggestions = document.getElementById('zone-suggestions');
   const zoneChipRow = document.getElementById('zone-chip-row');
   const galleryEl = document.getElementById('gallery');
@@ -320,7 +319,6 @@
     if (!job) { showJobListView(); return; }
     jobTitleEl.textContent = job.name;
     jobSubtitleEl.textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
-    zoneInput.value = '';
     activeZoneFilter = null;
     selectMode = false;
     selectedCaptureIds.clear();
@@ -821,7 +819,7 @@
 
   async function openCamera() {
     cameraErrorEl.classList.add('hidden');
-    cameraZonePill.textContent = zoneInput.value.trim() || 'Untagged';
+    cameraZonePill.textContent = 'Untagged'; // zoneInput was removed; this whole modal is currently unreachable anyway
     sessionShotCount = 0;
     hide(shotCounterEl);
     hide(recentShotEl);
@@ -901,7 +899,7 @@
       if (!blob) { toast('Capture failed, try again'); return; }
       await DB.addCapture({
         jobId: currentJobId,
-        zone: zoneInput.value.trim(),
+        zone: '', // zoneInput was removed; this whole modal is currently unreachable anyway
         type: 'photo',
         photoBlob: blob,
       });
@@ -933,7 +931,7 @@
     recordingTarget = target;
     recordTargetLabel.textContent = target.mode === 'attach'
       ? 'Attaching voice note to photo'
-      : `Zone note: ${zoneInput.value.trim() || 'Untagged'}`;
+      : 'Zone note: Untagged'; // zoneInput was removed; the standalone zone-memo entry point is currently unreachable anyway
     recordTimerEl.textContent = '0:00';
     show(recordModal);
 
@@ -994,7 +992,7 @@
     } else {
       await DB.addCapture({
         jobId: currentJobId,
-        zone: zoneInput.value.trim(),
+        zone: '', // zoneInput was removed; the standalone zone-memo entry point is currently unreachable anyway
         type: 'memo',
         audioBlob: blob,
       });
@@ -1041,8 +1039,8 @@
     }
 
     inspectionVideo.srcObject = inspectionStream;
-    inspectionZoneInput.value = zoneInput.value.trim();
-    inspectionZonePill.textContent = inspectionZoneInput.value || 'Untagged';
+    inspectionZoneInput.value = '';
+    inspectionZonePill.textContent = 'Untagged';
     show(inspectionModal);
 
     inspectionChunks = [];
@@ -1063,14 +1061,28 @@
       inspectionModalTimer.textContent = t;
     }, 500);
 
-    await DB.updateJob(currentJobId, { status: 'in_progress', inspectionStartedAt: Date.now() });
-    const job = await DB.getJob(currentJobId);
+    const jobIdForStart = currentJobId;
+    await DB.updateJob(jobIdForStart, { status: 'in_progress', inspectionStartedAt });
+    const job = await DB.getJob(jobIdForStart);
     renderInspectionControls(job);
     toast('Inspection started — recording video & audio');
+
+    // Both are best-effort, fire-and-forget: neither should delay the
+    // camera preview opening, and both only fill an empty field (never
+    // overwrite something the technician already entered).
+    if (window.ReportUI) {
+      const hhmm = new Date(inspectionStartedAt).toTimeString().slice(0, 5);
+      window.ReportUI.prefillFieldValue(jobIdForStart, 'clientDetails', 'inspectionTime', hhmm)
+        .catch((err) => console.warn('[inspection] could not prefill inspection time:', err.message || err));
+    }
+    if (window.AI && typeof job.addressLat === 'number' && typeof job.addressLng === 'number') {
+      window.AI.fetchCurrentWeather(job.addressLat, job.addressLng)
+        .then((weather) => weather && window.ReportUI && window.ReportUI.prefillFieldValue(jobIdForStart, 'clientDetails', 'weather', weather))
+        .catch((err) => console.warn('[inspection] could not prefill weather:', err.message || err));
+    }
   }
 
   inspectionZoneInput.addEventListener('input', () => {
-    zoneInput.value = inspectionZoneInput.value;
     inspectionZonePill.textContent = inspectionZoneInput.value.trim() || 'Untagged';
   });
 
@@ -1263,7 +1275,7 @@
 
   // ---------- Import Footage (mid-inspection, drone / other camera) ----------
   function openImportModal() {
-    importZoneInput.value = (importOpenedFromInspection ? inspectionZoneInput.value : zoneInput.value).trim();
+    importZoneInput.value = (importOpenedFromInspection ? inspectionZoneInput.value : '').trim();
     pendingImportFiles = [];
     importFileInput.value = '';
     importFileList.innerHTML = '';

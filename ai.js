@@ -32,13 +32,26 @@
     });
   }
 
+  // Same as blobToBase64 but keeps the "data:image/...;base64," prefix —
+  // needed for the frames[].dataUrl shape the Edge Function expects.
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
   // Builds the compact field-schema description the Edge Function's prompt
   // needs, straight from the single source of truth in report-schema.js —
-  // never duplicated/hand-maintained separately.
-  function buildAiFillableFieldSchema() {
+  // never duplicated/hand-maintained separately. Pass a sectionId to scope
+  // it to just that section's aiFillable fields.
+  function buildAiFillableFieldSchema(onlySectionId) {
     const schema = window.REPORT_SCHEMA || [];
     const fields = [];
     for (const section of schema) {
+      if (onlySectionId && section.id !== onlySectionId) continue;
       for (const field of section.fields || []) {
         if (!field.aiFillable) continue;
         fields.push({
@@ -202,6 +215,40 @@
     return { source: 'satellite', imageUrl };
   }
 
+  // WMO weather codes, per Open-Meteo's docs — https://open-meteo.com/en/docs
+  const WMO_WEATHER_DESCRIPTIONS = {
+    0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+    45: 'Fog', 48: 'Depositing rime fog',
+    51: 'Light drizzle', 53: 'Moderate drizzle', 55: 'Dense drizzle',
+    56: 'Light freezing drizzle', 57: 'Dense freezing drizzle',
+    61: 'Slight rain', 63: 'Moderate rain', 65: 'Heavy rain',
+    66: 'Light freezing rain', 67: 'Heavy freezing rain',
+    71: 'Slight snow fall', 73: 'Moderate snow fall', 75: 'Heavy snow fall', 77: 'Snow grains',
+    80: 'Slight rain showers', 81: 'Moderate rain showers', 82: 'Violent rain showers',
+    85: 'Slight snow showers', 86: 'Heavy snow showers',
+    95: 'Thunderstorm', 96: 'Thunderstorm with slight hail', 99: 'Thunderstorm with heavy hail',
+  };
+
+  // Real-time weather at the property's coordinates, via Open-Meteo — free,
+  // keyless, no signup (same philosophy as Nominatim/Overpass elsewhere in
+  // this file). Returns a short human-readable string, or null on failure.
+  async function fetchCurrentWeather(lat, lng) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const cw = data.current_weather;
+      if (!cw) return null;
+      const desc = WMO_WEATHER_DESCRIPTIONS[cw.weathercode] || 'Conditions unavailable';
+      return `${desc}, ${Math.round(cw.temperature)}°C, wind ${Math.round(cw.windspeed)} km/h`;
+    } catch (err) {
+      console.warn('[ai] weather fetch failed:', err.message || err);
+      return null;
+    }
+  }
+
   async function invoke(body) {
     const { data, error } = await supabaseClient.functions.invoke('analyze-inspection', { body });
     if (error) throw error;
@@ -239,5 +286,21 @@
     });
   }
 
-  window.AI = { analyzeInspection, subdivideRooms, fetchFootprint };
+  // Analyzes just the photos attached to one report section's "photos" field
+  // (e.g. the Access/Findings/Conducive sections' top-of-section photo
+  // uploads) and drafts values for that section's aiFillable fields only.
+  // Reuses the same 'draft-report' Edge Function action as analyzeInspection
+  // — it already treats audio as optional, so no audio is sent here at all.
+  // Returns { transcript, draftFields, frameNotes } same shape as
+  // analyzeInspection; caller reads draftFields[sectionId].
+  async function analyzeSectionPhotos(photoBlobs, sectionId) {
+    const frames = await Promise.all(photoBlobs.map(async (blob, i) => ({
+      timestamp: i,
+      dataUrl: await blobToDataUrl(blob),
+    })));
+    const fieldSchema = buildAiFillableFieldSchema(sectionId);
+    return invoke({ action: 'draft-report', frames, fieldSchema });
+  }
+
+  window.AI = { analyzeInspection, subdivideRooms, fetchFootprint, fetchCurrentWeather, analyzeSectionPhotos };
 })();

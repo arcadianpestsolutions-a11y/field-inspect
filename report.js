@@ -129,6 +129,19 @@
       }
       await applySuggestedZones(jobId, report.aiDraft.frameNotes);
     },
+    // Generic "fill this field if it's still empty" helper — used by app.js
+    // for things determined at Start Inspection time (the actual clock time,
+    // real-time weather) that don't fit the AI-draft or static-default
+    // mechanisms. Never overwrites a value that's already there.
+    async prefillFieldValue(jobId, sectionId, fieldId, value) {
+      if (value === undefined || value === null || value === '') return;
+      const report = await loadOrCreateReport(jobId);
+      const current = report.sections[sectionId] && report.sections[sectionId][fieldId];
+      if (current !== undefined && current !== null && current !== '') return;
+      report.sections[sectionId] = { ...(report.sections[sectionId] || {}), [fieldId]: value };
+      await DB.saveReport(report);
+      if (currentJobId === jobId) currentReport = report;
+    },
   };
 
   // Matches untagged captures to a frameNotes time range (relative seconds
@@ -274,26 +287,64 @@
     toast('Report finalized');
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
+    offerForemanFollowUpTask(currentJobId);
   });
+
+  // Cross-app hook (optional, non-blocking): Foreman and Field Inspect now
+  // share one Supabase project (own `foreman` schema, same login) — see the
+  // plan's "shared login + cross-app talk" addendum. If this technician
+  // also has a Foreman workspace, offer to drop a follow-up task there.
+  // Wrapped so any failure (not signed in, offline, Foreman schema not set
+  // up yet) never affects report finalization, which already succeeded above.
+  async function offerForemanFollowUpTask(jobId) {
+    try {
+      if (!window.supabaseClient || !window.Sync || !window.Sync.currentUserId()) return;
+      const uid = window.Sync.currentUserId();
+      const { data: membership } = await window.supabaseClient
+        .schema('foreman').from('memberships').select('org_id').eq('user_id', uid).limit(1).maybeSingle();
+      if (!membership) return;
+
+      const job = await DB.getJob(jobId);
+      const who = job.clientEmail || job.clientPhone || job.name;
+      if (!confirm(`Also add a Foreman task to send this report to ${who}?`)) return;
+
+      await window.supabaseClient.schema('foreman').from('tasks').insert({
+        org_id: membership.org_id,
+        title: `Send finalized report to ${who}`,
+        description: `Job: ${job.name}${job.address ? ` (${job.address})` : ''}`,
+        status: 'todo',
+        source: 'manual',
+        created_by: uid,
+      });
+      toast('Added to Foreman');
+    } catch (e) {
+      console.warn('[report] Foreman follow-up task skipped:', e.message || e);
+    }
+  }
 
   reportExportBtn.addEventListener('click', () => exportPdf());
 
   // ---------- Section editor ----------
-  function openSectionEditor(sectionId) {
-    currentSectionId = sectionId;
-    const section = findSection(sectionId);
-    pendingSectionValues = { ...(currentReport.sections[sectionId] || {}) };
+  // Per-login Inspector Details defaults, keyed by the technician's Supabase
+  // Auth email (case-insensitive). Extend this table as more technicians
+  // are added; anyone not listed just gets blank fields as before.
+  const INSPECTOR_DEFAULTS_BY_EMAIL = {
+    'talpavlich@hotmail.com': {
+      inspectorName: 'Tal Pavlich',
+      inspectorAddress: 'Ingleburn',
+      inspectorLicence: '5095443',
+      inspectorPhone: '0291271320', // Arcadian Pest Solutions office number (matches providerPhone's default)
+    },
+  };
 
-    // Pre-fill any AI-suggested value for fields the technician hasn't
-    // genuinely answered yet — either still empty, or still sitting at the
-    // schema's generic typical default (see defaultValuesForSection in
-    // report-schema.js). A real human edit away from the default is never
-    // overwritten; only untouched fields get the AI's evidence-based value,
-    // flagged via aiAppliedFieldIds so renderField can mark them, cleared
-    // the moment the technician actually touches that field.
-    aiAppliedFieldIds = new Set();
-    const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
-    for (const [fieldId, suggestedValue] of Object.entries(aiFieldsForSection)) {
+  // Merges AI-suggested values into pendingSectionValues, same rule
+  // everywhere: only replaces a field that's still empty or still sitting
+  // at its untouched schema default, flagging it in aiAppliedFieldIds so
+  // renderField can mark it. Shared by report-level AI Draft suggestions
+  // (openSectionEditor) and single-section photo-triggered suggestions
+  // (applySectionPhotoAiResults below).
+  function applyDraftFieldsToPending(section, draftFieldsForSection) {
+    for (const [fieldId, suggestedValue] of Object.entries(draftFieldsForSection || {})) {
       const current = pendingSectionValues[fieldId];
       const fieldDef = section.fields.find((f) => f.id === fieldId);
       const isEmpty = current === undefined || current === null || current === '' ||
@@ -304,13 +355,17 @@
         aiAppliedFieldIds.add(fieldId);
       }
     }
+  }
 
-    sectionTitleEl.textContent = `${section.number}. ${section.title}`;
-    sectionSubtitleEl.textContent = section.subtitle || '';
-
+  // Re-renders the currently-open section's fields from the current
+  // pendingSectionValues, without resetting it from the saved report (unlike
+  // openSectionEditor, which would discard any in-progress unsaved edits —
+  // needed so photo-triggered AI suggestions can refresh the visible fields
+  // while the technician is still mid-edit on this section).
+  function renderCurrentSectionFields() {
+    const section = findSection(currentSectionId);
     revokeAllUrls();
     sectionFieldsEl.innerHTML = '';
-
     if (section.id === 'summary') {
       renderSummary();
     } else if (section.id === 'terms') {
@@ -320,6 +375,63 @@
         renderField(field);
       }
     }
+  }
+
+  // Called after a triggersAiFill photos field's background analysis
+  // completes. Only applies if the technician is still looking at that same
+  // section (otherwise it'd be a surprising change to a screen they've
+  // already left) — the result isn't lost, it's still sitting in
+  // currentReport.aiDraft for next time that section opens.
+  async function applySectionPhotoAiResults(sectionId, draftFieldsForSection) {
+    if (currentSectionId !== sectionId) return;
+    const section = findSection(sectionId);
+    applyDraftFieldsToPending(section, draftFieldsForSection);
+    renderCurrentSectionFields();
+    toast('AI suggestions added below from your photos — review and adjust as needed');
+  }
+
+  async function getCurrentUserEmail() {
+    if (!window.supabaseClient) return null;
+    try {
+      const { data } = await window.supabaseClient.auth.getSession();
+      return data && data.session && data.session.user ? data.session.user.email : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  async function openSectionEditor(sectionId) {
+    currentSectionId = sectionId;
+    const section = findSection(sectionId);
+    pendingSectionValues = { ...(currentReport.sections[sectionId] || {}) };
+
+    if (sectionId === 'inspector') {
+      const email = await getCurrentUserEmail();
+      const defaults = email && INSPECTOR_DEFAULTS_BY_EMAIL[email.toLowerCase()];
+      if (defaults) {
+        for (const [fieldId, value] of Object.entries(defaults)) {
+          const current = pendingSectionValues[fieldId];
+          const isEmpty = current === undefined || current === null || current === '';
+          if (isEmpty) pendingSectionValues[fieldId] = value;
+        }
+      }
+    }
+
+    // Pre-fill any AI-suggested value for fields the technician hasn't
+    // genuinely answered yet — either still empty, or still sitting at the
+    // schema's generic typical default (see defaultValuesForSection in
+    // report-schema.js). A real human edit away from the default is never
+    // overwritten; only untouched fields get the AI's evidence-based value,
+    // flagged via aiAppliedFieldIds so renderField can mark them, cleared
+    // the moment the technician actually touches that field.
+    aiAppliedFieldIds = new Set();
+    const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
+    applyDraftFieldsToPending(section, aiFieldsForSection);
+
+    sectionTitleEl.textContent = `${section.number}. ${section.title}`;
+    sectionSubtitleEl.textContent = section.subtitle || '';
+
+    renderCurrentSectionFields();
 
     hide(viewReport);
     show(viewReportSection);
@@ -440,7 +552,8 @@
       const current = new Set(pendingSectionValues[field.id] || []);
       const wrap = document.createElement('div');
       wrap.className = 'multiselect-list';
-      for (const opt of field.options) {
+
+      function addChip(opt, isCustom) {
         const chip = document.createElement('label');
         chip.className = 'checkbox-chip';
         const cb = document.createElement('input');
@@ -451,9 +564,39 @@
           pendingSectionValues[field.id] = Array.from(current);
         });
         chip.appendChild(cb);
-        chip.appendChild(document.createTextNode(opt));
-        wrap.appendChild(chip);
+        chip.appendChild(document.createTextNode(opt + (isCustom ? ' (custom)' : '')));
+        wrap.insertBefore(chip, wrap.lastElementChild); // keep the add-row pinned at the bottom
       }
+
+      const addRow = document.createElement('div');
+      addRow.className = 'row gap multiselect-add-row';
+      const addInput = document.createElement('input');
+      addInput.type = 'text';
+      addInput.placeholder = 'Add other…';
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'btn btn-secondary';
+      addBtn.textContent = '+ Add';
+      addBtn.addEventListener('click', () => {
+        const val = addInput.value.trim();
+        if (!val || current.has(val)) return;
+        current.add(val);
+        pendingSectionValues[field.id] = Array.from(current);
+        addInput.value = '';
+        addChip(val, true);
+      });
+      addRow.appendChild(addInput);
+      addRow.appendChild(addBtn);
+      wrap.appendChild(addRow);
+
+      for (const opt of field.options) addChip(opt, false);
+      // Already-saved values not in the fixed option list (added via "+ Add"
+      // on a previous edit) still need to render, or they'd silently vanish
+      // from view despite still being part of the saved value.
+      for (const val of current) {
+        if (!field.options.includes(val)) addChip(val, true);
+      }
+
       row.appendChild(wrap);
     } else if (field.type === 'photos') {
       row.appendChild(renderPhotosField(field));
@@ -498,6 +641,32 @@
     }
     redrawGrid();
 
+    let aiStatusEl = null;
+    let aiAnalysisInFlight = false;
+    if (field.triggersAiFill) {
+      aiStatusEl = document.createElement('p');
+      aiStatusEl.className = 'photo-field-ai-status hidden';
+      wrap.appendChild(aiStatusEl);
+    }
+
+    async function runAiFillFromPhotos() {
+      if (!field.triggersAiFill || !window.AI || !photos.length || aiAnalysisInFlight) return;
+      aiAnalysisInFlight = true;
+      const sectionIdAtStart = currentSectionId;
+      aiStatusEl.textContent = '🤖 Analyzing photo' + (photos.length === 1 ? '' : 's') + '…';
+      aiStatusEl.classList.remove('hidden');
+      try {
+        const result = await window.AI.analyzeSectionPhotos(photos.map((p) => p.blob), sectionIdAtStart);
+        await applySectionPhotoAiResults(sectionIdAtStart, (result.draftFields && result.draftFields[sectionIdAtStart]) || {});
+      } catch (err) {
+        console.warn('[report] photo-driven AI fill failed:', err.message || err);
+        toast('Could not analyze those photos: ' + (err.message || err));
+      } finally {
+        aiAnalysisInFlight = false;
+        if (aiStatusEl) aiStatusEl.classList.add('hidden');
+      }
+    }
+
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = 'image/*';
@@ -510,6 +679,7 @@
       pendingSectionValues[field.id] = photos;
       redrawGrid();
       fileInput.value = '';
+      runAiFillFromPhotos();
     });
 
     const addBtn = document.createElement('button');
