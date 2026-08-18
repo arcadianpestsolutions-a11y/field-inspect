@@ -15,6 +15,9 @@
   const reportSectionList = document.getElementById('report-section-list');
   const finalizeBtn = document.getElementById('finalize-report-btn');
   const finalizeHint = document.getElementById('finalize-hint');
+  const finalizePostActions = document.getElementById('finalize-post-actions');
+  const reportSendBtn = document.getElementById('report-send-btn');
+  const reportSaveBtn = document.getElementById('report-save-btn');
 
   const sectionBackBtn = document.getElementById('section-back-btn');
   const sectionTitleEl = document.getElementById('section-title');
@@ -278,6 +281,10 @@
     finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt;
     finalizeBtn.textContent = currentReport.finalizedAt ? '✓ Report Finalized' : 'Finalize Report';
     finalizeHint.classList.toggle('hidden', allRequiredGreen);
+    // Send/Save only make sense once the report is actually finalized —
+    // stays visible on reopen too, so a technician can come back and send
+    // it later without having to re-finalize.
+    finalizePostActions.classList.toggle('hidden', !currentReport.finalizedAt);
   }
 
   reportBackBtn.addEventListener('click', async () => {
@@ -295,22 +302,31 @@
     toast('Report finalized');
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
-    await offerEmailReport(currentJobId);
     offerForemanFollowUpTask(currentJobId);
   });
 
-  // Prompts to email the finalized report's PDF to the client, prefilled
-  // with the job's saved clientEmail if there is one. Cancelling the prompt
-  // (or leaving it blank) skips sending entirely — this is a real message
-  // to a real client, so it's always an explicit per-report confirmation,
-  // never silent/automatic.
-  async function offerEmailReport(jobId) {
-    if (!window.EmailService) return; // Supabase not configured, or the email Edge Function isn't set up
+  // The technician decides when to actually send, via the "Send Report"
+  // button that appears once finalized (renderSectionList) — nothing emails
+  // automatically just because the report was finalized.
+  reportSendBtn.addEventListener('click', () => emailReport(currentJobId));
+
+  // "Save Report" is a no-op beyond what's already true: the report is
+  // saved continuously as it's edited. This just lets the technician
+  // confirm they're done without being forced through the send flow.
+  reportSaveBtn.addEventListener('click', () => toast('Report saved'));
+
+  // Emails the finalized report's PDF to the client, prefilled with the
+  // job's saved clientEmail if there is one. Cancelling the prompt (or
+  // leaving it blank) skips sending entirely — this is a real message to a
+  // real client, so it's always an explicit per-report confirmation, never
+  // silent/automatic.
+  async function emailReport(jobId) {
+    if (!window.EmailService) { toast('Email sending is not set up.'); return; }
     try {
       const job = await DB.getJob(jobId);
       const defaultEmail = job.clientEmail || '';
       const recipientEmail = window.prompt(
-        'Email this finalized report to the client now?\n\nEnter their email address (or Cancel to skip):',
+        'Send the finalized report to the client.\n\nEnter their email address (or Cancel to skip):',
         defaultEmail
       );
       if (!recipientEmail || !recipientEmail.trim()) return;
