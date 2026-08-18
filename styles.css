@@ -1143,6 +1143,34 @@ select {
   font-size: 0.75rem;
 }
 
+.product-list-field { display: flex; flex-direction: column; gap: 10px; }
+.product-list-cards { display: flex; flex-direction: column; gap: 10px; }
+.product-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.product-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+.product-card-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+.product-card-field { display: flex; flex-direction: column; gap: 4px; }
+.product-card-field label { font-size: 0.78rem; color: var(--text-dim); }
+
 .signature-field { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .signature-canvas {
   width: 100%;

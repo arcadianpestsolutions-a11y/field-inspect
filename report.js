@@ -698,9 +698,99 @@
       row.appendChild(renderSignatureField(field));
     } else if (field.type === 'sketch') {
       row.appendChild(renderSketchField(field));
+    } else if (field.type === 'productList') {
+      row.appendChild(renderProductListField(field));
     }
 
     sectionFieldsEl.appendChild(row);
+  }
+
+  // Sub-fields shown per entry in a productList field (e.g. the Chemicals /
+  // Products Used section) — same 6 fields for every product, matching a
+  // typical pesticide-use record. Only productName is required per entry;
+  // the rest are commonly on the product label but not always all captured.
+  const PRODUCT_LIST_SUBFIELDS = [
+    { id: 'productName', label: 'Product / Trade Name', required: true },
+    { id: 'apvmaNumber', label: 'APVMA Registration Number' },
+    { id: 'activeConstituent', label: 'Active Constituent(s)' },
+    { id: 'batchNumber', label: 'Batch / Lot Number' },
+    { id: 'quantityApplied', label: 'Quantity Applied (e.g. 2.5 L, 500 g)' },
+    { id: 'dilutionRate', label: 'Dilution / Application Rate' },
+  ];
+
+  // Renders a repeatable list of structured chemical-product records — used
+  // for jobs where more than one product is applied (typical for a general
+  // pest treatment). Each entry is its own small card with all 6 sub-fields
+  // plus a remove button; "+ Add Product" appends a new blank one. Stored as
+  // an array of plain objects on pendingSectionValues[field.id], same
+  // mutate-in-place + redraw pattern as renderPhotosField.
+  function renderProductListField(field) {
+    const wrap = document.createElement('div');
+    wrap.className = 'product-list-field';
+    const cardsWrap = document.createElement('div');
+    cardsWrap.className = 'product-list-cards';
+
+    const products = pendingSectionValues[field.id] || [];
+    pendingSectionValues[field.id] = products;
+
+    function redraw() {
+      cardsWrap.innerHTML = '';
+      if (!products.length) {
+        cardsWrap.appendChild(Object.assign(document.createElement('p'), {
+          className: 'empty-hint',
+          textContent: 'No products added yet — tap "+ Add Product" to record one.',
+        }));
+      }
+      products.forEach((product, idx) => {
+        const card = document.createElement('div');
+        card.className = 'product-card';
+
+        const header = document.createElement('div');
+        header.className = 'product-card-header';
+        const title = document.createElement('span');
+        title.textContent = 'Product ' + (idx + 1);
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'product-card-remove';
+        removeBtn.textContent = '✕ Remove';
+        removeBtn.addEventListener('click', () => {
+          products.splice(idx, 1);
+          redraw();
+        });
+        header.appendChild(title);
+        header.appendChild(removeBtn);
+        card.appendChild(header);
+
+        for (const sub of PRODUCT_LIST_SUBFIELDS) {
+          const subRow = document.createElement('div');
+          subRow.className = 'product-card-field';
+          const label = document.createElement('label');
+          label.textContent = sub.label + (sub.required ? ' *' : '');
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.value = product[sub.id] || '';
+          input.addEventListener('input', () => { product[sub.id] = input.value; });
+          subRow.appendChild(label);
+          subRow.appendChild(input);
+          card.appendChild(subRow);
+        }
+        cardsWrap.appendChild(card);
+      });
+    }
+    redraw();
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn btn-outline';
+    addBtn.textContent = '+ Add Product';
+    addBtn.addEventListener('click', () => {
+      products.push({ id: DB.uid() });
+      redraw();
+    });
+
+    wrap.appendChild(cardsWrap);
+    wrap.appendChild(addBtn);
+    return wrap;
   }
 
   function renderPhotosField(field) {
@@ -1188,11 +1278,14 @@
     const safety = s('safety');
     const recs = s('recommendations');
 
+    const products = chemicals.products || [];
+    const productsSummary = products.map((p) => p.productName).filter(Boolean).join(', ');
+
     const rows = [
       ['Target pest(s)', (pest.targetPests || []).join(', '), 'pestIdentification'],
       ['Infestation level', pest.infestationLevel, 'pestIdentification'],
       ['Treatment method(s)', (treatment.treatmentMethods || []).join(', '), 'treatmentDetails'],
-      ['Product used', chemicals.productName, 'chemicals'],
+      ['Products used', productsSummary, 'chemicals'],
       ['Re-entry period', safety.reEntryPeriod, 'safety'],
       ['Follow-up treatment required?', recs.followUpRequired, 'recommendations'],
     ];
@@ -1277,6 +1370,8 @@
     img.sig{max-width:280px;border:1px solid #ddd;}
     .sketch-page{page-break-before:always;}
     .sketch-img{max-width:100%;border:1px solid #ddd;border-radius:4px;}
+    .product-pdf-card{border:1px solid #ccc;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:13px;}
+    .product-pdf-title{font-weight:bold;font-size:14px;margin-bottom:4px;}
     @media print { .no-print{display:none;} }
   `;
 
@@ -1334,6 +1429,20 @@
           } else if (field.type === 'sketch') {
             if (!val) continue;
             html += `<div class="field sketch-page"><div class="field-label">${escapeHtml(field.label)}</div><img class="sketch-img" src="${val}"></div>`;
+          } else if (field.type === 'productList') {
+            const products = val || [];
+            if (!products.length) continue;
+            html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div>`;
+            products.forEach((p, idx) => {
+              html += `<div class="product-pdf-card"><div class="product-pdf-title">Product ${idx + 1}${p.productName ? ': ' + escapeHtml(p.productName) : ''}</div>`;
+              if (p.apvmaNumber) html += `<div>APVMA Reg. No: ${escapeHtml(p.apvmaNumber)}</div>`;
+              if (p.activeConstituent) html += `<div>Active Constituent: ${escapeHtml(p.activeConstituent)}</div>`;
+              if (p.batchNumber) html += `<div>Batch/Lot No: ${escapeHtml(p.batchNumber)}</div>`;
+              if (p.quantityApplied) html += `<div>Quantity Applied: ${escapeHtml(p.quantityApplied)}</div>`;
+              if (p.dilutionRate) html += `<div>Dilution/Application Rate: ${escapeHtml(p.dilutionRate)}</div>`;
+              html += `</div>`;
+            });
+            html += `</div>`;
           } else {
             html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">${escapeHtml(fmtVal(val))}</div></div>`;
           }

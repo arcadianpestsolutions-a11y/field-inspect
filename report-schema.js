@@ -5,7 +5,10 @@
 // Each field has: id, label, type, options?, showIf?, required?, aiFillable?, default?
 //
 // Field types: text | textarea | select | yesno | multiselect | date | time |
-//              photos | signature | static
+//              photos | signature | static | productList (repeatable
+//              structured records — see pest-treatment-schema.js's
+//              "chemicals" section; rendered/validated generically by
+//              report.js just like every other type here)
 //
 // `showIf: { field: 'otherFieldId', equals: 'Yes' }` — field only renders/counts
 // once the condition is met (mirrors the conditional layout in the source PDFs).
@@ -280,7 +283,8 @@ function computeSectionStatus(section, values) {
   for (const field of requiredFields) {
     if (!isFieldVisible(field, values)) continue;
     const val = values[field.id];
-    if (val === undefined || val === null || val === '') return 'yellow';
+    const isEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
+    if (isEmpty) return 'yellow';
   }
   if (section.id === 'acknowledgement') {
     return values.clientSignature ? 'green' : 'yellow';
