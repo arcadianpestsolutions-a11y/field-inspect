@@ -284,7 +284,7 @@
     // Send/Save only make sense once the report is actually finalized —
     // stays visible on reopen too, so a technician can come back and send
     // it later without having to re-finalize.
-    finalizePostActions.classList.toggle('hidden', !currentReport.finalizedAt);
+    if (finalizePostActions) finalizePostActions.classList.toggle('hidden', !currentReport.finalizedAt);
   }
 
   reportBackBtn.addEventListener('click', async () => {
@@ -308,12 +308,19 @@
   // The technician decides when to actually send, via the "Send Report"
   // button that appears once finalized (renderSectionList) — nothing emails
   // automatically just because the report was finalized.
-  reportSendBtn.addEventListener('click', () => emailReport(currentJobId));
+  // Guarded: a GitHub Pages deploy can take a minute or two to fully
+  // propagate through its CDN, so a page loaded mid-propagation can end up
+  // with a mismatched index.html (missing these buttons) paired with a
+  // newer report.js that expects them. Without this guard, a null element
+  // here throws at script-load time and aborts everything below it in this
+  // file — which previously masqueraded as "Finish Inspection hangs", since
+  // openReview() depends on code defined later in this same script.
+  if (reportSendBtn) reportSendBtn.addEventListener('click', () => emailReport(currentJobId));
 
   // "Save Report" is a no-op beyond what's already true: the report is
   // saved continuously as it's edited. This just lets the technician
   // confirm they're done without being forced through the send flow.
-  reportSaveBtn.addEventListener('click', () => toast('Report saved'));
+  if (reportSaveBtn) reportSaveBtn.addEventListener('click', () => toast('Report saved'));
 
   // Emails the finalized report's PDF to the client, prefilled with the
   // job's saved clientEmail if there is one. Cancelling the prompt (or
