@@ -50,20 +50,23 @@ Deno.serve(async (req) => {
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
 
     const body = await req.json();
-    const { recipientEmail, recipientName, jobName, pdfBase64 } = body;
+    const { recipientEmail, recipientName, jobName, jobType, pdfBase64 } = body;
 
     if (!recipientEmail || !EMAIL_PATTERN.test(recipientEmail)) {
       return json({ error: 'A valid recipientEmail is required' }, 400);
     }
     if (!pdfBase64) return json({ error: 'pdfBase64 is required' }, 400);
 
-    const subject = `Termite Inspection Report${jobName ? ' — ' + jobName : ''}`;
+    const isPestTreatment = jobType === 'pest_treatment';
+    const reportLabel = isPestTreatment ? 'General Pest Treatment Report' : 'Termite Inspection Report';
+    const subject = `${reportLabel}${jobName ? ' — ' + jobName : ''}`;
     const html = `
       <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
-      <p>Please find attached your termite inspection report from Arcadian Pest Solutions.</p>
+      <p>Please find attached your ${isPestTreatment ? 'pest treatment report' : 'termite inspection report'} from Arcadian Pest Solutions.</p>
       <p>If you have any questions about this report, please get in touch.</p>
       <p>Kind regards,<br>Arcadian Pest Solutions</p>
     `;
+    const attachmentFilename = isPestTreatment ? 'pest-treatment-report.pdf' : 'termite-inspection-report.pdf';
 
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -76,7 +79,7 @@ Deno.serve(async (req) => {
         to: [recipientEmail],
         subject,
         html,
-        attachments: [{ filename: 'termite-inspection-report.pdf', content: pdfBase64 }],
+        attachments: [{ filename: attachmentFilename, content: pdfBase64 }],
       }),
     });
 

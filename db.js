@@ -71,12 +71,17 @@ const DB = {
   JOB_STATUS_LABELS,
 
   // ---------- Jobs ----------
-  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail }) {
+  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType }) {
     const store = await tx('jobs', 'readwrite');
     const now = Date.now();
     const job = {
       id: uid(),
       name,
+      // 'termite' (AS 3660.2 inspection) or 'pest_treatment' (general pest
+      // treatment / chemical application) — picked at job creation, drives
+      // which report schema report.js uses for this job. Never changed
+      // after creation, so it's safe for report.js to treat it as fixed.
+      jobType: jobType === 'pest_treatment' ? 'pest_treatment' : 'termite',
       address: address || '',
       // Geocoded once at address-selection time (see app.js's Nominatim
       // suggestion handler) so the aerial mud-map backdrop never needs a

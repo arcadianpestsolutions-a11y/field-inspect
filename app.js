@@ -17,6 +17,7 @@
   const logoutBtn = document.getElementById('logout-btn');
 
   const jobForm = document.getElementById('job-form');
+  const jobTypePicker = document.getElementById('job-type-picker');
   const jobNameInput = document.getElementById('job-name');
   const jobAddressInput = document.getElementById('job-address');
   const jobAddressSuggestions = document.getElementById('job-address-suggestions');
@@ -411,6 +412,8 @@
           <span class="status-badge status-${job.status || 'new'} small"></span>
         </span>
         <span class="job-item-meta">
+          <span class="job-item-type"></span>
+          <span>·</span>
           <span class="job-item-date"></span>
           <span>·</span>
           <span>${count} capture${count === 1 ? '' : 's'}</span>
@@ -418,6 +421,7 @@
       `;
       li.querySelector('.job-item-name').textContent = job.name;
       li.querySelector('.status-badge').textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
+      li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment' : '🐜 Termite';
       li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
       li.addEventListener('click', () => showJobView(job.id));
       jobListEl.appendChild(li);
@@ -446,6 +450,12 @@
     jobEmailInput.value = '';
     jobNotesInput.value = '';
     selectedAddressCoords = null;
+    selectedJobType = 'termite';
+    if (jobTypePicker) {
+      jobTypePicker.querySelectorAll('.job-type-chip').forEach((chip) => {
+        chip.classList.toggle('active', chip.dataset.jobType === 'termite');
+      });
+    }
     hideAddressSuggestions();
     show(jobForm);
     jobNameInput.focus();
@@ -458,6 +468,7 @@
     if (!name) { toast('Enter a job name'); jobNameInput.focus(); return; }
     const job = await DB.addJob({
       name,
+      jobType: selectedJobType,
       address: jobAddressInput.value.trim(),
       addressLat: selectedAddressCoords ? selectedAddressCoords.lat : null,
       addressLng: selectedAddressCoords ? selectedAddressCoords.lng : null,
@@ -483,6 +494,22 @@
   // need a second network round-trip. Cleared whenever the address text is
   // edited without picking a fresh suggestion, since it'd no longer be trustworthy.
   let selectedAddressCoords = null;
+
+  // Which job type the New Job form will create — 'termite' (AS 3660.2
+  // inspection) or 'pest_treatment' (general pest treatment / chemical
+  // application). Defaults to termite (matches the chip marked "active" in
+  // the HTML) and resets to that default each time the form is opened.
+  let selectedJobType = 'termite';
+  if (jobTypePicker) {
+    jobTypePicker.addEventListener('click', (e) => {
+      const btn = e.target.closest('.job-type-chip');
+      if (!btn) return;
+      selectedJobType = btn.dataset.jobType;
+      jobTypePicker.querySelectorAll('.job-type-chip').forEach((chip) => {
+        chip.classList.toggle('active', chip === btn);
+      });
+    });
+  }
 
   function hideAddressSuggestions() {
     hide(jobAddressSuggestions);
@@ -1213,7 +1240,8 @@
         // on it. jobIdAtStart is captured since the user may navigate
         // elsewhere before this resolves.
         if (window.AI && window.ReportUI) {
-          window.AI.analyzeInspection(blob)
+          const jobForAi = await DB.getJob(jobIdAtStart);
+          window.AI.analyzeInspection(blob, jobForAi && jobForAi.jobType)
             .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
             .then(() => toast('AI draft ready — review suggested values in the report'))
             .catch((err) => {

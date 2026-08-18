@@ -47,6 +47,7 @@
     return {
       id: job.id,
       name: job.name,
+      job_type: job.jobType || 'termite',
       address: job.address || '',
       address_lat: typeof job.addressLat === 'number' ? job.addressLat : null,
       address_lng: typeof job.addressLng === 'number' ? job.addressLng : null,
@@ -69,6 +70,7 @@
     return {
       id: rj.id,
       name: rj.name,
+      jobType: rj.job_type === 'pest_treatment' ? 'pest_treatment' : 'termite',
       address: rj.address || '',
       addressLat: typeof rj.address_lat === 'number' ? rj.address_lat : null,
       addressLng: typeof rj.address_lng === 'number' ? rj.address_lng : null,

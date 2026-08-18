@@ -59,6 +59,10 @@
     </div>
 
     <div id="job-form" class="card job-form hidden">
+      <div id="job-type-picker" class="job-type-picker" role="radiogroup" aria-label="Job type">
+        <button type="button" class="job-type-chip active" data-job-type="termite">🐜 Termite Inspection</button>
+        <button type="button" class="job-type-chip" data-job-type="pest_treatment">🧪 General Pest Treatment</button>
+      </div>
       <input id="job-name" type="text" placeholder="Client / site name" autocomplete="off" />
       <div class="address-field">
         <input id="job-address" type="text" placeholder="Property address (optional)" autocomplete="off" />
@@ -305,6 +309,7 @@
 <script src="supabase-config.js"></script>
 <script src="db.js"></script>
 <script src="report-schema.js"></script>
+<script src="pest-treatment-schema.js"></script>
 <script src="sync.js"></script>
 <script src="ai.js"></script>
 <script src="email.js"></script>

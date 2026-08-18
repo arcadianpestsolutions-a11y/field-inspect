@@ -330,6 +330,36 @@ input:focus, textarea:focus {
   border-color: var(--accent);
 }
 
+.job-type-picker {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.job-type-chip {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 10px;
+  padding: 10px 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.job-type-chip.active {
+  background: var(--accent);
+  color: #06282f;
+  border-color: var(--accent);
+}
+
+.job-item-type {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
 /* ---------- Job list ---------- */
 .job-list {
   list-style: none;

@@ -2,7 +2,22 @@
   'use strict';
 
   const { isFieldVisible, computeSectionStatus, defaultValuesForSection } = window.ReportSchemaUtils;
-  const SCHEMA = window.REPORT_SCHEMA;
+
+  // Two report types share this file: the termite inspection report
+  // (window.REPORT_SCHEMA) and the general pest treatment / chemical
+  // application report (window.PEST_TREATMENT_SCHEMA, pest-treatment-
+  // schema.js) — picked per-job at job creation (job.jobType) and never
+  // changed afterwards. Everything below resolves the right schema
+  // dynamically instead of capturing one at script-load time, so both
+  // report types share this exact same editor/PDF/AI-draft code path.
+  function schemaFor(jobType) {
+    return jobType === 'pest_treatment' ? (window.PEST_TREATMENT_SCHEMA || []) : window.REPORT_SCHEMA;
+  }
+  // Convenience for the many call sites that only run once a report is open
+  // (currentJob is set in openReview before any of them can be reached).
+  function currentSchema() {
+    return schemaFor(currentJob && currentJob.jobType);
+  }
 
   // ---------- Element refs ----------
   const viewReport = document.getElementById('view-report');
@@ -58,7 +73,7 @@
   }
 
   function findSection(sectionId) {
-    return SCHEMA.find((s) => s.id === sectionId);
+    return currentSchema().find((s) => s.id === sectionId);
   }
 
   // ---------- Report load / prefill ----------
@@ -68,7 +83,7 @@
 
     const job = await DB.getJob(jobId);
     const sections = {};
-    for (const section of SCHEMA) {
+    for (const section of schemaFor(job && job.jobType)) {
       sections[section.id] = defaultValuesForSection(section);
     }
     sections.clientDetails = {
@@ -199,7 +214,7 @@
     aiDraftInProgress = true;
     updateAiDraftButton();
     try {
-      const result = await window.AI.analyzeInspection(liveVideo.blob);
+      const result = await window.AI.analyzeInspection(liveVideo.blob, currentJob && currentJob.jobType);
       await ReportUI.applyAiDraft(currentJobId, result);
       toast('AI draft ready — suggested values will appear when you open each section');
     } catch (err) {
@@ -258,7 +273,7 @@
     reportSectionList.innerHTML = '';
     let allRequiredGreen = true;
 
-    for (const section of SCHEMA) {
+    for (const section of currentSchema()) {
       const values = currentReport.sections[section.id] || {};
       const status = computeSectionStatus(section, values);
       if (status !== 'green' && section.id !== 'acknowledgement') allRequiredGreen = false;
@@ -355,6 +370,7 @@
           recipientEmail: recipientEmail.trim(),
           recipientName: clientDetails.clientName || job.name,
           jobName: job.name,
+          jobType: job.jobType,
           pdfBlob,
         });
       } finally {
@@ -444,7 +460,8 @@
     revokeAllUrls();
     sectionFieldsEl.innerHTML = '';
     if (section.id === 'summary') {
-      renderSummary();
+      if (currentJob && currentJob.jobType === 'pest_treatment') renderPestTreatmentSummary();
+      else renderSummary();
     } else if (section.id === 'terms') {
       renderFixedTerms();
     } else {
@@ -733,7 +750,7 @@
       aiStatusEl.textContent = '🤖 Analyzing photo' + (photos.length === 1 ? '' : 's') + '…';
       aiStatusEl.classList.remove('hidden');
       try {
-        const result = await window.AI.analyzeSectionPhotos(photos.map((p) => p.blob), sectionIdAtStart);
+        const result = await window.AI.analyzeSectionPhotos(photos.map((p) => p.blob), sectionIdAtStart, currentJob && currentJob.jobType);
         await applySectionPhotoAiResults(sectionIdAtStart, (result.draftFields && result.draftFields[sectionIdAtStart]) || {});
       } catch (err) {
         console.warn('[report] photo-driven AI fill failed:', err.message || err);
@@ -1163,6 +1180,44 @@
     sectionFieldsEl.appendChild(wrap);
   }
 
+  function renderPestTreatmentSummary() {
+    const s = (id) => currentReport.sections[id] || {};
+    const pest = s('pestIdentification');
+    const treatment = s('treatmentDetails');
+    const chemicals = s('chemicals');
+    const safety = s('safety');
+    const recs = s('recommendations');
+
+    const rows = [
+      ['Target pest(s)', (pest.targetPests || []).join(', '), 'pestIdentification'],
+      ['Infestation level', pest.infestationLevel, 'pestIdentification'],
+      ['Treatment method(s)', (treatment.treatmentMethods || []).join(', '), 'treatmentDetails'],
+      ['Product used', chemicals.productName, 'chemicals'],
+      ['Re-entry period', safety.reEntryPeriod, 'safety'],
+      ['Follow-up treatment required?', recs.followUpRequired, 'recommendations'],
+    ];
+
+    const wrap = document.createElement('div');
+    wrap.className = 'summary-list';
+    for (const [label, value, srcSection] of rows) {
+      const flagged = value === 'Yes' || value === 'High';
+      const row = document.createElement('div');
+      row.className = 'summary-row';
+      row.innerHTML = `
+        <span class="summary-flag ${flagged ? 'flag-red' : 'flag-green'}"></span>
+        <span class="summary-label">${escapeHtml(label)}</span>
+        <span class="summary-value">${value ? escapeHtml(value) : '—'}</span>
+      `;
+      row.addEventListener('click', () => openSectionEditor(srcSection));
+      wrap.appendChild(row);
+    }
+    wrap.appendChild(Object.assign(document.createElement('p'), {
+      className: 'empty-hint',
+      textContent: 'This summary updates automatically from your answers in Pest Identification, Treatment Details, Chemicals and Recommendations — tap any row to jump there.',
+    }));
+    sectionFieldsEl.appendChild(wrap);
+  }
+
   const FIXED_TERMS_HTML = `
     <p><strong>1. Nature of the Inspection.</strong> This Report does not conclusively determine that the Property is free of Termites and damage caused by Termites. The Inspection undertaken was a Non-Invasive Inspection of the Property for evidence of Termites, Termite activity, and damage caused by Termites, carried out in accordance with AS 3660.2-2017. Use of and reliance upon this Report is solely at the reader's own risk, and only the Client (not any third party) may rely on it.</p>
     <p><strong>2. Scope exclusions.</strong> Drywood termites are outside the scope of AS 3660.2-2017. Where evidence of drywood termites or other timber pests is observed during the Inspection, this is noted in the Report as a courtesy (duty to warn) — a specific drywood termite inspection by a suitably qualified provider is recommended if such evidence is found.</p>
@@ -1172,10 +1227,19 @@
     <p class="empty-hint">This wording reflects common industry practice and the AS 3660.2-2017 records-retention requirement, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
   `;
 
+  const FIXED_TERMS_HTML_PEST = `
+    <p><strong>1. Nature of the treatment.</strong> This treatment was carried out using registered pest control products in accordance with label directions and relevant state/territory pesticide legislation. Pest treatments reduce pest activity but do not guarantee total elimination or prevent future reinfestation — ongoing monitoring and, where recommended, follow-up treatment may be required.</p>
+    <p><strong>2. Chemical use records.</strong> Details of the product(s), batch number(s), and application method used are recorded in this report and retained by the Service Provider for a minimum of three (3) years, as required for pesticide use record-keeping.</p>
+    <p><strong>3. Re-entry and withholding.</strong> The Client must observe the re-entry period and any withholding period noted in this report before returning to treated areas or allowing pets/children access, and must comply with any safety directions on the product label.</p>
+    <p><strong>4. Australian Consumer Law.</strong> Nothing in this report or these Terms excludes, restricts or modifies any guarantee, warranty, term or condition implied or imposed by the Australian Consumer Law (or any other applicable law) that cannot lawfully be excluded. Where permitted, the Service Provider's liability is limited, at its option, to resupply of the service, or payment of the cost of resupply.</p>
+    <p><strong>5. Limitations.</strong> Treatment was limited to the areas accessible and treated as noted in this report. Areas that were inaccessible, obstructed, or outside the agreed scope of work were not treated.</p>
+    <p class="empty-hint">This wording reflects common industry practice, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
+  `;
+
   function renderFixedTerms() {
     const wrap = document.createElement('div');
     wrap.className = 'terms-text';
-    wrap.innerHTML = FIXED_TERMS_HTML;
+    wrap.innerHTML = (currentJob && currentJob.jobType === 'pest_treatment') ? FIXED_TERMS_HTML_PEST : FIXED_TERMS_HTML;
     sectionFieldsEl.appendChild(wrap);
   }
 
@@ -1224,18 +1288,26 @@
   // bother, since closing that tab/window naturally releases them; the PDF
   // path does, since it runs in the current page's lifetime).
   function buildReportBodyHtml(job, report, trackedUrls) {
-    let html = `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
+    const isPestTreatment = job && job.jobType === 'pest_treatment';
+    const html0 = isPestTreatment
+      ? `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
+      <h1>General Pest Treatment Report</h1>
+      <p>Chemical Application Record<br>${escapeHtml(job ? job.address : '')}</p>`
+      : `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
       <h1>Termite Inspection Report</h1>
       <p>In Accordance with AS 3660.2-2017<br>${escapeHtml(job ? job.address : '')}</p>`;
+    let html = html0;
 
-    for (const section of SCHEMA) {
+    for (const section of schemaFor(job && job.jobType)) {
       const values = report.sections[section.id] || {};
       html += `<div class="section"><div class="section-head" style="background:${section.color}"><h2>${section.number}. ${escapeHtml(section.title)}</h2></div>`;
 
       if (section.id === 'summary') {
-        html += `<p>See Findings, Access and Conducive Conditions sections for full detail.</p>`;
+        html += isPestTreatment
+          ? `<p>See Pest Identification, Treatment Details, Chemicals and Recommendations sections for full detail.</p>`
+          : `<p>See Findings, Access and Conducive Conditions sections for full detail.</p>`;
       } else if (section.id === 'terms') {
-        html += FIXED_TERMS_HTML;
+        html += isPestTreatment ? FIXED_TERMS_HTML_PEST : FIXED_TERMS_HTML;
       } else if (section.fixed) {
         for (const field of section.fields) {
           const val = values[field.id] !== undefined ? values[field.id] : field.default;
@@ -1277,7 +1349,8 @@
     const printWin = window.open('', '_blank');
     if (!printWin) { toast('Allow pop-ups to export the PDF'); return; }
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Termite Inspection Report</title>
+    const titleText = job && job.jobType === 'pest_treatment' ? 'General Pest Treatment Report' : 'Termite Inspection Report';
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(titleText)}</title>
       <style>${REPORT_PDF_STYLE}</style></head><body>
       <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>
       ${buildReportBodyHtml(job, currentReport)}

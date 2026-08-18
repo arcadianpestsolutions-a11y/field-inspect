@@ -86,10 +86,11 @@ function extractJson(text: string): any {
 }
 
 async function handleDraftReport(body: any) {
-  const { frames, audioBase64, audioMimeType, fieldSchema } = body;
+  const { frames, audioBase64, audioMimeType, fieldSchema, reportType } = body;
   if (!Array.isArray(frames) || !fieldSchema) {
     return json({ error: 'draft-report requires frames[] and fieldSchema' }, 400);
   }
+  const isPestTreatment = reportType === 'pest_treatment';
 
   const transcription = audioBase64
     ? await transcribeAudio(audioBase64, audioMimeType || 'audio/webm')
@@ -105,12 +106,18 @@ async function handleDraftReport(body: any) {
     };
   });
 
-  const systemPrompt = `You are assisting a licensed pest inspector drafting a termite inspection report (AS 3660.2-2017, Australia). You are given still frames sampled from the inspector's walkthrough video and a transcript of their spoken narration. Your job: propose draft values ONLY for the fields listed below, based on what's visible/audible. Never invent specifics you can't support from the frames or transcript (species, exact measurements, etc.) — leave a field out of your response entirely if you're not reasonably confident, rather than guessing. This is a DRAFT for a licensed professional to review, edit, and confirm before it becomes part of a legal compliance document — it is not the final report.
+  const domainDescription = isPestTreatment
+    ? 'a general pest treatment / chemical application report (residential, commercial, or industrial pest control, Australia)'
+    : 'a termite inspection report (AS 3660.2-2017, Australia)';
+  const zoneExamples = isPestTreatment
+    ? '(e.g. "Kitchen", "Roof Void", "Exterior Perimeter")'
+    : '(e.g. "Kitchen", "Subfloor", "Roof Void")';
+  const systemPrompt = `You are assisting a licensed pest technician drafting ${domainDescription}. You are given still frames sampled from the technician's walkthrough video and a transcript of their spoken narration. Your job: propose draft values ONLY for the fields listed below, based on what's visible/audible. Never invent specifics you can't support from the frames or transcript (species, product names, exact measurements, etc.) — leave a field out of your response entirely if you're not reasonably confident, rather than guessing. This is a DRAFT for a licensed professional to review, edit, and confirm before it becomes part of a compliance document — it is not the final report.
 
 Fields you may fill (id, section, label, type, options if applicable):
 ${JSON.stringify(fieldSchema, null, 2)}
 
-Also identify, for distinct time ranges in the footage, what zone/room is being shown (e.g. "Kitchen", "Subfloor", "Roof Void") and any brief pest-relevant notes for that zone.
+Also identify, for distinct time ranges in the footage, what zone/room is being shown ${zoneExamples} and any brief pest-relevant notes for that zone.
 
 Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
 {

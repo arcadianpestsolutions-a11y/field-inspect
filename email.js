@@ -33,10 +33,10 @@
   // Emails a finalized report's PDF to a client. pdfBlob is expected from
   // ReportUI.generatePdfBlob(jobId). Throws on failure — callers show
   // whatever went wrong rather than assuming success.
-  async function sendReportEmail({ recipientEmail, recipientName, jobName, pdfBlob }) {
+  async function sendReportEmail({ recipientEmail, recipientName, jobName, jobType, pdfBlob }) {
     const pdfBase64 = await blobToBase64(pdfBlob);
     const { data, error } = await supabaseClient.functions.invoke('send-report-email', {
-      body: { recipientEmail, recipientName, jobName, pdfBase64 },
+      body: { recipientEmail, recipientName, jobName, jobType, pdfBase64 },
     });
     if (error) throw error;
     if (data && data.error) throw new Error(data.error);

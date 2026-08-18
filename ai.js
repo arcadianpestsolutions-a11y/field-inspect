@@ -44,11 +44,12 @@
   }
 
   // Builds the compact field-schema description the Edge Function's prompt
-  // needs, straight from the single source of truth in report-schema.js —
-  // never duplicated/hand-maintained separately. Pass a sectionId to scope
-  // it to just that section's aiFillable fields.
-  function buildAiFillableFieldSchema(onlySectionId) {
-    const schema = window.REPORT_SCHEMA || [];
+  // needs, straight from the single source of truth in report-schema.js (or
+  // pest-treatment-schema.js for jobType 'pest_treatment') — never
+  // duplicated/hand-maintained separately. Pass a sectionId to scope it to
+  // just that section's aiFillable fields.
+  function buildAiFillableFieldSchema(onlySectionId, jobType) {
+    const schema = (jobType === 'pest_treatment' ? window.PEST_TREATMENT_SCHEMA : window.REPORT_SCHEMA) || [];
     const fields = [];
     for (const section of schema) {
       if (onlySectionId && section.id !== onlySectionId) continue;
@@ -260,13 +261,14 @@
   // plus the recording's audio for transcription + drafting. Returns
   // { transcript, draftFields, frameNotes } — caller persists this onto
   // report.aiDraft, never directly into report.sections (suggestions only).
-  async function analyzeInspection(footageBlob) {
+  async function analyzeInspection(footageBlob, jobType) {
     const frames = await extractFrames(footageBlob, 12);
     const audioBase64 = await blobToBase64(footageBlob);
-    const fieldSchema = buildAiFillableFieldSchema();
+    const fieldSchema = buildAiFillableFieldSchema(undefined, jobType);
 
     return invoke({
       action: 'draft-report',
+      reportType: jobType || 'termite',
       frames,
       audioBase64,
       audioMimeType: footageBlob.type || 'video/webm',
@@ -293,13 +295,13 @@
   // — it already treats audio as optional, so no audio is sent here at all.
   // Returns { transcript, draftFields, frameNotes } same shape as
   // analyzeInspection; caller reads draftFields[sectionId].
-  async function analyzeSectionPhotos(photoBlobs, sectionId) {
+  async function analyzeSectionPhotos(photoBlobs, sectionId, jobType) {
     const frames = await Promise.all(photoBlobs.map(async (blob, i) => ({
       timestamp: i,
       dataUrl: await blobToDataUrl(blob),
     })));
-    const fieldSchema = buildAiFillableFieldSchema(sectionId);
-    return invoke({ action: 'draft-report', frames, fieldSchema });
+    const fieldSchema = buildAiFillableFieldSchema(sectionId, jobType);
+    return invoke({ action: 'draft-report', reportType: jobType || 'termite', frames, fieldSchema });
   }
 
   window.AI = { analyzeInspection, subdivideRooms, fetchFootprint, fetchCurrentWeather, analyzeSectionPhotos };
