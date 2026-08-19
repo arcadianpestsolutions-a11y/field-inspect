@@ -1184,7 +1184,16 @@
       // a timeout is what turns that silent hang into a message.
       inspectionStream = await Promise.race([
         navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
+          // 720p is ample for a continuous evidence record, and the still
+          // button captures at full sensor resolution for anything that needs
+          // detail. Left uncapped, a phone records 1080p+ at ~8Mbps: a 20
+          // minute inspection is ~1.2GB pushed over the technician's mobile
+          // data, and ~720GB of stored footage after a year at 50 jobs/month.
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
           audio: true,
         }),
         new Promise((_, reject) =>
@@ -1216,10 +1225,14 @@
       show(inspectionModal);
 
       inspectionChunks = [];
+      // Bitrate has to be capped explicitly — MediaRecorder defaults to
+      // whatever the encoder feels like, typically several Mbps. 1.2Mbps at
+      // 720p is a clear evidence record at roughly a sixth of the size.
       const mimeType = pickVideoMimeType();
+      const recorderOptions = { videoBitsPerSecond: 1200000, audioBitsPerSecond: 64000 };
       inspectionRecorder = mimeType
-        ? new MediaRecorder(inspectionStream, { mimeType })
-        : new MediaRecorder(inspectionStream);
+        ? new MediaRecorder(inspectionStream, { mimeType, ...recorderOptions })
+        : new MediaRecorder(inspectionStream, recorderOptions);
 
       inspectionRecorder.addEventListener('dataavailable', (e) => {
         if (e.data && e.data.size > 0) inspectionChunks.push(e.data);
