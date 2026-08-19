@@ -561,6 +561,58 @@
     await wait(100);
   });
 
+  test('UI: Start Inspection reports a camera failure instead of doing nothing', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Start Fail Job' });
+    win.showJobListView();
+    await wait(200);
+    const row = Array.from(doc.querySelectorAll('#job-list .job-item'))
+      .find((li) => li.textContent.includes('Start Fail Job'));
+    row.click();
+    await wait(250);
+
+    const btn = doc.getElementById('start-inspection-btn');
+    const original = win.navigator.mediaDevices.getUserMedia;
+    try {
+      win.navigator.mediaDevices.getUserMedia = () =>
+        Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
+      btn.click();
+      await wait(400);
+      const toastText = doc.getElementById('toast').textContent;
+      assert(/blocked|permission/i.test(toastText), `expected a permission message, got: "${toastText}"`);
+      assert(!btn.disabled, 'button must be usable again after a failed start');
+    } finally {
+      win.navigator.mediaDevices.getUserMedia = original;
+    }
+  });
+
+  test('UI: a hanging camera prompt still recovers the Start button', async () => {
+    // The reported field bug: getUserMedia neither resolves nor rejects when
+    // the OS permission sheet is dismissed, so the tap produced no recording
+    // and no message. The button must at minimum show it registered the tap.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Start Hang Job' });
+    win.showJobListView();
+    await wait(200);
+    Array.from(doc.querySelectorAll('#job-list .job-item'))
+      .find((li) => li.textContent.includes('Start Hang Job')).click();
+    await wait(250);
+
+    const btn = doc.getElementById('start-inspection-btn');
+    const original = win.navigator.mediaDevices.getUserMedia;
+    try {
+      win.navigator.mediaDevices.getUserMedia = () => new Promise(() => {}); // never settles
+      btn.click();
+      await wait(400);
+      assert(btn.disabled, 'button should be disabled while starting');
+      assert(/starting/i.test(btn.textContent), `button should show progress, got: "${btn.textContent}"`);
+    } finally {
+      win.navigator.mediaDevices.getUserMedia = original;
+    }
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';

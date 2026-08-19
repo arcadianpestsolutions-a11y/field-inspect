@@ -1127,33 +1127,96 @@
   // detail modal's "Attach Voice Note" flow, so that stays intact.
 
   // ---------- Start / Finish Inspection (continuous video+audio, live preview) ----------
+  // Mirrors the defensive treatment finishInspection already has. Every exit
+  // path below must either start a recording or say plainly why it couldn't —
+  // a tap that produces no recording AND no message is indistinguishable from
+  // a dead button, which is exactly how this was reported from the field.
+  let startInspectionInProgress = false;
+
   async function startInspection() {
+    if (startInspectionInProgress) return;
+    startInspectionInProgress = true;
+
+    const originalLabel = startInspectionBtn.textContent;
+    startInspectionBtn.disabled = true;
+    startInspectionBtn.textContent = '⏳ Starting camera…';
+    const resetButton = () => {
+      startInspectionInProgress = false;
+      startInspectionBtn.disabled = false;
+      startInspectionBtn.textContent = originalLabel;
+    };
+    // Releases the camera/mic if we acquired them but then bailed — otherwise
+    // the indicator light stays on and the device stays locked to this tab.
+    const releaseStream = () => {
+      if (!inspectionStream) return;
+      inspectionStream.getTracks().forEach((t) => t.stop());
+      inspectionStream = null;
+    };
+
     try {
-      inspectionStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
-        audio: true,
-      });
+      // getUserMedia does NOT always settle. If the OS permission sheet is
+      // dismissed by a swipe rather than answered — common on iOS, and on
+      // Android when the app is backgrounded mid-prompt — the promise hangs
+      // forever: no resolve, no reject, no error to catch. Racing it against
+      // a timeout is what turns that silent hang into a message.
+      inspectionStream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: true,
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('__timeout__')), 15000)),
+      ]);
     } catch (err) {
-      toast('Could not access camera/microphone for inspection recording');
+      releaseStream();
+      if (err && err.message === '__timeout__') {
+        toast('The camera never responded. Check this site has camera and microphone permission, then try again.');
+      } else if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+        toast('Camera/microphone access was blocked. Allow it for this site in your browser settings, then try again.');
+      } else if (err && err.name === 'NotFoundError') {
+        toast('No camera or microphone was found on this device.');
+      } else {
+        toast('Could not start the camera: ' + ((err && err.message) || err));
+      }
+      resetButton();
       return;
     }
 
-    inspectionVideo.srcObject = inspectionStream;
-    inspectionZoneInput.value = '';
-    inspectionZonePill.textContent = 'Untagged';
-    show(inspectionModal);
+    // MediaRecorder construction and start() can both throw (NotSupportedError
+    // on an unsupported mime type, InvalidStateError on a dead track). These
+    // used to sit outside any try/catch, so a failure here left the camera on,
+    // the modal open, and no recorder — with nothing said about it.
+    try {
+      inspectionVideo.srcObject = inspectionStream;
+      inspectionZoneInput.value = '';
+      inspectionZonePill.textContent = 'Untagged';
+      show(inspectionModal);
 
-    inspectionChunks = [];
-    const mimeType = pickVideoMimeType();
-    inspectionRecorder = mimeType
-      ? new MediaRecorder(inspectionStream, { mimeType })
-      : new MediaRecorder(inspectionStream);
+      inspectionChunks = [];
+      const mimeType = pickVideoMimeType();
+      inspectionRecorder = mimeType
+        ? new MediaRecorder(inspectionStream, { mimeType })
+        : new MediaRecorder(inspectionStream);
 
-    inspectionRecorder.addEventListener('dataavailable', (e) => {
-      if (e.data && e.data.size > 0) inspectionChunks.push(e.data);
-    });
+      inspectionRecorder.addEventListener('dataavailable', (e) => {
+        if (e.data && e.data.size > 0) inspectionChunks.push(e.data);
+      });
 
-    inspectionRecorder.start(1000);
+      inspectionRecorder.start(1000);
+    } catch (err) {
+      console.error('[inspection] recorder failed to start:', err);
+      inspectionRecorder = null;
+      inspectionVideo.srcObject = null;
+      hide(inspectionModal);
+      releaseStream();
+      toast('This device could not start video recording: ' + ((err && err.message) || err));
+      resetButton();
+      return;
+    }
+
+    // Recording is live. renderInspectionControls hides this button below, but
+    // the same element is reused for the next job, so its label has to go back.
+    resetButton();
     inspectionStartedAt = Date.now();
     inspectionTimerInterval = setInterval(() => {
       const t = fmtTimer(Date.now() - inspectionStartedAt);
