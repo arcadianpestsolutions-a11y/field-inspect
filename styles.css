@@ -217,7 +217,10 @@ input:focus, textarea:focus {
 
 .row { display: flex; }
 .gap { gap: 10px; }
-.flex1 { flex: 1; }
+/* min-width:0 is what lets a flex child actually shrink. Without it the
+   default min-width:auto pins each child to its content width, and a pair
+   of date inputs overflows a 375px phone by ~14px. */
+.flex1 { flex: 1; min-width: 0; }
 
 .btn {
   border: none;
@@ -357,6 +360,7 @@ input:focus, textarea:focus {
   color: var(--text-dim);
   border-radius: 999px;
   padding: 7px 14px;
+  min-height: 44px;
   font-size: 0.8rem;
   font-weight: 600;
   white-space: nowrap;
@@ -1198,6 +1202,9 @@ select {
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 0.92rem;
+  /* The label is the tap target for its checkbox (a native box is ~13px),
+     so the label itself has to clear 44px. */
+  min-height: 44px;
 }
 .checkbox-chip input { width: auto; }
 
@@ -1243,6 +1250,9 @@ select {
   border-radius: 8px;
   padding: 4px 10px;
   font-size: 0.78rem;
+  /* Removing a chemical record or an invoice line is destructive and gets
+     done in gloves — it needs a real 44px target, not a 26px one. */
+  min-height: 44px;
 }
 .product-card-field { display: flex; flex-direction: column; gap: 4px; }
 .product-card-field label { font-size: 0.78rem; color: var(--text-dim); }
