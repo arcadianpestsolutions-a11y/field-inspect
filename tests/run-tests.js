@@ -736,21 +736,82 @@
     assert(saved.scheduledAt === null, 'unbooked jobs must stay null so the backlog can find them');
   });
 
-  test('Scheduler: the month grid marks days that have bookings', async () => {
+  test('Scheduler: the month grid shows how many jobs and hours are in a day', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const d = new Date();
     d.setDate(15);
     d.setHours(11, 0, 0, 0);
-    await win.DB.addJob({ name: 'Grid Dot Job', scheduledAt: d.getTime() });
+    // Two jobs totalling 3 hours, so the cell has to report both numbers.
+    await win.DB.addJob({ name: 'Grid Load A', scheduledAt: d.getTime(), scheduledDurationMins: 120 });
+    const d2 = new Date(d);
+    d2.setHours(14, 0, 0, 0);
+    await win.DB.addJob({ name: 'Grid Load B', scheduledAt: d2.getTime(), scheduledDurationMins: 60 });
 
     await win.Scheduler.open();
     await wait(400);
     const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
       .find((c) => c.querySelector('.cal-daynum').textContent === '15');
     assert(cell, 'the 15th should be in the grid');
-    assert(cell.querySelector('.cal-dot'), 'a booked day should carry a marker');
+    const load = cell.querySelector('.cal-load');
+    assert(load, 'a booked day should show its load');
+    assertEqual(load.textContent, '2·3h', 'two jobs totalling three hours');
+    assert(cell.querySelector('.cal-bar-fill'), 'a booked day should show a load bar');
     assert(doc.querySelector('.cal-today'), 'today should be marked');
+  });
+
+  test('Scheduler: the day view lays out hourly slots and spans long jobs', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const d = new Date();
+    d.setDate(16);
+    d.setHours(10, 0, 0, 0);
+    await win.DB.addJob({ name: 'Long Job', scheduledAt: d.getTime(), scheduledDurationMins: 120 });
+
+    await win.Scheduler.open();
+    await wait(300);
+    Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === '16').click();
+    await wait(300);
+
+    const rows = Array.from(doc.querySelectorAll('.slot-row')).map((r) => r.textContent);
+    assert(rows.length >= 11, `expected a full working day of slots, got ${rows.length}`);
+    assert(rows.some((r) => r.includes('10am') && r.includes('Long Job')), 'job appears in its start slot');
+    assert(rows.some((r) => r.includes('11am') && /continues/.test(r)), 'a 2h job occupies the next hour too');
+    assert(doc.querySelectorAll('.slot-free').length > 0, 'free slots should be visible and bookable');
+    assert(/2 hrs/.test(doc.getElementById('scheduler-day-load').textContent),
+      `day load should total the hours, got: ${doc.getElementById('scheduler-day-load').textContent}`);
+  });
+
+  test('Scheduler: booking into a chosen slot uses that hour and duration', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.DB.addJob({ name: 'Slot Pick Job' });
+
+    await win.Scheduler.open();
+    await wait(300);
+    Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === '17').click();
+    await wait(300);
+
+    const pmRow = Array.from(doc.querySelectorAll('.slot-row'))
+      .find((r) => r.textContent.startsWith('3pm') && r.querySelector('.slot-free'));
+    assert(pmRow, '3pm should be free on the 17th');
+    pmRow.querySelector('.slot-free').click();
+    await wait(300);
+
+    assert(!doc.getElementById('slot-picker-modal').classList.contains('hidden'), 'picker should open');
+    doc.getElementById('slot-picker-duration').value = '90';
+    const row = Array.from(doc.querySelectorAll('.picker-row')).find((r) => r.textContent.includes('Slot Pick Job'));
+    assert(row, 'the unbooked job should be offered');
+    row.click();
+    await wait(600);
+
+    const saved = (await win.DB.getJobs()).find((j) => j.name === 'Slot Pick Job');
+    assertEqual(new Date(saved.scheduledAt).getHours(), 15, 'booked into the 3pm slot');
+    assertEqual(new Date(saved.scheduledAt).getDate(), 17, 'booked onto the selected day');
+    assertEqual(saved.scheduledDurationMins, 90, 'duration from the picker');
+    assert(doc.getElementById('slot-picker-modal').classList.contains('hidden'), 'picker should close');
   });
 
   test('Scheduler: booking from the backlog fills the selected day and avoids a clash', async () => {
@@ -783,8 +844,10 @@
     assert(a.scheduledAt, 'Backlog A should now be booked');
     assert(b.scheduledAt, 'Backlog B should now be booked');
     assertEqual(new Date(a.scheduledAt).getDate(), 22, 'booked onto the selected day');
-    assertEqual(new Date(a.scheduledAt).getHours(), 9, 'first booking takes 9am');
-    assertEqual(new Date(b.scheduledAt).getHours(), 10, 'second booking steps past the clash');
+    // One-tap Book starts from 8am rather than the 7am start of the grid, so
+    // an empty day does not put a client in at 7 just because the slot exists.
+    assertEqual(new Date(a.scheduledAt).getHours(), 8, 'first booking takes the default start hour');
+    assertEqual(new Date(b.scheduledAt).getHours(), 9, 'second booking steps past the clash');
 
     assert(!rowFor('Backlog A'), 'a booked job should leave the backlog');
   });

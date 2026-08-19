@@ -319,15 +319,37 @@
 
     <div id="scheduler-grid" class="cal-grid"></div>
 
-    <h2 class="invoice-section-heading" id="scheduler-agenda-title">Today</h2>
-    <div id="scheduler-agenda" class="agenda-list"></div>
+    <div class="day-header">
+      <h2 class="invoice-section-heading" id="scheduler-day-title">Today</h2>
+      <span id="scheduler-day-load" class="day-load">Nothing booked</span>
+    </div>
+    <div id="scheduler-slots" class="slot-list"></div>
 
     <h2 class="invoice-section-heading backlog-heading">
       Waiting to be booked <span id="scheduler-backlog-count" class="backlog-count hidden"></span>
     </h2>
-    <p class="empty-hint backlog-hint">Tap a day above, then Book, to put one of these in the diary.</p>
+    <p class="empty-hint backlog-hint">Tap Book to drop one into the first free slot on the selected day, or tap a slot above to choose the time.</p>
     <div id="scheduler-backlog" class="agenda-list"></div>
   </main>
+</section>
+
+<!-- ============ SLOT BOOKING PICKER ============ -->
+<section id="slot-picker-modal" class="modal slot-picker-modal hidden">
+  <div class="slot-picker-card">
+    <h2 id="slot-picker-title">Book this slot</h2>
+    <label class="field-label" for="slot-picker-duration">How long?</label>
+    <select id="slot-picker-duration">
+      <option value="30">30 minutes</option>
+      <option value="60" selected>1 hour</option>
+      <option value="90">1.5 hours</option>
+      <option value="120">2 hours</option>
+      <option value="180">3 hours</option>
+      <option value="240">4 hours</option>
+    </select>
+    <p class="empty-hint slot-picker-hint">Pick a job to put in this slot:</p>
+    <div id="slot-picker-list" class="slot-picker-list"></div>
+    <button id="slot-picker-cancel" class="btn btn-secondary full">Cancel</button>
+  </div>
 </section>
 
 <!-- ============ INVOICE VIEW ============ -->
