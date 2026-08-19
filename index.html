@@ -35,6 +35,7 @@
 <section id="view-joblist" class="view hidden">
   <header class="topbar">
     <h1>Field Inspect</h1>
+    <button id="open-scheduler-btn" class="icon-btn" aria-label="Scheduler" title="Scheduler">📅</button>
     <button id="open-archive-btn" class="icon-btn" aria-label="Saved Reports" title="Saved Reports">🗂</button>
   </header>
 
@@ -72,6 +73,11 @@
       </div>
       <input id="job-phone" type="tel" placeholder="Client phone (optional)" autocomplete="off" />
       <input id="job-email" type="email" placeholder="Client email (optional)" autocomplete="off" />
+      <label class="field-label">Book it in (optional)</label>
+      <div class="row gap">
+        <input id="job-scheduled-date" type="date" />
+        <input id="job-scheduled-time" type="time" value="09:00" />
+      </div>
       <textarea id="job-notes" placeholder="Notes (optional)" rows="2"></textarea>
       <div class="row gap">
         <button id="job-form-cancel" class="btn btn-secondary flex1">Cancel</button>
@@ -294,6 +300,36 @@
 </section>
 
 <!-- ============ SAVED REPORTS ARCHIVE VIEW ============ -->
+<!-- ============ SCHEDULER VIEW ============ -->
+<section id="view-scheduler" class="view hidden">
+  <header class="topbar">
+    <button id="scheduler-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Scheduler</h1>
+      <span id="scheduler-month-label" class="subtitle"></span>
+    </div>
+    <button id="scheduler-today" class="link-btn">Today</button>
+  </header>
+
+  <main class="content">
+    <div class="cal-nav">
+      <button id="scheduler-prev" class="icon-btn" aria-label="Previous month">‹</button>
+      <button id="scheduler-next" class="icon-btn" aria-label="Next month">›</button>
+    </div>
+
+    <div id="scheduler-grid" class="cal-grid"></div>
+
+    <h2 class="invoice-section-heading" id="scheduler-agenda-title">Today</h2>
+    <div id="scheduler-agenda" class="agenda-list"></div>
+
+    <h2 class="invoice-section-heading backlog-heading">
+      Waiting to be booked <span id="scheduler-backlog-count" class="backlog-count hidden"></span>
+    </h2>
+    <p class="empty-hint backlog-hint">Tap a day above, then Book, to put one of these in the diary.</p>
+    <div id="scheduler-backlog" class="agenda-list"></div>
+  </main>
+</section>
+
 <!-- ============ INVOICE VIEW ============ -->
 <section id="view-invoice" class="view hidden">
   <header class="topbar">
@@ -385,6 +421,7 @@
 <script src="email.js"></script>
 <script src="report.js"></script>
 <script src="invoice-ui.js"></script>
+<script src="scheduler.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

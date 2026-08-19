@@ -327,7 +327,10 @@ input:focus, textarea:focus {
   color: var(--accent);
   font-size: 0.76rem;
   font-weight: 600;
-  padding: 4px 0;
+  /* Text links are still tap targets — Sync now, Log out, Select, Today.
+     Padding rather than a box keeps them looking like links. */
+  padding: 12px 6px;
+  min-height: 44px;
 }
 .link-btn:active { opacity: 0.6; }
 
@@ -1419,3 +1422,104 @@ select {
   color: #fff;
 }
 #inspection-zone-input::placeholder { color: rgba(255,255,255,0.7); }
+
+/* ---------- Scheduler ---------- */
+.cal-nav { display: flex; justify-content: space-between; margin-bottom: 8px; }
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 22px;
+}
+
+.cal-dow {
+  text-align: center;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-bottom: 4px;
+}
+
+.cal-cell {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 2px;
+  font-family: inherit;
+}
+.cal-blank { background: transparent; border-color: transparent; }
+.cal-daynum { font-size: 0.85rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Today is outlined; the selected day is filled. Two different signals, so
+   "what day is it" and "what am I looking at" never get confused. */
+.cal-today { border-color: var(--accent); }
+.cal-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+.cal-selected .cal-daynum,
+.cal-selected .cal-more { color: var(--accent-ink); }
+
+.cal-dots { display: flex; gap: 3px; }
+.cal-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent-2);
+}
+.cal-dot-done { background: var(--success); }
+.cal-selected .cal-dot { background: var(--accent-ink); }
+.cal-more { font-size: 0.6rem; color: var(--text-dim); line-height: 1; }
+
+.agenda-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+
+.agenda-row, .backlog-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-family: inherit;
+  min-height: 44px;
+}
+.agenda-row:active { background: var(--bg-elev); }
+
+.agenda-time {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  min-width: 62px;
+  flex-shrink: 0;
+}
+.agenda-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.agenda-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agenda-meta { font-size: 0.78rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.backlog-heading { display: flex; align-items: center; gap: 8px; }
+.backlog-count {
+  background: var(--warning);
+  color: var(--accent-ink);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.backlog-hint { margin-top: 0; margin-bottom: 10px; text-align: left; padding: 0; font-size: 0.82rem; }
+.backlog-overdue { color: var(--danger); font-weight: 600; }
+.backlog-book { flex-shrink: 0; padding: 8px 14px; min-height: 44px; }

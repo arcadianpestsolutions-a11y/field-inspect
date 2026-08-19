@@ -357,6 +357,13 @@
   // Raises the follow-up job with the client's details carried across, links
   // it back to the job it came from, and clears the old due date so the same
   // property doesn't keep nagging once it's been booked.
+  // Normalises a timestamp to 9am on the same local calendar day.
+  function atNineAm(ts) {
+    const d = new Date(ts);
+    d.setHours(9, 0, 0, 0);
+    return d.getTime();
+  }
+
   async function rebookJob(jobId) {
     const previous = await DB.getJob(jobId);
     if (!previous) return;
@@ -370,6 +377,10 @@
       clientEmail: previous.clientEmail,
       jobType: previous.jobType,
       recurringFromId: previous.id,
+      // Put it straight in the diary on the day it fell due, at 9am. The date
+      // is a starting point the technician can drag around in the scheduler —
+      // but a re-inspection that lands unscheduled is one that gets forgotten.
+      scheduledAt: previous.nextDueAt ? atNineAm(previous.nextDueAt) : null,
     });
     await DB.updateJob(previous.id, { nextDueAt: null });
     toast('Next inspection booked for ' + next.name);
@@ -512,8 +523,24 @@
       li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment' : '🐜 Termite';
       li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
 
+      // A booking is more actionable than a due date, so it wins the badge
+      // slot when a job has both.
+      if (job.scheduledAt) {
+        const when = new Date(job.scheduledAt);
+        const days = Math.round((when - Date.now()) / 86400000);
+        const badge = document.createElement('span');
+        badge.className = 'due-badge ' + (days < 0 ? 'due-overdue' : days <= 7 ? 'due-soon' : 'due-later');
+        const h = when.getHours();
+        const time = `${h % 12 === 0 ? 12 : h % 12}${when.getMinutes() ? ':' + String(when.getMinutes()).padStart(2, '0') : ''}${h < 12 ? 'am' : 'pm'}`;
+        badge.textContent = days === 0 ? `Today ${time}`
+          : days === 1 ? `Tomorrow ${time}`
+          : days < 0 ? `Missed ${fmtDate(job.scheduledAt)}`
+          : `${fmtDate(job.scheduledAt)} ${time}`;
+        li.querySelector('.job-item-top').appendChild(badge);
+      }
+
       const due = dueInfo(job);
-      if (due) {
+      if (due && !job.scheduledAt) {
         const badge = document.createElement('span');
         badge.className = `due-badge due-${due.level}`;
         badge.textContent = due.label;
@@ -539,12 +566,24 @@
 
   openArchiveBtn.addEventListener('click', () => ReportUI.openArchive());
 
+  const openSchedulerBtn = document.getElementById('open-scheduler-btn');
+  if (openSchedulerBtn) {
+    openSchedulerBtn.addEventListener('click', () => {
+      if (window.Scheduler) window.Scheduler.open();
+      else toast('Scheduler is still loading — try again in a moment.');
+    });
+  }
+
   newJobBtn.addEventListener('click', () => {
     jobNameInput.value = '';
     jobAddressInput.value = '';
     jobPhoneInput.value = '';
     jobEmailInput.value = '';
     jobNotesInput.value = '';
+    const schedDate = document.getElementById('job-scheduled-date');
+    const schedTime = document.getElementById('job-scheduled-time');
+    if (schedDate) schedDate.value = '';
+    if (schedTime) schedTime.value = '09:00';
     selectedAddressCoords = null;
     selectedJobType = 'termite';
     if (jobTypePicker) {
@@ -571,11 +610,25 @@
       notes: jobNotesInput.value.trim(),
       clientPhone: jobPhoneInput.value.trim(),
       clientEmail: jobEmailInput.value.trim(),
+      scheduledAt: readScheduledAtFromForm(),
     });
     hide(jobForm);
     await renderJobList();
     showJobView(job.id);
   });
+
+  // Combines the two form inputs into an epoch ms. Built from local calendar
+  // parts rather than Date.parse on a string, so the booking lands at the
+  // time the technician typed regardless of timezone.
+  function readScheduledAtFromForm() {
+    const dateEl = document.getElementById('job-scheduled-date');
+    const timeEl = document.getElementById('job-scheduled-time');
+    if (!dateEl || !dateEl.value) return null;
+    const [y, m, d] = dateEl.value.split('-').map(Number);
+    const [hh, mm] = ((timeEl && timeEl.value) || '09:00').split(':').map(Number);
+    const when = new Date(y, m - 1, d, hh || 0, mm || 0, 0, 0);
+    return Number.isFinite(when.getTime()) ? when.getTime() : null;
+  }
 
   // ---------- Address autocomplete (AU/NZ, via OpenStreetMap Nominatim) ----------
   // Free, no API key required. Nominatim's usage policy caps public-server

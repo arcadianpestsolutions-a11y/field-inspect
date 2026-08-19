@@ -711,6 +711,97 @@
     assert(/^INV-\d{4}-\d{4}$/.test(saved[0].number), `unexpected invoice number: ${saved[0].number}`);
   });
 
+  // =====================================================================
+  // Scheduler — booking a job into the diary, and the backlog of work that
+  // is due or unbooked. The distinction that matters: a job can be DUE
+  // without being BOOKED, and a calendar showing only bookings hides
+  // exactly the jobs still needing action.
+  // =====================================================================
+
+  test('Scheduler: a new job can be booked at creation and persists the time', async () => {
+    const win = frame.contentWindow;
+    const when = new Date();
+    when.setDate(when.getDate() + 3);
+    when.setHours(14, 30, 0, 0);
+    const job = await win.DB.addJob({ name: 'Booked Job', scheduledAt: when.getTime() });
+    const saved = await win.DB.getJob(job.id);
+    assertEqual(saved.scheduledAt, when.getTime(), 'scheduledAt should persist exactly');
+    assertEqual(saved.scheduledDurationMins, 60, 'duration should default to 60 min');
+  });
+
+  test('Scheduler: an unbooked job stores null, not a guessed date', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Unbooked Job' });
+    const saved = await win.DB.getJob(job.id);
+    assert(saved.scheduledAt === null, 'unbooked jobs must stay null so the backlog can find them');
+  });
+
+  test('Scheduler: the month grid marks days that have bookings', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const d = new Date();
+    d.setDate(15);
+    d.setHours(11, 0, 0, 0);
+    await win.DB.addJob({ name: 'Grid Dot Job', scheduledAt: d.getTime() });
+
+    await win.Scheduler.open();
+    await wait(400);
+    const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === '15');
+    assert(cell, 'the 15th should be in the grid');
+    assert(cell.querySelector('.cal-dot'), 'a booked day should carry a marker');
+    assert(doc.querySelector('.cal-today'), 'today should be marked');
+  });
+
+  test('Scheduler: booking from the backlog fills the selected day and avoids a clash', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.DB.addJob({ name: 'Backlog A' });
+    await win.DB.addJob({ name: 'Backlog B' });
+
+    await win.Scheduler.open();
+    await wait(400);
+
+    // Pick a day well clear of the seeded bookings.
+    const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === '22');
+    cell.click();
+    await wait(200);
+
+    const rowFor = (name) => Array.from(doc.querySelectorAll('#scheduler-backlog .backlog-row'))
+      .find((r) => r.textContent.includes(name));
+
+    assert(rowFor('Backlog A'), 'unbooked job should appear in the backlog');
+    rowFor('Backlog A').querySelector('.backlog-book').click();
+    await wait(500);
+    rowFor('Backlog B').querySelector('.backlog-book').click();
+    await wait(500);
+
+    const jobs = await win.DB.getJobs();
+    const a = jobs.find((j) => j.name === 'Backlog A');
+    const b = jobs.find((j) => j.name === 'Backlog B');
+    assert(a.scheduledAt, 'Backlog A should now be booked');
+    assert(b.scheduledAt, 'Backlog B should now be booked');
+    assertEqual(new Date(a.scheduledAt).getDate(), 22, 'booked onto the selected day');
+    assertEqual(new Date(a.scheduledAt).getHours(), 9, 'first booking takes 9am');
+    assertEqual(new Date(b.scheduledAt).getHours(), 10, 'second booking steps past the clash');
+
+    assert(!rowFor('Backlog A'), 'a booked job should leave the backlog');
+  });
+
+  test('Scheduler: booked jobs drop out of the backlog', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const d = new Date();
+    d.setDate(d.getDate() + 4);
+    await win.DB.addJob({ name: 'Already Booked', scheduledAt: d.getTime() });
+    await win.Scheduler.open();
+    await wait(400);
+    const inBacklog = Array.from(doc.querySelectorAll('#scheduler-backlog .backlog-row'))
+      .some((r) => r.textContent.includes('Already Booked'));
+    assert(!inBacklog, 'a job with a booking is not waiting to be booked');
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';

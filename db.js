@@ -78,7 +78,7 @@ const DB = {
   JOB_STATUS_LABELS,
 
   // ---------- Jobs ----------
-  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, recurringFromId }) {
+  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, recurringFromId, scheduledAt, scheduledDurationMins }) {
     const store = await tx('jobs', 'readwrite');
     const now = Date.now();
     const job = {
@@ -108,6 +108,10 @@ const DB = {
       // Set when a report is finalized — see ReportUI's finalize handler.
       // Drives the "Due" filter on the job list.
       nextDueAt: null,
+      // When the job is actually booked in the diary. Null is a meaningful
+      // state, not missing data — it is the unscheduled backlog.
+      scheduledAt: typeof scheduledAt === 'number' ? scheduledAt : null,
+      scheduledDurationMins: typeof scheduledDurationMins === 'number' ? scheduledDurationMins : 60,
       // The job this one was raised from, so a property's inspection history
       // can be walked backwards.
       recurringFromId: recurringFromId || null,
