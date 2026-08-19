@@ -55,6 +55,7 @@
         <button class="status-filter-chip" data-status="in_progress">In Progress</button>
         <button class="status-filter-chip" data-status="review">Review</button>
         <button class="status-filter-chip" data-status="completed">Completed</button>
+        <button class="status-filter-chip" data-status="due">Due</button>
       </div>
     </div>
 
@@ -98,6 +99,12 @@
   </header>
 
   <main class="content">
+    <div id="due-callout" class="due-callout hidden">
+      <span class="due-callout-title" id="due-callout-title"></span>
+      <span class="due-callout-sub" id="due-callout-sub"></span>
+      <button id="rebook-job-btn" class="btn btn-primary">📅 Book the next inspection</button>
+    </div>
+
     <div class="card inspection-card">
       <div class="row spread">
         <span id="job-status-badge" class="status-badge status-new">New</span>

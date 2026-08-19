@@ -60,6 +60,8 @@
       weather: job.weather || '',
       inspection_started_at: job.inspectionStartedAt || null,
       inspection_ended_at: job.inspectionEndedAt || null,
+      next_due_at: job.nextDueAt || null,
+      recurring_from_id: job.recurringFromId || null,
       created_by: currentUserId(),
       created_at: job.createdAt,
       updated_at: job.updatedAt,
@@ -83,6 +85,8 @@
       weather: rj.weather || '',
       inspectionStartedAt: rj.inspection_started_at || null,
       inspectionEndedAt: rj.inspection_ended_at || null,
+      nextDueAt: rj.next_due_at || null,
+      recurringFromId: rj.recurring_from_id || null,
       createdAt: rj.created_at,
       updatedAt: rj.updated_at,
     };

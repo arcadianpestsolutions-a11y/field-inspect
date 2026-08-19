@@ -448,6 +448,119 @@
       'finalize should be enabled when only softRequired sections are incomplete');
   });
 
+  // Fills every required field in the non-softRequired sections of a schema,
+  // so a report can be driven to a finalizable state without hand-listing
+  // fields in each test.
+  function fillRequired(win, schema) {
+    const sections = {};
+    for (const s of schema) {
+      const vals = win.ReportSchemaUtils.defaultValuesForSection(s);
+      if (!s.softRequired) {
+        for (const f of s.fields) {
+          if (!f.required) continue;
+          if (f.type === 'yesno') vals[f.id] = 'No';
+          else if (f.type === 'select') vals[f.id] = f.options[0];
+          else if (f.type === 'multiselect') vals[f.id] = [f.options[0]];
+          else if (f.type === 'signature') vals[f.id] = 'data:image/png;base64,xx';
+          else if (f.type === 'productList') vals[f.id] = [{ id: 'p1', productName: 'X' }];
+          else vals[f.id] = 'filled';
+        }
+      }
+      sections[s.id] = vals;
+    }
+    return sections;
+  }
+
+  test('Recurring: finalizing sets the next due date from the inspection date', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Recurring Due Job', address: '9 Recur St' });
+
+    const inspected = new Date();
+    inspected.setMonth(inspected.getMonth() - 12);
+    const iso = inspected.toISOString().slice(0, 10);
+
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    sections.clientDetails.inspectionDate = iso;
+    sections.findings.reinspectionInterval = '12 months';
+    await win.DB.saveReport({ jobId: job.id, sections, finalizedAt: null });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    const originalConfirm = win.confirm;
+    win.confirm = () => true;
+    try {
+      doc.getElementById('finalize-report-btn').click();
+      await wait(500);
+    } finally {
+      win.confirm = originalConfirm;
+    }
+
+    const after = await win.DB.getJob(job.id);
+    assertEqual(after.status, 'completed', 'job should be completed');
+    assert(after.nextDueAt, 'nextDueAt should be set on finalize');
+    // Inspected 12 months ago + 12 month interval => due about now.
+    const daysOut = Math.abs((after.nextDueAt - Date.now()) / 86400000);
+    assert(daysOut < 3, `due date should land near today, was ${Math.round(daysOut)} days out`);
+  });
+
+  test('Recurring: no interval means no invented due date', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'No Interval Job' });
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    sections.findings.reinspectionInterval = '';
+    await win.DB.saveReport({ jobId: job.id, sections, finalizedAt: null });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    const originalConfirm = win.confirm;
+    win.confirm = () => true;
+    try {
+      doc.getElementById('finalize-report-btn').click();
+      await wait(500);
+    } finally {
+      win.confirm = originalConfirm;
+    }
+    const after = await win.DB.getJob(job.id);
+    assert(!after.nextDueAt, 'should not invent a due date with no interval given');
+  });
+
+  test('Recurring: rebooking carries the client across and clears the old due date', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const previous = await win.DB.addJob({
+      name: 'Rebook Source', address: '3 Repeat Rd', clientPhone: '0400111222', clientEmail: 'c@example.com',
+    });
+    await win.DB.updateJob(previous.id, { status: 'completed', nextDueAt: Date.now() - 86400000 });
+
+    win.showJobListView();
+    await wait(150);
+    doc.querySelector('.status-filter-chip[data-status="due"]').click();
+    await wait(150);
+    const row = Array.from(doc.querySelectorAll('#job-list .job-item'))
+      .find((li) => li.textContent.includes('Rebook Source'));
+    assert(row, 'overdue job should appear under the Due filter');
+    row.click();
+    await wait(250);
+
+    assert(!doc.getElementById('due-callout').classList.contains('hidden'), 'due callout should show');
+    doc.getElementById('rebook-job-btn').click();
+    await wait(500);
+
+    const jobs = await win.DB.getJobs();
+    const next = jobs.find((j) => j.recurringFromId === previous.id);
+    assert(next, 'a follow-up job should have been created');
+    assertEqual(next.clientPhone, '0400111222', 'client phone should carry across');
+    assertEqual(next.address, '3 Repeat Rd', 'address should carry across');
+    assertEqual(next.status, 'new', 'follow-up job starts as new');
+    const old = await win.DB.getJob(previous.id);
+    assert(!old.nextDueAt, 'old job should stop nagging once rebooked');
+
+    doc.querySelector('.status-filter-chip[data-status="all"]').click();
+    await wait(100);
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';

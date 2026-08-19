@@ -324,12 +324,41 @@
     if (!confirm('Finalize this report? You can still reopen sections to make corrections afterwards.')) return;
     currentReport.finalizedAt = Date.now();
     await DB.saveReport(currentReport);
-    await DB.updateJob(currentJobId, { status: 'completed' });
+    await DB.updateJob(currentJobId, {
+      status: 'completed',
+      nextDueAt: computeNextDueAt(currentJob, currentReport),
+    });
     toast('Report finalized');
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
     offerForemanFollowUpTask(currentJobId);
   });
+
+  // When is this property next due? Termite reports carry a recommended
+  // re-inspection interval (AS 3660.2 recommends no more than 12 months, and
+  // shorter on high-risk sites); pest treatments carry an explicit follow-up
+  // date. Returns epoch ms, or null when the report gives us nothing to go on
+  // — better to show no due date than to invent one.
+  function computeNextDueAt(job, report) {
+    const sections = (report && report.sections) || {};
+    if (job && job.jobType === 'pest_treatment') {
+      const recs = sections.recommendations || {};
+      if (recs.followUpRequired !== 'Yes' || !recs.followUpDate) return null;
+      const due = Date.parse(recs.followUpDate + 'T09:00:00');
+      return Number.isFinite(due) ? due : null;
+    }
+
+    const months = { '3 months': 3, '6 months': 6, '12 months': 12 }[(sections.findings || {}).reinspectionInterval];
+    if (!months) return null;
+    // Count forward from the inspection date rather than today, so finalizing
+    // a report late doesn't quietly push the whole schedule out.
+    const client = sections.clientDetails || {};
+    const base = client.inspectionDate ? new Date(client.inspectionDate + 'T09:00:00') : new Date();
+    if (!Number.isFinite(base.getTime())) return null;
+    const due = new Date(base);
+    due.setMonth(due.getMonth() + months);
+    return due.getTime();
+  }
 
   // The technician decides when to actually send, via the "Send Report"
   // button that appears once finalized (renderSectionList) — nothing emails

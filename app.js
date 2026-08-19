@@ -331,7 +331,49 @@
     await renderGallery();
   }
 
+  // Shows the rebooking prompt on a completed job once its property is due
+  // (or nearly due) again — turning "this job is finished" into "this client
+  // needs booking", which is the whole point of tracking a due date.
+  function renderDueCallout(job) {
+    const el = document.getElementById('due-callout');
+    if (!el) return;
+    const due = dueInfo(job);
+    if (!due || due.level === 'later') { el.classList.add('hidden'); return; }
+    document.getElementById('due-callout-title').textContent =
+      due.level === 'overdue' ? `Re-inspection ${due.label.toLowerCase()}` : `Re-inspection ${due.label.toLowerCase()}`;
+    document.getElementById('due-callout-sub').textContent =
+      `${job.name}${job.address ? ' · ' + job.address : ''} was last done ${fmtDate(job.createdAt)}.`;
+    el.classList.remove('hidden');
+  }
+
+  // Raises the follow-up job with the client's details carried across, links
+  // it back to the job it came from, and clears the old due date so the same
+  // property doesn't keep nagging once it's been booked.
+  async function rebookJob(jobId) {
+    const previous = await DB.getJob(jobId);
+    if (!previous) return;
+    const next = await DB.addJob({
+      name: previous.name,
+      address: previous.address,
+      addressLat: previous.addressLat,
+      addressLng: previous.addressLng,
+      notes: previous.notes,
+      clientPhone: previous.clientPhone,
+      clientEmail: previous.clientEmail,
+      jobType: previous.jobType,
+      recurringFromId: previous.id,
+    });
+    await DB.updateJob(previous.id, { nextDueAt: null });
+    toast('Next inspection booked for ' + next.name);
+    await renderJobList();
+    showJobView(next.id);
+  }
+
+  const rebookJobBtn = document.getElementById('rebook-job-btn');
+  if (rebookJobBtn) rebookJobBtn.addEventListener('click', () => rebookJob(currentJobId));
+
   function renderInspectionControls(job) {
+    renderDueCallout(job);
     jobStatusBadge.textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
     jobStatusBadge.className = 'status-badge status-' + (job.status || 'new');
 
@@ -384,13 +426,36 @@
     applyJobListFilters();
   }
 
+  // "Due" isn't a job status — it's a completed job whose property has come
+  // back around for its next inspection. Treated as a filter rather than a
+  // status so a job's own lifecycle stays new -> in_progress -> review ->
+  // completed and doesn't need a fifth state that means something different.
+  const DUE_SOON_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+  function dueInfo(job) {
+    if (!job.nextDueAt) return null;
+    const days = Math.round((job.nextDueAt - Date.now()) / (24 * 60 * 60 * 1000));
+    if (days < 0) return { level: 'overdue', label: `Overdue ${Math.abs(days)}d`, days };
+    if (days === 0) return { level: 'overdue', label: 'Due today', days };
+    if (job.nextDueAt - Date.now() <= DUE_SOON_WINDOW_MS) return { level: 'soon', label: `Due in ${days}d`, days };
+    return { level: 'later', label: `Due ${fmtDate(job.nextDueAt)}`, days };
+  }
+
   function applyJobListFilters() {
     const q = jobSearchQuery.trim().toLowerCase();
-    const filtered = jobsCache.filter(({ job }) => {
-      if (jobStatusFilter !== 'all' && (job.status || 'new') !== jobStatusFilter) return false;
+    let filtered = jobsCache.filter(({ job }) => {
+      if (jobStatusFilter === 'due') {
+        const info = dueInfo(job);
+        if (!info || info.level === 'later') return false;
+      } else if (jobStatusFilter !== 'all' && (job.status || 'new') !== jobStatusFilter) {
+        return false;
+      }
       if (!q) return true;
       return job.name.toLowerCase().includes(q) || (job.address || '').toLowerCase().includes(q);
     });
+    // Most overdue first — the list should answer "what am I behind on?".
+    if (jobStatusFilter === 'due') {
+      filtered = filtered.slice().sort((a, b) => (a.job.nextDueAt || 0) - (b.job.nextDueAt || 0));
+    }
 
     jobListEl.innerHTML = '';
     if (jobsCache.length === 0) {
@@ -423,6 +488,14 @@
       li.querySelector('.status-badge').textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
       li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment' : '🐜 Termite';
       li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
+
+      const due = dueInfo(job);
+      if (due) {
+        const badge = document.createElement('span');
+        badge.className = `due-badge due-${due.level}`;
+        badge.textContent = due.label;
+        li.querySelector('.job-item-top').appendChild(badge);
+      }
       li.addEventListener('click', () => showJobView(job.id));
       jobListEl.appendChild(li);
     }

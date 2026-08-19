@@ -71,7 +71,7 @@ const DB = {
   JOB_STATUS_LABELS,
 
   // ---------- Jobs ----------
-  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType }) {
+  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, recurringFromId }) {
     const store = await tx('jobs', 'readwrite');
     const now = Date.now();
     const job = {
@@ -98,6 +98,12 @@ const DB = {
       weather: '',
       inspectionStartedAt: null,
       inspectionEndedAt: null,
+      // Set when a report is finalized — see ReportUI's finalize handler.
+      // Drives the "Due" filter on the job list.
+      nextDueAt: null,
+      // The job this one was raised from, so a property's inspection history
+      // can be walked backwards.
+      recurringFromId: recurringFromId || null,
       createdAt: now,
       updatedAt: now,
     };
