@@ -54,19 +54,32 @@ const REPORT_SCHEMA = [
     id: 'agreement',
     number: 2,
     title: 'About Our Agreement',
-    subtitle: 'Defining the Purpose, Scope, Areas Covered and Limitations of the Inspection.',
+    subtitle: 'Purpose, scope and limitations — agreed with the client BEFORE the inspection begins.',
     icon: 'ℹ️',
     color: '#1f7a4d',
-    fixed: true,
+    softRequired: true,
     fields: [
       {
         id: 'inspectionType', label: 'Inspection Type Requested', type: 'static',
-        default: 'Standard Termite Inspection in accordance with AS 3660.2-2017',
+        default: 'Standard Timber Pest Inspection in accordance with AS 4349.3-2010',
       },
       { id: 'providerName', label: 'Inspection Provider', type: 'static', default: 'Arcadian Pest Solutions' },
       { id: 'providerAddress', label: 'Address', type: 'static', default: '' },
       { id: 'providerPhone', label: 'Phone', type: 'static', default: '0291271320' },
       { id: 'providerEmail', label: 'Email', type: 'static', default: 'tal@arcadianpestsolutions.com.au' },
+      // The pre-engagement agreement is the strongest document available when
+      // a claim is made, because it fixes scope and access limitations BEFORE
+      // the inspection rather than describing them afterwards. AS 3660.2 lists
+      // it first in its documentation set; the app previously had no equivalent
+      // and captured the client's acknowledgement only at the end of the job.
+      { id: 'agreementAcceptedBy', label: 'Agreement accepted by (client name)', type: 'text', required: true },
+      { id: 'agreementAcceptedAt', label: 'Date agreed', type: 'date', required: true },
+      {
+        id: 'agreedAccessLimitations',
+        label: 'Access limitations agreed before the inspection (areas the client knows cannot be accessed)',
+        type: 'textarea',
+      },
+      { id: 'agreementSignature', label: 'Client signature — agreement to scope and limitations', type: 'signature', required: true },
     ],
   },
   {
@@ -197,7 +210,36 @@ const REPORT_SCHEMA = [
       { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true },
       { id: 'existingManagementSystem', label: 'Existing termite management system present, type & condition', type: 'textarea', aiFillable: true },
       { id: 'durableNoticeFound', label: 'Was a durable Notice found at the time of this inspection?', type: 'yesno', required: true, aiFillable: true },
-      { id: 'otherTimberPestsObserved', label: 'Evidence of other timber pests observed (e.g. drywood termites, borers) — outside the scope of this Standard but noted as a duty to warn', type: 'textarea', aiFillable: true },
+      // AS 4349.3-2010 covers FOUR timber pest categories: subterranean
+      // termites, dampwood termites, borers of seasoned timber, and wood
+      // decay fungi. Termites and fungal decay had proper fields; borers
+      // were reachable only through the free-text note below, which meant a
+      // borer inspection could be skipped entirely without the completion
+      // gate ever showing the section as incomplete.
+      { id: 'borersFound', label: 'Was evidence of borers of seasoned timber found?', type: 'yesno', required: true, aiFillable: true },
+      {
+        id: 'borerType', label: 'Borer type, if determinable', type: 'select',
+        options: ['Lyctid (powderpost) borer', 'Anobium (furniture) borer', 'Queensland pine beetle',
+          'Auger beetle', 'Other', 'Not determinable'],
+        showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true,
+      },
+      {
+        id: 'borerActivity', label: 'Borer activity appears to be', type: 'select',
+        options: ['Active', 'Inactive / old damage only', 'Not determinable'],
+        showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true,
+      },
+      {
+        id: 'borerAreas', label: 'Areas where borer damage was found', type: 'multiselect',
+        options: ['The Interior', 'The Exterior', 'Subfloor', 'Roof Void', 'Flooring', 'Joinery', 'Structural Timbers'],
+        showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true,
+      },
+      {
+        id: 'borerDamageSeverity', label: 'Borer damage appears to be', type: 'select',
+        options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive'],
+        showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true,
+      },
+      { id: 'borerPhotos', label: 'Borer Damage Photos', type: 'photos', showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'otherTimberPestsObserved', label: 'Evidence of other timber pests observed (e.g. drywood termites) — outside the scope of this Standard but noted as a duty to warn', type: 'textarea', aiFillable: true },
       { id: 'reinspectionInterval', label: 'A full inspection and written report should be conducted at this property every', type: 'select', options: ['3 months', '6 months', '12 months'], default: '12 months' },
       { id: 'susceptibility', label: 'In our opinion, the susceptibility of this property to termites is considered to be', type: 'select', required: true, options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true },
     ],
@@ -260,9 +302,10 @@ const REPORT_SCHEMA = [
     subtitle: 'Acknowledgement and acceptance of the Report to be completed by the Client.',
     icon: '✅',
     color: '#a12a72',
+    softRequired: true,
     fields: [
       { id: 'clientAckName', label: 'Client Name', type: 'text' },
-      { id: 'clientSignature', label: 'Signature', type: 'signature' },
+      { id: 'clientSignature', label: 'Signature', type: 'signature', required: true },
       { id: 'clientAckDate', label: 'Date', type: 'date' },
     ],
   },
@@ -273,10 +316,15 @@ function isFieldVisible(field, values) {
   return values[field.showIf.field] === field.showIf.equals;
 }
 
-// A section is 'green' once every required + currently-visible field has a value.
-// Sections with no required fields (agreement, terms) are always green.
-// Acknowledgement is "soft required" — yellow until filled, but never blocks
-// the rest of the report (the client may sign later / in person).
+// A section is 'green' once every required + currently-visible field has a
+// value. Sections with no required fields (terms) are always green.
+//
+// `softRequired: true` marks a section that still shows yellow until it's
+// complete, but does NOT block finalizing the report — used where the client
+// has to sign and may not be on site (the pre-inspection agreement and the
+// closing acknowledgement). That used to be a hardcoded check for the literal
+// section id 'acknowledgement'; it's a schema flag now so a second such
+// section doesn't need a second special case in the status logic.
 function computeSectionStatus(section, values) {
   if (section.computed || section.fixed) return 'green';
   const requiredFields = section.fields.filter((f) => f.required);
@@ -285,9 +333,6 @@ function computeSectionStatus(section, values) {
     const val = values[field.id];
     const isEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
     if (isEmpty) return 'yellow';
-  }
-  if (section.id === 'acknowledgement') {
-    return values.clientSignature ? 'green' : 'yellow';
   }
   return 'green';
 }

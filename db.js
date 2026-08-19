@@ -156,6 +156,7 @@ const DB = {
   // ---------- Photo / voice captures ----------
   async addCapture({ jobId, zone, type, photoBlob, audioBlob }) {
     const store = await tx('captures', 'readwrite');
+    const now = Date.now();
     const capture = {
       id: uid(),
       jobId,
@@ -163,9 +164,12 @@ const DB = {
       type,
       photoBlob: photoBlob || null,
       audioBlob: audioBlob || null,
-      createdAt: Date.now(),
+      createdAt: now,
+      // updatedAt drives last-write-wins in sync.js, same as jobs/reports.
+      updatedAt: now,
     };
     await reqToPromise(store.add(capture));
+    if (window.Sync) window.Sync.pushCapture(capture);
     return capture;
   },
 
@@ -173,14 +177,28 @@ const DB = {
     const store = await tx('captures', 'readwrite');
     const existing = await reqToPromise(store.get(id));
     if (!existing) return null;
-    const updated = { ...existing, ...changes };
+    const updated = { ...existing, ...changes, updatedAt: Date.now() };
     await reqToPromise(store.put(updated));
+    if (window.Sync) window.Sync.pushCapture(updated);
     return updated;
+  },
+
+  // Low-level put used only by the sync layer — never re-triggers a push.
+  async putCaptureRaw(capture) {
+    const store = await tx('captures', 'readwrite');
+    await reqToPromise(store.put(capture));
+    return capture;
+  },
+
+  async getAllCaptures() {
+    const store = await tx('captures', 'readonly');
+    return reqToPromise(store.getAll());
   },
 
   async deleteCapture(id) {
     const store = await tx('captures', 'readwrite');
     await reqToPromise(store.delete(id));
+    if (window.Sync) window.Sync.deleteCaptureRemote(id);
   },
 
   async getCaptures(jobId) {
@@ -198,6 +216,7 @@ const DB = {
   // ---------- Footage (video, live-recorded or imported) ----------
   async addFootage({ jobId, zone, source, kind, blob, fileName, note }) {
     const store = await tx('footage', 'readwrite');
+    const now = Date.now();
     const item = {
       id: uid(),
       jobId,
@@ -207,9 +226,11 @@ const DB = {
       blob,
       fileName: fileName || '',
       note: note || '',
-      createdAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
     await reqToPromise(store.add(item));
+    if (window.Sync) window.Sync.pushFootage(item);
     return item;
   },
 
@@ -220,9 +241,22 @@ const DB = {
     return all.sort((a, b) => a.createdAt - b.createdAt);
   },
 
+  // Low-level put used only by the sync layer — never re-triggers a push.
+  async putFootageRaw(item) {
+    const store = await tx('footage', 'readwrite');
+    await reqToPromise(store.put(item));
+    return item;
+  },
+
+  async getAllFootage() {
+    const store = await tx('footage', 'readonly');
+    return reqToPromise(store.getAll());
+  },
+
   async deleteFootage(id) {
     const store = await tx('footage', 'readwrite');
     await reqToPromise(store.delete(id));
+    if (window.Sync) window.Sync.deleteFootageRemote(id);
   },
 
   // ---------- Reports ----------

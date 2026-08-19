@@ -2,7 +2,7 @@
 // color + "Build vN" label on the login screen so testers can tell at a
 // glance whether they're looking at the current build or a stale cached
 // one, instead of having to dig into devtools to check.
-window.APP_VERSION = 'v16';
+window.APP_VERSION = 'v17';
 
 (() => {
   function hashToHue(str) {
@@ -18,7 +18,7 @@ window.APP_VERSION = 'v16';
   const label = document.getElementById('build-version-label');
 
   if (loginView) {
-    loginView.style.background = `linear-gradient(160deg, hsl(${hue}, 55%, 18%), #0f172a 60%)`;
+    loginView.style.background = `linear-gradient(160deg, hsl(${hue}, 55%, 18%), var(--bg) 60%)`;
   }
   if (label) {
     label.textContent = `Build ${window.APP_VERSION}`;

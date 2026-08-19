@@ -217,9 +217,12 @@ const PEST_TREATMENT_SCHEMA = [
     subtitle: 'Acknowledgement and acceptance of the service to be completed by the Client.',
     icon: '✅',
     color: '#a12a72',
+    // Yellow until signed, but never blocks finalizing — the occupier is often
+    // not on site when a treatment finishes. See computeSectionStatus.
+    softRequired: true,
     fields: [
       { id: 'clientAckName', label: 'Client Name', type: 'text' },
-      { id: 'clientSignature', label: 'Signature', type: 'signature' },
+      { id: 'clientSignature', label: 'Signature', type: 'signature', required: true },
       { id: 'clientAckDate', label: 'Date', type: 'date' },
     ],
   },

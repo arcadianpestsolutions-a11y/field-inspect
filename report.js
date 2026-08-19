@@ -287,7 +287,7 @@
     for (const section of currentSchema()) {
       const values = currentReport.sections[section.id] || {};
       const status = computeSectionStatus(section, values);
-      if (status !== 'green' && section.id !== 'acknowledgement') allRequiredGreen = false;
+      if (status !== 'green' && !section.softRequired) allRequiredGreen = false;
 
       const li = document.createElement('li');
       li.className = 'report-section-item';
@@ -1277,6 +1277,7 @@
       ['Were active termites found?', findings.liveTermitesFound, 'findings'],
       ['Was a termite nest located?', findings.nestFound, 'findings'],
       ['Was visible evidence of termite workings or damage found?', findings.workingsFound, 'findings'],
+      ['Was evidence of borers of seasoned timber found?', findings.borersFound, 'findings'],
       ['Was visible evidence of damage caused by fungal decay?', conducive.fungalDecayFound, 'conducive'],
       ['Is a termite treatment recommended?', findings.treatmentRecommended, 'findings'],
       ['Susceptibility of this property to termites', findings.susceptibility, 'findings'],
@@ -1345,8 +1346,9 @@
   }
 
   const FIXED_TERMS_HTML = `
-    <p><strong>1. Nature of the Inspection.</strong> This Report does not conclusively determine that the Property is free of Termites and damage caused by Termites. The Inspection undertaken was a Non-Invasive Inspection of the Property for evidence of Termites, Termite activity, and damage caused by Termites, carried out in accordance with AS 3660.2-2017. Use of and reliance upon this Report is solely at the reader's own risk, and only the Client (not any third party) may rely on it.</p>
-    <p><strong>2. Scope exclusions.</strong> Drywood termites are outside the scope of AS 3660.2-2017. Where evidence of drywood termites or other timber pests is observed during the Inspection, this is noted in the Report as a courtesy (duty to warn) — a specific drywood termite inspection by a suitably qualified provider is recommended if such evidence is found.</p>
+    <p><strong>1. Nature of the Inspection.</strong> This Report does not conclusively determine that the Property is free of timber pests or damage caused by timber pests. The Inspection undertaken was a Non-Invasive, visual Inspection of the Property carried out in accordance with AS 4349.3-2010 (Inspection of buildings — Timber pest inspections), using the inspection methodology of AS 3660.2-2017 where it applies to termite management in and around existing buildings. Use of and reliance upon this Report is solely at the reader's own risk, and only the Client (not any third party) may rely on it.</p>
+    <p><strong>2. Scope and exclusions.</strong> This Inspection covers the four timber pest categories within the scope of AS 4349.3-2010: subterranean termites, dampwood termites, borers of seasoned timber, and wood decay fungi. Drywood termites and mould are outside the scope of that Standard. Where evidence of drywood termites or any other pest outside scope is observed, it is noted in the Report as a courtesy (duty to warn), and a specific inspection by a suitably qualified provider is recommended.</p>
+    <p><strong>2a. Non-invasive limitation.</strong> No part of the Inspection involved cutting into, dismantling, or removing any part of the building, its linings, coverings or insulation, and furniture and stored articles were not moved. Timber pest activity and damage may be concealed behind or within any of these and remain undetectable by a non-invasive inspection.</p>
     <p><strong>3. Records retention.</strong> Records of this Inspection, including photographs and this Report, are retained by the Inspection Provider for a minimum of three (3) years in accordance with AS 3660.2-2017.</p>
     <p><strong>4. Australian Consumer Law.</strong> Nothing in this Report or these Terms excludes, restricts or modifies any guarantee, warranty, term or condition implied or imposed by the Australian Consumer Law (or any other applicable law) that cannot lawfully be excluded. Where permitted, the Inspection Provider's liability is limited, at its option, to resupply of the Inspection or Report, or payment of the cost of resupply.</p>
     <p><strong>5. Limitations.</strong> The Inspection did not include areas that were inaccessible, obstructed, restricted, or deemed unsafe at the time of Inspection (see "Areas We Were Unable to Inspect"). Non-detectable Termite activity and damage may be present at the Property despite this Inspection.</p>
@@ -1417,9 +1419,13 @@
   // path does, since it runs in the current page's lifetime).
   function buildReportBodyHtml(job, report, trackedUrls) {
     const isPestTreatment = job && job.jobType === 'pest_treatment';
+    // AS 3660.2 governs HOW an existing building is inspected; AS 4349.3
+    // governs WHAT the resulting timber pest report must contain. They work
+    // as a pair, and a pre-purchase report is judged against 4349.3 — citing
+    // only 3660.2 left the report silent on the standard it's measured by.
     const standardLine = isPestTreatment
       ? 'Chemical Application Record'
-      : 'In Accordance with AS 3660.2-2017';
+      : 'In Accordance with AS 4349.3-2010 and AS 3660.2-2017';
     let html = `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
       <h1>${escapeHtml(reportTitleFor(job && job.jobType))}</h1>
       <p>${standardLine}<br>${escapeHtml(job ? job.address : '')}</p>`;

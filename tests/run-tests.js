@@ -290,6 +290,164 @@
     await wait(100);
   });
 
+  // =====================================================================
+  // Report schema + completion logic — pure functions, no UI needed.
+  // This whole area had no coverage until now, which is exactly where the
+  // discard-leak and empty-array bugs were living.
+  // =====================================================================
+
+  const U = window.ReportSchemaUtils;
+  const sectionById = (schema, id) => schema.find((s) => s.id === id);
+
+  test('Schema: a required field left blank keeps the section yellow', () => {
+    const findings = sectionById(window.REPORT_SCHEMA, 'findings');
+    assertEqual(U.computeSectionStatus(findings, {}), 'yellow', 'blank findings should be yellow');
+  });
+
+  test('Schema: an empty required array counts as empty, not complete', () => {
+    // Regression: an untouched multiselect / product list used to pass the
+    // completion check and turn a section green with no data in it.
+    const section = { id: 't', fields: [{ id: 'list', type: 'multiselect', required: true, options: ['a'] }] };
+    assertEqual(U.computeSectionStatus(section, { list: [] }), 'yellow', 'empty array should be incomplete');
+    assertEqual(U.computeSectionStatus(section, { list: ['a'] }), 'green', 'populated array should be complete');
+  });
+
+  test('Schema: hidden required fields do not block completion', () => {
+    const section = {
+      id: 't',
+      fields: [
+        { id: 'gate', type: 'yesno', required: true },
+        { id: 'detail', type: 'text', required: true, showIf: { field: 'gate', equals: 'Yes' } },
+      ],
+    };
+    assertEqual(U.computeSectionStatus(section, { gate: 'No' }), 'green', 'hidden dependent field should not block');
+    assertEqual(U.computeSectionStatus(section, { gate: 'Yes' }), 'yellow', 'visible dependent field should block');
+  });
+
+  test('Schema: softRequired sections still show yellow when incomplete', () => {
+    for (const schema of [window.REPORT_SCHEMA, window.PEST_TREATMENT_SCHEMA]) {
+      const ack = sectionById(schema, 'acknowledgement');
+      assert(ack.softRequired === true, 'acknowledgement should be softRequired');
+      assertEqual(U.computeSectionStatus(ack, {}), 'yellow', 'blank acknowledgement should be yellow');
+    }
+  });
+
+  test('Schema: both report types have unique section and field ids', () => {
+    for (const [name, schema] of [['termite', window.REPORT_SCHEMA], ['pest', window.PEST_TREATMENT_SCHEMA]]) {
+      const sectionIds = schema.map((s) => s.id);
+      assertEqual(new Set(sectionIds).size, sectionIds.length, `${name}: duplicate section id`);
+      for (const s of schema) {
+        const fieldIds = s.fields.map((f) => f.id);
+        assertEqual(new Set(fieldIds).size, fieldIds.length, `${name}/${s.id}: duplicate field id`);
+      }
+    }
+  });
+
+  test('Compliance: termite report covers all four AS 4349.3 timber pest categories', () => {
+    const ids = window.REPORT_SCHEMA.flatMap((s) => s.fields.map((f) => f.id));
+    for (const required of ['liveTermitesFound', 'workingsFound', 'borersFound', 'fungalDecayFound']) {
+      assert(ids.includes(required), `missing timber pest field: ${required}`);
+    }
+  });
+
+  test('Compliance: pest treatment captures the NSW pesticide record fields', () => {
+    const ids = window.PEST_TREATMENT_SCHEMA.flatMap((s) => s.fields.map((f) => f.id));
+    // Pesticides Regulation 2017 (NSW) cl 36 — the ones that were missing.
+    for (const required of ['inspectionTime', 'applicationFinishTime', 'windSpeed', 'windDirection', 'products', 'equipmentUsed']) {
+      assert(ids.includes(required), `missing pesticide record field: ${required}`);
+    }
+  });
+
+  test('Compliance: wind fields only apply to outdoor spray applications', () => {
+    const safety = sectionById(window.PEST_TREATMENT_SCHEMA, 'safety');
+    const windSpeed = safety.fields.find((f) => f.id === 'windSpeed');
+    assert(!U.isFieldVisible(windSpeed, { appliedOutdoorsWithSpray: 'No' }), 'wind hidden for indoor-only work');
+    assert(U.isFieldVisible(windSpeed, { appliedOutdoorsWithSpray: 'Yes' }), 'wind shown for outdoor spraying');
+  });
+
+  test('UI: report header follows the job type', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const termite = await win.DB.addJob({ name: 'Header Termite' });
+    const pest = await win.DB.addJob({ name: 'Header Pest', jobType: 'pest_treatment' });
+
+    await win.ReportUI.openReview(termite.id);
+    await wait(150);
+    assertEqual(doc.getElementById('report-title').textContent, 'Termite Inspection Report', 'termite header');
+
+    await win.ReportUI.openReview(pest.id);
+    await wait(150);
+    assertEqual(doc.getElementById('report-title').textContent, 'General Pest Treatment Report', 'pest header');
+  });
+
+  test('UI: discarding a section edit does not leak into the next save', async () => {
+    // Regression: pendingSectionValues took a shallow copy, so arrays stayed
+    // shared with the saved report. Editing then pressing Back mutated the
+    // real record, and the next unrelated section save wrote it to disk.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Discard Leak Job', jobType: 'pest_treatment' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: { chemicals: { products: [{ id: 'p1', productName: 'KEEP ME' }] } },
+      finalizedAt: null,
+    });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    const openSection = (label) => {
+      const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((el) => el.textContent.includes(label));
+      assert(li, `section not found: ${label}`);
+      li.click();
+    };
+
+    openSection('Chemicals');
+    await wait(200);
+    const input = doc.querySelector('.product-card input');
+    assert(input, 'product name input should render');
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 'DISCARD ME');
+    input.dispatchEvent(new win.Event('input', { bubbles: true }));
+    doc.getElementById('section-back-btn').click(); // discard
+    await wait(200);
+
+    openSection('Safety');
+    await wait(200);
+    doc.getElementById('section-save-btn').click(); // unrelated save
+    await wait(300);
+
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.sections.chemicals.products[0].productName, 'KEEP ME', 'discarded edit must not persist');
+  });
+
+  test('UI: finalize is not blocked by unsigned softRequired sections', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Finalize Gate Job', address: '1 Test St' });
+    const sections = {};
+    for (const s of win.REPORT_SCHEMA) {
+      const vals = win.ReportSchemaUtils.defaultValuesForSection(s);
+      if (!s.softRequired) {
+        for (const f of s.fields) {
+          if (!f.required) continue;
+          if (f.type === 'yesno') vals[f.id] = 'No';
+          else if (f.type === 'select') vals[f.id] = f.options[0];
+          else if (f.type === 'multiselect') vals[f.id] = [f.options[0]];
+          else if (f.type === 'signature') vals[f.id] = 'data:image/png;base64,xx';
+          else vals[f.id] = 'filled';
+        }
+      }
+      sections[s.id] = vals;
+    }
+    await win.DB.saveReport({ jobId: job.id, sections, finalizedAt: null });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    assert(!doc.getElementById('finalize-report-btn').disabled,
+      'finalize should be enabled when only softRequired sections are incomplete');
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';
