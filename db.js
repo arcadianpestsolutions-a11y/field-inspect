@@ -11,7 +11,10 @@
 // A page loaded with ?test=1 gets its own IndexedDB so the automated test
 // suite (tests/run-tests.html) never touches real job data.
 const DB_NAME = new URLSearchParams(location.search).get('test') ? 'field-inspect-db-test' : 'field-inspect-db';
-const DB_VERSION = 2;
+// v3 adds the `invoices` store. onupgradeneeded below is written so each
+// store is created only if missing, which means an existing device upgrades
+// in place without losing any job data.
+const DB_VERSION = 3;
 
 let dbPromise = null;
 
@@ -34,6 +37,10 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('reports')) {
         db.createObjectStore('reports', { keyPath: 'jobId' });
+      }
+      if (!db.objectStoreNames.contains('invoices')) {
+        const store = db.createObjectStore('invoices', { keyPath: 'id' });
+        store.createIndex('jobId', 'jobId', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -150,12 +157,23 @@ const DB = {
     const fstore = await tx('footage', 'readwrite');
     await Promise.all(footage.map((f) => reqToPromise(fstore.delete(f.id))));
 
+    const invoices = await this.getInvoicesForJob(id);
+    const istore = await tx('invoices', 'readwrite');
+    await Promise.all(invoices.map((i) => reqToPromise(istore.delete(i.id))));
+
     const rstore = await tx('reports', 'readwrite');
     await reqToPromise(rstore.delete(id)).catch(() => {});
 
     const jstore = await tx('jobs', 'readwrite');
     await reqToPromise(jstore.delete(id));
 
+    // Storage bytes for this job would otherwise be orphaned in the bucket
+    // forever. Best-effort: a failure here must not leave the job undeleted.
+    if (window.Media) {
+      window.Media.listJobPaths(id)
+        .then((paths) => window.Media.removeBlobs(paths))
+        .catch((e) => console.warn('[db] could not clean up job media:', e.message || e));
+    }
     if (window.Sync) window.Sync.deleteJobRemote(id);
   },
 
@@ -289,6 +307,46 @@ const DB = {
   async deleteReport(jobId) {
     const store = await tx('reports', 'readwrite');
     await reqToPromise(store.delete(jobId));
+  },
+
+  // ---------- Invoices ----------
+  async saveInvoice(invoice) {
+    const store = await tx('invoices', 'readwrite');
+    const toSave = { ...invoice, updatedAt: Date.now() };
+    await reqToPromise(store.put(toSave));
+    if (window.Sync) window.Sync.pushInvoice(toSave);
+    return toSave;
+  },
+
+  // Low-level put used only by the sync layer — never re-triggers a push.
+  async putInvoiceRaw(invoice) {
+    const store = await tx('invoices', 'readwrite');
+    await reqToPromise(store.put(invoice));
+    return invoice;
+  },
+
+  async getInvoice(id) {
+    const store = await tx('invoices', 'readonly');
+    return reqToPromise(store.get(id));
+  },
+
+  async getInvoicesForJob(jobId) {
+    const store = await tx('invoices', 'readonly');
+    const idx = store.index('jobId');
+    const all = await reqToPromise(idx.getAll(jobId));
+    return all.sort((a, b) => b.createdAt - a.createdAt);
+  },
+
+  async getAllInvoices() {
+    const store = await tx('invoices', 'readonly');
+    const all = await reqToPromise(store.getAll());
+    return all.sort((a, b) => b.createdAt - a.createdAt);
+  },
+
+  async deleteInvoice(id) {
+    const store = await tx('invoices', 'readwrite');
+    await reqToPromise(store.delete(id));
+    if (window.Sync) window.Sync.deleteInvoiceRemote(id);
   },
 
   async getAllReports() {

@@ -62,6 +62,7 @@
   const finishInspectionBtn = document.getElementById('finish-inspection-btn');
   const importFootageBtn = document.getElementById('import-footage-btn');
   const viewReportBtn = document.getElementById('view-report-btn');
+  const viewInvoiceBtn = document.getElementById('view-invoice-btn');
 
   const importModal = document.getElementById('import-modal');
   const importZoneInput = document.getElementById('import-zone-input');
@@ -238,6 +239,13 @@
     renderJobList();
   }
   window.showJobListView = showJobListView;
+  // Used by invoice-ui.js to return to the job it was opened from.
+  window.showJobViewById = showJobView;
+  // Every full-screen view, so a new one can be shown without each module
+  // having to know the complete list.
+  window.hideAllAppViews = function () {
+    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+  };
 
   // ---------- Auth / sync UI ----------
   function showLoginView() {
@@ -410,6 +418,21 @@
       viewReportBtn.textContent = job.status === 'completed' ? '✓ View Finalized Report' : '📄 Open Report';
     } else {
       hide(viewReportBtn);
+    }
+
+    // Invoicing only makes sense once there's work to bill for, so it appears
+    // at the same point the report does.
+    if (viewInvoiceBtn) {
+      const billable = job.status === 'review' || job.status === 'completed';
+      viewInvoiceBtn.classList.toggle('hidden', !billable);
+      if (billable) {
+        DB.getInvoicesForJob(job.id).then((invoices) => {
+          const invoice = invoices[0];
+          viewInvoiceBtn.textContent = !invoice
+            ? '💰 Create Invoice'
+            : (invoice.xeroInvoiceId ? '💰 Invoice — in Xero' : '💰 Invoice — draft');
+        }).catch(() => { viewInvoiceBtn.textContent = '💰 Invoice'; });
+      }
     }
   }
 
@@ -1494,6 +1517,12 @@
 
   // ---------- View Report ----------
   viewReportBtn.addEventListener('click', () => ReportUI.openReview(currentJobId));
+  if (viewInvoiceBtn) {
+    viewInvoiceBtn.addEventListener('click', () => {
+      if (window.InvoiceUI) window.InvoiceUI.open(currentJobId);
+      else toast('Invoicing is still loading — try again in a moment.');
+    });
+  }
 
   // ---------- Capture detail ----------
   async function openDetail(captureId) {
@@ -1706,6 +1735,17 @@
         showLoggedInUI(session);
         showJobListView();
         Sync.pullAll().then(() => renderJobList());
+        // Xero sends the technician back here with ?code= after they grant
+        // access. It can only be redeemed while signed in, since the exchange
+        // goes through an auth-gated Edge Function.
+        if (window.Xero) {
+          window.Xero.captureAuthCodeFromUrl().then((result) => {
+            if (!result) return;
+            toast(result.ok
+              ? `Xero connected — ${result.tenantName || 'organisation'}`
+              : 'Could not connect Xero: ' + result.error);
+          });
+        }
       } else {
         loggedInEmail = '';
         showLoginView();

@@ -116,6 +116,7 @@
         <button id="import-footage-btn" class="btn btn-secondary flex1">⤒ Import Footage</button>
       </div>
       <button id="view-report-btn" class="btn btn-outline full hidden">📄 Open Report</button>
+      <button id="view-invoice-btn" class="btn btn-outline full hidden">💰 Invoice</button>
     </div>
 
     <datalist id="zone-suggestions"></datalist>
@@ -293,6 +294,65 @@
 </section>
 
 <!-- ============ SAVED REPORTS ARCHIVE VIEW ============ -->
+<!-- ============ INVOICE VIEW ============ -->
+<section id="view-invoice" class="view hidden">
+  <header class="topbar">
+    <button id="invoice-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Invoice</h1>
+      <span id="invoice-subtitle" class="subtitle"></span>
+    </div>
+    <button id="invoice-print-btn" class="icon-btn" aria-label="Print invoice" title="Print / Save as PDF">⤓</button>
+  </header>
+
+  <main class="content">
+    <div class="card invoice-meta">
+      <div class="field-row">
+        <label class="field-label">Bill to</label>
+        <input id="invoice-client-name" type="text" placeholder="Client name" autocomplete="off" />
+      </div>
+      <div class="field-row">
+        <label class="field-label">Client email</label>
+        <input id="invoice-client-email" type="email" placeholder="Client email" autocomplete="off" />
+      </div>
+      <div class="field-row">
+        <label class="field-label">Property</label>
+        <input id="invoice-property" type="text" placeholder="Property address" autocomplete="off" />
+      </div>
+      <div class="row gap">
+        <div class="field-row flex1">
+          <label class="field-label">Issued</label>
+          <input id="invoice-issue-date" type="date" />
+        </div>
+        <div class="field-row flex1">
+          <label class="field-label">Due</label>
+          <input id="invoice-due-date" type="date" />
+        </div>
+      </div>
+    </div>
+
+    <h2 class="invoice-section-heading">Line items</h2>
+    <div id="invoice-lines" class="invoice-lines"></div>
+    <button id="invoice-add-line" class="btn btn-outline full">+ Add line</button>
+
+    <div class="card invoice-totals">
+      <div class="invoice-total-row"><span>Subtotal</span><span id="invoice-subtotal">$0.00</span></div>
+      <div class="invoice-total-row" id="invoice-gst-row"><span>GST (10%)</span><span id="invoice-gst">$0.00</span></div>
+      <div class="invoice-total-row invoice-grand"><span>Total</span><span id="invoice-total">$0.00</span></div>
+      <label class="checkbox-chip">
+        <input id="invoice-gst-registered" type="checkbox" checked />
+        Apply GST (registered for GST)
+      </label>
+    </div>
+
+    <div id="invoice-xero-state" class="invoice-xero-state"></div>
+
+    <button id="invoice-save-btn" class="btn btn-secondary full">Save invoice</button>
+    <button id="invoice-xero-btn" class="btn btn-primary full">Send to Xero as draft</button>
+    <button id="invoice-email-btn" class="btn btn-outline full">📧 Email invoice to client</button>
+  </main>
+</section>
+
 <section id="view-archive" class="view hidden">
   <header class="topbar">
     <button id="archive-back-btn" class="icon-btn" aria-label="Back">←</button>
@@ -317,11 +377,14 @@
 <script src="db.js"></script>
 <script src="report-schema.js"></script>
 <script src="pest-treatment-schema.js"></script>
+<script src="invoicing.js"></script>
 <script src="sync.js"></script>
 <script src="media.js"></script>
+<script src="xero.js"></script>
 <script src="ai.js"></script>
 <script src="email.js"></script>
 <script src="report.js"></script>
+<script src="invoice-ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

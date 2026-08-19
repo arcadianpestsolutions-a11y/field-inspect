@@ -341,6 +341,61 @@
     catch (e) { console.warn('[sync] delete footage remote failed:', e.message || e); }
   }
 
+  async function pushInvoice(invoice) {
+    if (!isReady()) return;
+    try {
+      const { error } = await supabaseClient.from('invoices').upsert({
+        id: invoice.id,
+        job_id: invoice.jobId,
+        number: invoice.number,
+        issue_date: invoice.issueDate,
+        due_date: invoice.dueDate,
+        client_name: invoice.clientName || '',
+        client_email: invoice.clientEmail || '',
+        property_address: invoice.propertyAddress || '',
+        reference: invoice.reference || '',
+        line_items: invoice.lineItems || [],
+        gst_registered: invoice.gstRegistered !== false,
+        status: invoice.status || 'draft',
+        xero_invoice_id: invoice.xeroInvoiceId || null,
+        xero_status: invoice.xeroStatus || null,
+        created_at: invoice.createdAt,
+        updated_at: invoice.updatedAt || invoice.createdAt,
+        created_by: currentUserId(),
+      });
+      if (error) throw error;
+    } catch (e) {
+      console.warn('[sync] push invoice failed, will retry on next sync:', e.message || e);
+    }
+  }
+
+  function remoteInvoiceToLocal(ri) {
+    return {
+      id: ri.id,
+      jobId: ri.job_id,
+      number: ri.number,
+      issueDate: ri.issue_date,
+      dueDate: ri.due_date,
+      clientName: ri.client_name || '',
+      clientEmail: ri.client_email || '',
+      propertyAddress: ri.property_address || '',
+      reference: ri.reference || '',
+      lineItems: ri.line_items || [],
+      gstRegistered: ri.gst_registered !== false,
+      status: ri.status || 'draft',
+      xeroInvoiceId: ri.xero_invoice_id || null,
+      xeroStatus: ri.xero_status || null,
+      createdAt: ri.created_at,
+      updatedAt: ri.updated_at,
+    };
+  }
+
+  async function deleteInvoiceRemote(id) {
+    if (!isReady()) return;
+    try { await supabaseClient.from('invoices').delete().eq('id', id); }
+    catch (e) { console.warn('[sync] delete invoice remote failed:', e.message || e); }
+  }
+
   async function deleteJobRemote(id) {
     if (!isReady()) return;
     try {
@@ -490,6 +545,14 @@
         push: pushFootage,
       });
 
+      await syncCollection({
+        table: 'invoices',
+        localAll: await DB.getAllInvoices(),
+        toLocal: remoteInvoiceToLocal,
+        putRaw: (rec) => DB.putInvoiceRaw(rec),
+        push: pushInvoice,
+      });
+
       // Records are cheap and now consistent; bytes are expensive, so they're
       // fetched last and failures here don't fail the sync.
       await pullMissingMedia();
@@ -537,9 +600,11 @@
     pushReport,
     pushCapture,
     pushFootage,
+    pushInvoice,
     deleteJobRemote,
     deleteCaptureRemote,
     deleteFootageRemote,
+    deleteInvoiceRemote,
     currentUserId,
     isOnline,
     getStatus: () => syncStatus,

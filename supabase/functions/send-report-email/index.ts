@@ -50,23 +50,38 @@ Deno.serve(async (req) => {
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
 
     const body = await req.json();
-    const { recipientEmail, recipientName, jobName, jobType, pdfBase64 } = body;
+    const { recipientEmail, recipientName, jobName, jobType, documentKind, pdfBase64 } = body;
 
     if (!recipientEmail || !EMAIL_PATTERN.test(recipientEmail)) {
       return json({ error: 'A valid recipientEmail is required' }, 400);
     }
     if (!pdfBase64) return json({ error: 'pdfBase64 is required' }, 400);
 
+    const isInvoice = documentKind === 'invoice';
     const isPestTreatment = jobType === 'pest_treatment';
+
     const reportLabel = isPestTreatment ? 'General Pest Treatment Report' : 'Termite Inspection Report';
-    const subject = `${reportLabel}${jobName ? ' — ' + jobName : ''}`;
-    const html = `
+    const subject = isInvoice
+      ? `Tax Invoice${jobName ? ' ' + jobName : ''} — Arcadian Pest Solutions`
+      : `${reportLabel}${jobName ? ' — ' + jobName : ''}`;
+
+    const html = isInvoice
+      ? `
+      <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
+      <p>Please find attached your tax invoice from Arcadian Pest Solutions.</p>
+      <p>If you have any questions about this invoice, please get in touch.</p>
+      <p>Kind regards,<br>Arcadian Pest Solutions</p>
+    `
+      : `
       <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
       <p>Please find attached your ${isPestTreatment ? 'pest treatment report' : 'termite inspection report'} from Arcadian Pest Solutions.</p>
       <p>If you have any questions about this report, please get in touch.</p>
       <p>Kind regards,<br>Arcadian Pest Solutions</p>
     `;
-    const attachmentFilename = isPestTreatment ? 'pest-treatment-report.pdf' : 'termite-inspection-report.pdf';
+
+    const attachmentFilename = isInvoice
+      ? `${(jobName || 'invoice').replace(/[^A-Za-z0-9._-]/g, '-')}.pdf`
+      : (isPestTreatment ? 'pest-treatment-report.pdf' : 'termite-inspection-report.pdf');
 
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',

@@ -1247,6 +1247,65 @@ select {
 .product-card-field { display: flex; flex-direction: column; gap: 4px; }
 .product-card-field label { font-size: 0.78rem; color: var(--text-dim); }
 
+/* ---------- Invoicing ---------- */
+.invoice-meta { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.invoice-section-heading { font-size: 1rem; margin: 4px 0 10px; }
+.invoice-lines { display: flex; flex-direction: column; gap: 10px; }
+
+.invoice-line {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.invoice-line-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.invoice-line-total {
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.invoice-totals { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.invoice-total-row {
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+.invoice-grand {
+  border-top: 2px solid var(--border);
+  padding-top: 10px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.invoice-xero-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 16px 0 4px;
+}
+.xero-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.xero-on  { background: rgba(45,217,127,0.16); color: var(--success); box-shadow: inset 0 0 0 1px rgba(45,217,127,0.4); }
+.xero-off { background: rgba(143,163,200,0.14); color: var(--text-dim); box-shadow: inset 0 0 0 1px rgba(143,163,200,0.3); }
+.xero-connect-link { color: var(--accent); font-size: 0.85rem; font-weight: 600; }
+
 .signature-field { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .signature-canvas {
   width: 100%;

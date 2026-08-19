@@ -107,9 +107,16 @@
     return report;
   }
 
+  // An inspection date is a calendar date where the technician is standing,
+  // not a UTC instant. toISOString() converts to UTC first, so in Australia
+  // (UTC+10/11) every inspection started before ~10am local was being dated
+  // the PREVIOUS DAY on a legal compliance document. Formatting from local
+  // components is what makes the date match the day the work happened.
   function todayISO() {
     const d = new Date();
-    return d.toISOString().slice(0, 10);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
   }
 
   function fmtDate(ts) {

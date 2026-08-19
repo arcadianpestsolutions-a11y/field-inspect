@@ -613,6 +613,104 @@
     }
   });
 
+  // =====================================================================
+  // Invoicing — money and dates. Both are areas where "looks right" and
+  // "is right" diverge quietly, so these assert exact values.
+  // =====================================================================
+
+  const INV = window.Invoicing;
+  const totalsOf = (lines, gstReg = true) => INV.computeTotals({ lineItems: lines, gstRegistered: gstReg });
+
+  test('Invoicing: money arithmetic does not drift in floating point', () => {
+    // 0.1 + 0.1 + 0.1 in dollars is 0.30000000000000004. In cents it is 30.
+    const t = totalsOf([
+      { quantity: 1, unitAmountCents: 10 },
+      { quantity: 1, unitAmountCents: 10 },
+      { quantity: 1, unitAmountCents: 10 },
+    ]);
+    assertEqual(t.subtotalCents, 30, 'three 10c lines must total exactly 30c');
+    assertEqual(INV.formatMoney(t.subtotalCents), '$0.30', 'formatted total');
+  });
+
+  test('Invoicing: GST is 10% and the invoice adds up', () => {
+    const t = totalsOf([
+      { quantity: 1, unitAmountCents: 16500 },
+      { quantity: 1, unitAmountCents: 8250 },
+    ]);
+    assertEqual(t.subtotalCents, 24750, 'subtotal');
+    assertEqual(t.gstCents, 2475, 'gst');
+    assertEqual(t.totalCents, 27225, 'total');
+    assertEqual(t.subtotalCents + t.gstCents, t.totalCents, 'total must equal subtotal + gst');
+  });
+
+  test('Invoicing: GST rounds per line, matching how Xero rounds', () => {
+    // 3333c x 10% = 333.3 -> 333 per line, 999 total. Rounding the 9999c
+    // subtotal instead would give 1000 and disagree with Xero by a cent.
+    const t = totalsOf([
+      { quantity: 1, unitAmountCents: 3333 },
+      { quantity: 1, unitAmountCents: 3333 },
+      { quantity: 1, unitAmountCents: 3333 },
+    ]);
+    assertEqual(t.gstCents, 999, 'per-line rounding');
+  });
+
+  test('Invoicing: GST-free lines and unregistered businesses carry no GST', () => {
+    assertEqual(totalsOf([{ quantity: 1, unitAmountCents: 16500, taxExempt: true }]).gstCents, 0, 'exempt line');
+    assertEqual(totalsOf([{ quantity: 1, unitAmountCents: 16500 }], false).gstCents, 0, 'not registered');
+  });
+
+  test('Invoicing: amounts typed with symbols and commas parse correctly', () => {
+    assertEqual(INV.centsFromInput('165'), 16500, 'plain');
+    assertEqual(INV.centsFromInput('$165.50'), 16550, 'dollar sign');
+    assertEqual(INV.centsFromInput('1,234.56'), 123456, 'thousands separator');
+    assertEqual(INV.centsFromInput(''), 0, 'empty');
+    assertEqual(INV.centsFromInput('abc'), 0, 'garbage');
+  });
+
+  test('Invoicing: dates are local calendar dates, not UTC instants', () => {
+    // Regression: toISOString() converts to UTC first, so anywhere east of
+    // Greenwich an invoice raised before ~10am was dated the previous day and
+    // a 14-day term landed a day early.
+    const now = new Date();
+    const expected = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    assertEqual(INV.todayISO(), expected, "today must match the technician's own calendar date");
+    assertEqual(INV.addDaysISO('2026-08-19', 14), '2026-09-02', '14 day term across a month boundary');
+    assertEqual(INV.addDaysISO('2026-12-31', 1), '2027-01-01', 'year rollover');
+    assertEqual(INV.addDaysISO('2028-02-28', 1), '2028-02-29', 'leap day');
+  });
+
+  test('Invoicing: invoice numbers increment within the year', () => {
+    const year = new Date().getFullYear();
+    assertEqual(INV.nextInvoiceNumber([]), `INV-${year}-0001`, 'first invoice');
+    assertEqual(INV.nextInvoiceNumber([{ number: `INV-${year}-0007` }]), `INV-${year}-0008`, 'after 7');
+    // A prior year's numbering must not bleed into this year's sequence.
+    assertEqual(INV.nextInvoiceNumber([{ number: `INV-${year - 1}-0099` }]), `INV-${year}-0001`, 'ignores last year');
+  });
+
+  test('UI: creating an invoice prefills from the job and report', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Invoice Prefill Job', address: '42 Bill St' });
+    await win.DB.updateJob(job.id, { status: 'completed' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: { clientDetails: { clientName: 'A Client', clientEmail: 'a@example.com', propertyAddress: '42 Bill St' } },
+      finalizedAt: Date.now(),
+    });
+
+    await win.InvoiceUI.open(job.id);
+    await wait(350);
+
+    assert(!doc.getElementById('view-invoice').classList.contains('hidden'), 'invoice view should be showing');
+    assertEqual(doc.getElementById('invoice-client-name').value, 'A Client', 'client name prefilled');
+    assertEqual(doc.getElementById('invoice-property').value, '42 Bill St', 'property prefilled');
+    assert(doc.querySelectorAll('.invoice-line').length >= 1, 'should start with a default line item');
+
+    const saved = await win.DB.getInvoicesForJob(job.id);
+    assertEqual(saved.length, 1, 'invoice should be persisted on open');
+    assert(/^INV-\d{4}-\d{4}$/.test(saved[0].number), `unexpected invoice number: ${saved[0].number}`);
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';
