@@ -865,6 +865,166 @@
     assert(!inBacklog, 'a job with a booking is not waiting to be booked');
   });
 
+  // =====================================================================
+  // Booking assistant. The model runs server-side but every tool executes
+  // here against the local database, so these stub the transport and assert
+  // on what the client actually computes and writes.
+  // =====================================================================
+
+  // Supabase exposes `functions` as a lazily-created property, so replacing
+  // the whole property is what actually intercepts the call.
+  function stubAgentTransport(win, script) {
+    const original = Object.getOwnPropertyDescriptor(win.supabaseClient, 'functions');
+    const captured = [];
+    let round = 0;
+    Object.defineProperty(win.supabaseClient, 'functions', {
+      configurable: true,
+      value: {
+        invoke: async (fn, opts) => {
+          captured.push(opts.body.messages);
+          return { data: script(++round) };
+        },
+      },
+    });
+    return {
+      captured,
+      restore: () => { if (original) Object.defineProperty(win.supabaseClient, 'functions', original); },
+      toolResults: () => {
+        const last = captured[captured.length - 1] || [];
+        const out = [];
+        for (const m of last) {
+          if (m.role === 'user' && Array.isArray(m.content)) {
+            for (const c of m.content) if (c.type === 'tool_result') out.push(JSON.parse(c.content));
+          }
+        }
+        return out;
+      },
+    };
+  }
+
+  const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  async function askAgent(win, doc, text) {
+    doc.getElementById('agent-input').value = text;
+    doc.getElementById('agent-send').click();
+    await wait(1100);
+  }
+
+  test('Assistant: reading free slots excludes the hours a long job occupies', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    assert(win.ScheduleAgent, 'the booking assistant should be loaded');
+
+    const day = new Date();
+    day.setDate(day.getDate() + 2);
+    day.setHours(9, 0, 0, 0);
+    const job = await win.DB.addJob({ name: 'Agent Slot Job', address: '1 Agent St' });
+    await win.DB.updateJob(job.id, { scheduledAt: day.getTime(), scheduledDurationMins: 120 });
+
+    await win.Scheduler.open();
+    await wait(250);
+    doc.getElementById('agent-open').click();
+    win.ScheduleAgent.reset();
+
+    const iso = localISO(day);
+    const stub = stubAgentTransport(win, (round) => round === 1
+      ? { stopReason: 'tool_use', content: [{ type: 'tool_use', id: 'x1', name: 'find_free_slots', input: { date: iso, durationMins: 60 } }] }
+      : { stopReason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
+    try {
+      await askAgent(win, doc, 'when am I free that day');
+      const [slots] = stub.toolResults();
+      assert(slots, 'find_free_slots should have run');
+      assert(!slots.freeStartTimes.includes('9am'), '9am is taken by the job itself');
+      assert(!slots.freeStartTimes.includes('10am'), '10am is taken by the 2nd hour of a 2h job');
+      assert(slots.freeStartTimes.includes('11am'), '11am should be offered');
+      assertEqual(slots.alreadyBookedHours, 2, 'hours already booked');
+    } finally { stub.restore(); }
+  });
+
+  test('Assistant: a proposed booking writes nothing until it is confirmed', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Agent Confirm Job', address: '2 Agent St' });
+    const day = new Date();
+    day.setDate(day.getDate() + 3);
+
+    await win.Scheduler.open();
+    await wait(250);
+    doc.getElementById('agent-open').click();
+    win.ScheduleAgent.reset();
+
+    const stub = stubAgentTransport(win, (round) => round === 1
+      ? { stopReason: 'tool_use', content: [{ type: 'tool_use', id: 'b1', name: 'book_job',
+          input: { jobId: job.id, dateTime: `${localISO(day)}T14:00`, durationMins: 90 } }] }
+      : { stopReason: 'end_turn', content: [{ type: 'text', text: 'done' }] });
+    try {
+      await askAgent(win, doc, 'book it');
+      assert(doc.querySelector('.agent-confirm'), 'a confirmation card should be shown');
+      const before = await win.DB.getJob(job.id);
+      assert(!before.scheduledAt, 'nothing may be written before the technician answers');
+
+      doc.querySelector('.agent-confirm .btn-primary').click();
+      await wait(900);
+
+      const after = await win.DB.getJob(job.id);
+      assert(after.scheduledAt, 'confirming should book it');
+      assertEqual(new Date(after.scheduledAt).getHours(), 14, 'booked at the proposed hour');
+      assertEqual(after.scheduledDurationMins, 90, 'booked for the proposed duration');
+    } finally { stub.restore(); }
+  });
+
+  test('Assistant: declining leaves the job unbooked and says so to the model', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Agent Decline Job' });
+    const day = new Date();
+    day.setDate(day.getDate() + 4);
+
+    await win.Scheduler.open();
+    await wait(250);
+    doc.getElementById('agent-open').click();
+    win.ScheduleAgent.reset();
+
+    const stub = stubAgentTransport(win, (round) => round === 1
+      ? { stopReason: 'tool_use', content: [{ type: 'tool_use', id: 'b2', name: 'book_job',
+          input: { jobId: job.id, dateTime: `${localISO(day)}T10:00`, durationMins: 60 } }] }
+      : { stopReason: 'end_turn', content: [{ type: 'text', text: 'no worries' }] });
+    try {
+      await askAgent(win, doc, 'book it');
+      doc.querySelector('.agent-confirm .btn-secondary').click();
+      await wait(900);
+
+      const after = await win.DB.getJob(job.id);
+      assert(!after.scheduledAt, 'declining must not book anything');
+      const results = stub.toolResults();
+      const declined = results.find((r) => r && r.booked === false);
+      assert(declined, 'the model must be told the booking did not happen');
+      assert(/declined/i.test(declined.reason), `reason should say it was declined, got: ${declined.reason}`);
+    } finally { stub.restore(); }
+  });
+
+  test('Assistant: search finds a job by address, not just by name', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.DB.addJob({ name: 'Zzz Unrelated Name', address: '99 Findme Parade, Leumeah' });
+
+    await win.Scheduler.open();
+    await wait(250);
+    doc.getElementById('agent-open').click();
+    win.ScheduleAgent.reset();
+
+    const stub = stubAgentTransport(win, (round) => round === 1
+      ? { stopReason: 'tool_use', content: [{ type: 'tool_use', id: 's1', name: 'search_jobs', input: { query: 'findme parade' } }] }
+      : { stopReason: 'end_turn', content: [{ type: 'text', text: 'found it' }] });
+    try {
+      await askAgent(win, doc, 'find the findme parade job');
+      const [res] = stub.toolResults();
+      assert(res && res.matches.length, 'should match on address');
+      assertEqual(res.matches[0].name, 'Zzz Unrelated Name', 'returns the right job');
+      assert(res.matches[0].jobId, 'returns an id the model can book with');
+    } finally { stub.restore(); }
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';

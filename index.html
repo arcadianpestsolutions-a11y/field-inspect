@@ -308,8 +308,24 @@
       <h1>Scheduler</h1>
       <span id="scheduler-month-label" class="subtitle"></span>
     </div>
+    <button id="agent-open" class="icon-btn" aria-label="Booking assistant" title="Booking assistant">💬</button>
     <button id="scheduler-today" class="link-btn">Today</button>
   </header>
+
+  <!-- Booking assistant: reads the diary and proposes bookings the
+       technician confirms. Lives inside the scheduler because that is the
+       only thing it can act on. -->
+  <div id="agent-panel" class="agent-panel hidden">
+    <div class="agent-head">
+      <span class="agent-title">Booking assistant</span>
+      <button id="agent-close" class="icon-btn" aria-label="Close assistant">✕</button>
+    </div>
+    <div id="agent-log" class="agent-log"></div>
+    <div class="agent-input-row">
+      <input id="agent-input" type="text" placeholder="e.g. book the Nguyen re-inspection Tuesday morning" autocomplete="off" />
+      <button id="agent-send" class="btn btn-primary agent-send">Send</button>
+    </div>
+  </div>
 
   <main class="content">
     <div class="cal-nav">
@@ -444,6 +460,7 @@
 <script src="report.js"></script>
 <script src="invoice-ui.js"></script>
 <script src="scheduler.js"></script>
+<script src="schedule-agent.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
