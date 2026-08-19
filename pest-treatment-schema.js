@@ -34,8 +34,18 @@ const PEST_TREATMENT_SCHEMA = [
         default: 'Residential',
       },
       { id: 'inspectionDate', label: 'Service Date', type: 'date', required: true },
-      { id: 'inspectionTime', label: 'Service Time', type: 'time' },
+      // Start AND finish time are both required by the NSW Pesticides
+      // Regulation 2017 cl 36 — "time of application including start and
+      // finish time". inspectionTime keeps its id (auto-filled when the
+      // technician taps Start Inspection) and is relabelled as the start.
+      { id: 'inspectionTime', label: 'Application Start Time', type: 'time', required: true },
+      { id: 'applicationFinishTime', label: 'Application Finish Time', type: 'time', required: true },
       { id: 'weather', label: 'Weather Conditions at time of treatment', type: 'text', aiFillable: true },
+      {
+        id: 'occupierDetails',
+        label: 'Property owner / occupier — name and contact (if different from the client above)',
+        type: 'text',
+      },
     ],
   },
   {
@@ -124,10 +134,33 @@ const PEST_TREATMENT_SCHEMA = [
     id: 'safety',
     number: 7,
     title: 'Safety & Compliance',
-    subtitle: 'Safety measures taken and compliance details for this treatment.',
+    subtitle: 'Safety measures taken and the pesticide-use record details required by law.',
     icon: '⚠️',
     color: '#b91c1c',
     fields: [
+      // Wind speed and direction must be recorded whenever a pesticide is
+      // applied OUTDOORS with spray equipment (NSW Pesticides Regulation
+      // 2017 cl 36) — at the start of the application and again on any
+      // significant change. Only shown once the technician says the job
+      // included outdoor spraying, so indoor-only jobs aren't cluttered.
+      {
+        id: 'appliedOutdoorsWithSpray',
+        label: 'Was any pesticide applied outdoors using spray equipment?',
+        type: 'yesno', required: true,
+      },
+      {
+        id: 'windSpeed', label: 'Estimated wind speed (km/h, at start of application)', type: 'text',
+        showIf: { field: 'appliedOutdoorsWithSpray', equals: 'Yes' }, required: true,
+      },
+      {
+        id: 'windDirection', label: 'Wind direction (at start of application)', type: 'select',
+        options: ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'],
+        showIf: { field: 'appliedOutdoorsWithSpray', equals: 'Yes' }, required: true,
+      },
+      {
+        id: 'windChanges', label: 'Significant changes in wind during application (time + new speed/direction)',
+        type: 'textarea', showIf: { field: 'appliedOutdoorsWithSpray', equals: 'Yes' },
+      },
       { id: 'ppeUsed', label: 'PPE Used', type: 'multiselect', options: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots', 'Other'], aiFillable: true },
       { id: 'signagePlaced', label: 'Warning signage / tape placed?', type: 'yesno' },
       { id: 'occupantsNotified', label: 'Occupants notified prior to treatment?', type: 'yesno' },

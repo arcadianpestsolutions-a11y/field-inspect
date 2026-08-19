@@ -19,11 +19,19 @@
     return schemaFor(currentJob && currentJob.jobType);
   }
 
+  // Single source of truth for the report's display name — used by the
+  // on-screen header, the print window's <title>, and the PDF cover line,
+  // so those three can never drift out of sync.
+  function reportTitleFor(jobType) {
+    return jobType === 'pest_treatment' ? 'General Pest Treatment Report' : 'Termite Inspection Report';
+  }
+
   // ---------- Element refs ----------
   const viewReport = document.getElementById('view-report');
   const viewReportSection = document.getElementById('view-report-section');
 
   const reportBackBtn = document.getElementById('report-back-btn');
+  const reportTitle = document.getElementById('report-title');
   const reportSubtitle = document.getElementById('report-subtitle');
   const reportExportBtn = document.getElementById('report-export-btn');
   const aiDraftBtn = document.getElementById('ai-draft-btn');
@@ -117,6 +125,9 @@
       currentReport = await loadOrCreateReport(jobId);
       const job = await DB.getJob(jobId);
       currentJob = job || null;
+      // The header is the technician's main cue for which report they're in —
+      // it must follow the job type, not stay hardcoded to the termite wording.
+      if (reportTitle) reportTitle.textContent = reportTitleFor(job && job.jobType);
       reportSubtitle.textContent = job ? job.name : '';
       renderSectionList();
       updateAiDraftButton();
@@ -494,10 +505,32 @@
     }
   }
 
+  // Takes a working copy of a section's saved values, deep enough that
+  // editing it can't reach back into currentReport. A plain spread only
+  // copies the top level, so arrays of objects (productList entries, photo
+  // lists) stayed shared by reference — editing one then pressing Back to
+  // discard still mutated the saved report, and the change got written out
+  // by the next unrelated section save. Photo entries hold Blobs, which
+  // structuredClone/JSON would either duplicate wastefully or destroy, so
+  // arrays are cloned one level down and their non-photo objects copied.
+  function cloneSectionValues(values) {
+    const out = {};
+    for (const [fieldId, value] of Object.entries(values || {})) {
+      if (Array.isArray(value)) {
+        out[fieldId] = value.map((entry) => (
+          entry && typeof entry === 'object' && !('blob' in entry) ? { ...entry } : entry
+        ));
+      } else {
+        out[fieldId] = value;
+      }
+    }
+    return out;
+  }
+
   async function openSectionEditor(sectionId) {
     currentSectionId = sectionId;
     const section = findSection(sectionId);
-    pendingSectionValues = { ...(currentReport.sections[sectionId] || {}) };
+    pendingSectionValues = cloneSectionValues(currentReport.sections[sectionId]);
 
     if (sectionId === 'inspector') {
       const email = await getCurrentUserEmail();
@@ -1384,14 +1417,12 @@
   // path does, since it runs in the current page's lifetime).
   function buildReportBodyHtml(job, report, trackedUrls) {
     const isPestTreatment = job && job.jobType === 'pest_treatment';
-    const html0 = isPestTreatment
-      ? `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
-      <h1>General Pest Treatment Report</h1>
-      <p>Chemical Application Record<br>${escapeHtml(job ? job.address : '')}</p>`
-      : `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
-      <h1>Termite Inspection Report</h1>
-      <p>In Accordance with AS 3660.2-2017<br>${escapeHtml(job ? job.address : '')}</p>`;
-    let html = html0;
+    const standardLine = isPestTreatment
+      ? 'Chemical Application Record'
+      : 'In Accordance with AS 3660.2-2017';
+    let html = `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
+      <h1>${escapeHtml(reportTitleFor(job && job.jobType))}</h1>
+      <p>${standardLine}<br>${escapeHtml(job ? job.address : '')}</p>`;
 
     for (const section of schemaFor(job && job.jobType)) {
       const values = report.sections[section.id] || {};
@@ -1458,8 +1489,7 @@
     const printWin = window.open('', '_blank');
     if (!printWin) { toast('Allow pop-ups to export the PDF'); return; }
 
-    const titleText = job && job.jobType === 'pest_treatment' ? 'General Pest Treatment Report' : 'Termite Inspection Report';
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(titleText)}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(reportTitleFor(job && job.jobType))}</title>
       <style>${REPORT_PDF_STYLE}</style></head><body>
       <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>
       ${buildReportBodyHtml(job, currentReport)}
