@@ -598,32 +598,6 @@
     }
   });
 
-  test('UI: a hanging camera prompt still recovers the Start button', async () => {
-    // The reported field bug: getUserMedia neither resolves nor rejects when
-    // the OS permission sheet is dismissed, so the tap produced no recording
-    // and no message. The button must at minimum show it registered the tap.
-    const win = frame.contentWindow;
-    const doc = frame.contentDocument;
-    const job = await win.DB.addJob({ name: 'Start Hang Job' });
-    win.showJobListView();
-    await wait(200);
-    Array.from(doc.querySelectorAll('#job-list .job-item'))
-      .find((li) => li.textContent.includes('Start Hang Job')).click();
-    await wait(250);
-
-    const btn = doc.getElementById('start-inspection-btn');
-    const original = win.navigator.mediaDevices.getUserMedia;
-    try {
-      win.navigator.mediaDevices.getUserMedia = () => new Promise(() => {}); // never settles
-      btn.click();
-      await wait(400);
-      assert(btn.disabled, 'button should be disabled while starting');
-      assert(/starting/i.test(btn.textContent), `button should show progress, got: "${btn.textContent}"`);
-    } finally {
-      win.navigator.mediaDevices.getUserMedia = original;
-    }
-  });
-
   // =====================================================================
   // Invoicing — money and dates. Both are areas where "looks right" and
   // "is right" diverge quietly, so these assert exact values.
@@ -1024,6 +998,155 @@
       assertEqual(res.matches[0].name, 'Zzz Unrelated Name', 'returns the right job');
       assert(res.matches[0].jobId, 'returns an id the model can book with');
     } finally { stub.restore(); }
+  });
+
+  // =====================================================================
+  // Navigation and the inspection controls — the things a technician taps
+  // most, and where "nothing happened" was reported from the field.
+  // =====================================================================
+
+  test('Navigation: exactly one view is ever on screen', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Nav Job' });
+    await win.DB.updateJob(job.id, { status: 'review' });
+
+    const visible = () => Array.from(doc.querySelectorAll('.view'))
+      .filter((v) => !v.classList.contains('hidden')).map((v) => v.id);
+
+    // Regression: report.js hid a hardcoded list of views that never gained
+    // the scheduler or invoice screens, so opening the archive from the
+    // scheduler left the scheduler on screen underneath.
+    const hops = [
+      ['scheduler', () => win.Scheduler.open()],
+      ['archive', () => win.ReportUI.openArchive()],
+      ['scheduler', () => win.Scheduler.open()],
+      ['report', () => win.ReportUI.openReview(job.id)],
+      ['invoice', () => win.InvoiceUI.open(job.id)],
+      ['archive', () => win.ReportUI.openArchive()],
+      ['job list', () => win.showJobListView()],
+    ];
+    for (const [label, go] of hops) {
+      await go();
+      await wait(250);
+      const open = visible();
+      assertEqual(open.length, 1, `after opening ${label}, expected one visible view, got [${open.join(', ')}]`);
+    }
+  });
+
+  test('Start Inspection: blocked camera permission is reported without asking', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Perm Blocked Job' });
+    await win.showJobViewById(job.id);
+    await wait(300);
+
+    const origPerm = win.navigator.permissions.query;
+    const origGum = win.navigator.mediaDevices.getUserMedia;
+    let askedForCamera = false;
+    try {
+      win.navigator.permissions.query = async () => ({ state: 'denied' });
+      win.navigator.mediaDevices.getUserMedia = async () => { askedForCamera = true; return new win.MediaStream(); };
+
+      doc.getElementById('start-inspection-btn').click();
+      await wait(500);
+
+      assert(!askedForCamera, 'should not request a camera it already knows is blocked');
+      assert(/blocked|settings/i.test(doc.getElementById('toast').textContent),
+        `expected an actionable permission message, got: "${doc.getElementById('toast').textContent}"`);
+      assert(!doc.getElementById('start-inspection-btn').disabled, 'the button must stay usable');
+    } finally {
+      win.navigator.permissions.query = origPerm;
+      win.navigator.mediaDevices.getUserMedia = origGum;
+    }
+  });
+
+  test('Start Inspection: a slow permission prompt can be cancelled, not just endured', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Slow Prompt Cancel Job' });
+    await win.showJobViewById(job.id);
+    await wait(300);
+
+    const origPerm = win.navigator.permissions.query;
+    const origGum = win.navigator.mediaDevices.getUserMedia;
+    const btn = doc.getElementById('start-inspection-btn');
+    try {
+      // The technician is still reading the OS permission sheet: the request
+      // never settles. A fixed 15s deadline used to fail a camera that was
+      // about to work, so the wait is now long AND escapable.
+      win.navigator.permissions.query = async () => ({ state: 'prompt' });
+      win.navigator.mediaDevices.getUserMedia = () => new Promise(() => {});
+
+      btn.click();
+      await wait(600);
+      assert(!btn.disabled, 'the button must stay tappable while waiting');
+      assert(/cancel/i.test(btn.textContent), `button should offer a way out, got: "${btn.textContent}"`);
+
+      btn.click(); // second tap cancels
+      await wait(700);
+      assertEqual(btn.textContent, '▶ Start Inspection', 'cancelling restores the button');
+      assert(!btn.disabled, 'button usable again after cancelling');
+      assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'no recording modal left open');
+    } finally {
+      win.navigator.permissions.query = origPerm;
+      win.navigator.mediaDevices.getUserMedia = origGum;
+    }
+  });
+
+  test('Inspection: a full start-to-finish run saves footage and opens the report', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Full Run Job' });
+    await win.showJobViewById(job.id);
+    await wait(300);
+
+    // A genuine MediaStream from a canvas + oscillator, so MediaRecorder
+    // really encodes and the true code path runs — no camera required.
+    function realishStream() {
+      const c = win.document.createElement('canvas');
+      c.width = 320; c.height = 240;
+      const ctx = c.getContext('2d');
+      let f = 0;
+      const t = win.setInterval(() => { ctx.fillStyle = `hsl(${f++ % 360},70%,45%)`; ctx.fillRect(0, 0, 320, 240); }, 50);
+      const vs = c.captureStream(15);
+      const ac = new (win.AudioContext || win.webkitAudioContext)();
+      const osc = ac.createOscillator();
+      const dest = ac.createMediaStreamDestination();
+      osc.connect(dest); osc.start();
+      const s = new win.MediaStream([...vs.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      s.__cleanup = () => { win.clearInterval(t); try { osc.stop(); ac.close(); } catch (e) {} };
+      return s;
+    }
+
+    const origPerm = win.navigator.permissions.query;
+    const origGum = win.navigator.mediaDevices.getUserMedia;
+    let made = null;
+    try {
+      win.navigator.permissions.query = async () => ({ state: 'granted' });
+      win.navigator.mediaDevices.getUserMedia = async () => { made = realishStream(); return made; };
+
+      doc.getElementById('start-inspection-btn').click();
+      await wait(2200);
+      assert(!doc.getElementById('inspection-modal').classList.contains('hidden'), 'recording modal should open');
+      assertEqual((await win.DB.getJob(job.id)).status, 'in_progress', 'job goes in_progress');
+
+      await wait(2200); // let it actually record something
+      doc.getElementById('inspection-finish-btn').click();
+      await wait(6500);
+
+      const after = await win.DB.getJob(job.id);
+      const footage = await win.DB.getFootage(job.id);
+      assertEqual(after.status, 'review', 'job moves to review');
+      assertEqual(footage.length, 1, 'the recording is saved');
+      assert(footage[0].blob.size > 0, 'saved footage should not be empty');
+      assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'modal closes');
+      assert(!doc.getElementById('finish-inspection-btn').disabled, 'finish button is usable again');
+    } finally {
+      if (made && made.__cleanup) made.__cleanup();
+      win.navigator.permissions.query = origPerm;
+      win.navigator.mediaDevices.getUserMedia = origGum;
+    }
   });
 
   // ---------- rendering ----------

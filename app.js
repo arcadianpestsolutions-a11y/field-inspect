@@ -1210,16 +1210,22 @@
   // a tap that produces no recording AND no message is indistinguishable from
   // a dead button, which is exactly how this was reported from the field.
   let startInspectionInProgress = false;
+  // Set while a camera request is outstanding so a second tap can abandon it.
+  // Waiting on a permission sheet can legitimately take a while, and a button
+  // that is merely disabled for that whole time reads as broken — the way out
+  // has to stay in the technician's hands.
+  let abandonPendingStart = null;
 
   async function startInspection() {
     if (startInspectionInProgress) return;
     startInspectionInProgress = true;
 
-    const originalLabel = startInspectionBtn.textContent;
-    startInspectionBtn.disabled = true;
-    startInspectionBtn.textContent = '⏳ Starting camera…';
+    const originalLabel = '▶ Start Inspection';
+    // Deliberately NOT disabled: the button becomes the cancel.
+    startInspectionBtn.textContent = '⏳ Starting camera… (tap to cancel)';
     const resetButton = () => {
       startInspectionInProgress = false;
+      abandonPendingStart = null;
       startInspectionBtn.disabled = false;
       startInspectionBtn.textContent = originalLabel;
     };
@@ -1232,30 +1238,73 @@
     };
 
     try {
-      // getUserMedia does NOT always settle. If the OS permission sheet is
-      // dismissed by a swipe rather than answered — common on iOS, and on
-      // Android when the app is backgrounded mid-prompt — the promise hangs
-      // forever: no resolve, no reject, no error to catch. Racing it against
-      // a timeout is what turns that silent hang into a message.
+      // getUserMedia does NOT always settle: if the OS permission sheet is
+      // dismissed by a swipe rather than answered, the promise hangs forever
+      // with nothing to catch. So it is raced against a timeout — but the
+      // timeout has to know whether a human is being asked something.
+      //
+      // A fixed 15s here was itself a bug: a first-time user gets a permission
+      // sheet, and anyone who reads it before tapping Allow blew through the
+      // deadline and was told the camera had failed when it was about to work.
+      // So: if permission is already granted the camera should appear quickly
+      // and a short deadline is right; if we are still waiting on a person,
+      // give them a genuinely human amount of time.
+      let permission = 'unknown';
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          permission = (await navigator.permissions.query({ name: 'camera' })).state;
+        }
+      } catch (e) { /* Safari/Firefox may not expose 'camera' — fall through */ }
+
+      if (permission === 'denied') {
+        releaseStream();
+        toast('Camera access is blocked for this site. Allow it in your browser settings, then try again.');
+        resetButton();
+        return;
+      }
+
+      const deadlineMs = permission === 'granted' ? 20000 : 120000;
+      let gaveUp = false;
+      // Lets a second tap on the button abandon the wait immediately.
+      abandonPendingStart = () => { gaveUp = true; };
+      const request = navigator.mediaDevices.getUserMedia({
+        // 720p is ample for a continuous evidence record, and the still
+        // button captures at full sensor resolution for anything that needs
+        // detail. Left uncapped, a phone records 1080p+ at ~8Mbps: a 20
+        // minute inspection is ~1.2GB pushed over the technician's mobile
+        // data, and ~720GB of stored footage after a year at 50 jobs/month.
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: true,
+      });
+      // If the camera turns up after we stopped waiting, nobody else holds a
+      // reference to it — release it or the indicator light stays on.
+      request.then((late) => { if (gaveUp) late.getTracks().forEach((t) => t.stop()); }).catch(() => {});
+
       inspectionStream = await Promise.race([
-        navigator.mediaDevices.getUserMedia({
-          // 720p is ample for a continuous evidence record, and the still
-          // button captures at full sensor resolution for anything that needs
-          // detail. Left uncapped, a phone records 1080p+ at ~8Mbps: a 20
-          // minute inspection is ~1.2GB pushed over the technician's mobile
-          // data, and ~720GB of stored footage after a year at 50 jobs/month.
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: true,
+        request,
+        new Promise((_, reject) => setTimeout(() => {
+          gaveUp = true;
+          reject(new Error('__timeout__'));
+        }, deadlineMs)),
+        // Resolves only if the technician taps the button again to back out.
+        new Promise((_, reject) => {
+          const poll = setInterval(() => {
+            if (gaveUp) { clearInterval(poll); reject(new Error('__cancelled__')); }
+          }, 150);
+          setTimeout(() => clearInterval(poll), deadlineMs + 1000);
         }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('__timeout__')), 15000)),
       ]);
     } catch (err) {
       releaseStream();
+      if (err && err.message === '__cancelled__') {
+        // Their own choice — no error language for it.
+        resetButton();
+        return;
+      }
       if (err && err.message === '__timeout__') {
         toast('The camera never responded. Check this site has camera and microphone permission, then try again.');
       } else if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
@@ -1390,15 +1439,28 @@
     // (a DB call, a UI transition, anything) for longer than this, force
     // the button back to a usable state and say so plainly, rather than
     // leaving it stuck disabled with no way to tell what happened.
+    // 12s was too tight and fired on jobs that were working fine: saving a
+    // 20-minute recording writes ~180MB into IndexedDB, which on a mid-range
+    // phone genuinely takes a while. Firing early told the technician it had
+    // "got stuck" while it was still saving, and inviting them to tap again
+    // mid-write is the worst possible advice. The deadline is now generous,
+    // and the wait says what is actually happening so it does not look frozen.
     let watchdogFired = false;
+    let finishStage = 'stopping the recording';
+    const setStage = (s) => { finishStage = s; };
+
+    const progressTimer = setInterval(() => {
+      if (!watchdogFired) toast('Finishing up — ' + finishStage + '…');
+    }, 4000);
+
     const watchdog = setTimeout(() => {
       watchdogFired = true;
-      console.warn('[inspection] finishInspection watchdog fired after 12s — something hung.');
-      toast('That took too long and got stuck — try again. If it keeps happening, tell me exactly what you see.');
+      console.warn('[inspection] finishInspection watchdog fired after 60s while ' + finishStage);
+      toast('Still stuck while ' + finishStage + '. Your recording is saved on this device — reopen the job and try Finish again.');
       finishInspectionInProgress = false;
       finishInspectionBtn.disabled = false;
       inspectionFinishBtn.disabled = false;
-    }, 12000);
+    }, 60000);
 
     try {
       if (!inspectionRecorder) {
@@ -1452,6 +1514,7 @@
       inspectionVideo.srcObject = null;
       hide(inspectionModal);
 
+      setStage('saving the recording');
       if (inspectionChunks.length) {
         const blob = new Blob(inspectionChunks, { type: (inspectionRecorder && inspectionRecorder.mimeType) || 'video/webm' });
         await DB.addFootage({
@@ -1485,6 +1548,7 @@
       inspectionChunks = [];
       inspectionRecorder = null;
 
+      setStage('updating the job');
       try {
         await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
       } catch (err) {
@@ -1501,6 +1565,7 @@
         if (!watchdogFired) toast('Inspection finished, but the report view failed to open — open it from the job screen instead.');
       }
     } finally {
+      clearInterval(progressTimer);
       clearTimeout(watchdog);
       // If the watchdog already fired and reset everything, don't stomp on
       // state a second time (e.g. re-disabling nothing, or resetting a flag
@@ -1524,7 +1589,11 @@
     }
   });
 
-  startInspectionBtn.addEventListener('click', startInspection);
+  startInspectionBtn.addEventListener('click', () => {
+    // While a camera request is outstanding the same button cancels it.
+    if (startInspectionInProgress && abandonPendingStart) { abandonPendingStart(); return; }
+    startInspection();
+  });
   finishInspectionBtn.addEventListener('click', finishInspection);
   inspectionFinishBtn.addEventListener('click', finishInspection);
 

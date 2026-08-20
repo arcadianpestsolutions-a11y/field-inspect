@@ -244,12 +244,13 @@
     }
   });
 
+  // Hides every full-screen view rather than a hardcoded list. The list
+  // version silently rotted: the scheduler and invoice screens were added
+  // later and never got added here, so opening a report or the archive while
+  // the scheduler was up left the scheduler on screen underneath.
   function hideAllAppViews() {
-    document.getElementById('view-joblist').classList.add('hidden');
-    document.getElementById('view-job').classList.add('hidden');
-    hide(viewReport);
-    hide(viewReportSection);
-    hide(viewArchive);
+    if (window.hideAllAppViews) { window.hideAllAppViews(); return; }
+    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
   }
 
   // ---------- Saved Reports archive ----------
