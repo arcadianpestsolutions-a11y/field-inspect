@@ -241,6 +241,8 @@
   window.showJobListView = showJobListView;
   // Used by invoice-ui.js to return to the job it was opened from.
   window.showJobViewById = showJobView;
+  // demo.js seeds jobs after load and needs the list redrawn.
+  window.renderJobListPublic = () => renderJobList();
   // Every full-screen view, so a new one can be shown without each module
   // having to know the complete list.
   window.hideAllAppViews = function () {
@@ -1788,6 +1790,13 @@
 
   // ---------- Init ----------
   async function initAuth() {
+    // Demo mode never authenticates. That is the whole point: every RLS
+    // policy here is `using (true)`, so any real login would expose every
+    // real client's details to whoever is holding the phone.
+    if (window.IS_DEMO) {
+      showJobListView();
+      return;
+    }
     if (!window.Sync) {
       // Supabase not configured — fall back to fully local-only mode.
       showJobListView();

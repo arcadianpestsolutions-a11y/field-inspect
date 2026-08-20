@@ -19,6 +19,17 @@
   }
   function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+  // Scheduler tests must not share a day, or one test's bookings show up in
+  // another's hour totals. Day-of-month is fixed per test (and kept <= 28 so
+  // it is valid in February) rather than offset from today, which would make
+  // which tests collide depend on the date the suite happens to run.
+  function dayThisMonth(n, hour = 9) {
+    const d = new Date();
+    d.setDate(n);
+    d.setHours(hour, 0, 0, 0);
+    return d;
+  }
+
   // ---------- setup / teardown ----------
   async function clearServiceWorkerState() {
     if ('serviceWorker' in navigator) {
@@ -720,9 +731,8 @@
 
   test('Scheduler: a new job can be booked at creation and persists the time', async () => {
     const win = frame.contentWindow;
-    const when = new Date();
-    when.setDate(when.getDate() + 3);
-    when.setHours(14, 30, 0, 0);
+    const when = dayThisMonth(3, 14);
+    when.setMinutes(30);
     const job = await win.DB.addJob({ name: 'Booked Job', scheduledAt: when.getTime() });
     const saved = await win.DB.getJob(job.id);
     assertEqual(saved.scheduledAt, when.getTime(), 'scheduledAt should persist exactly');
@@ -739,9 +749,7 @@
   test('Scheduler: the month grid shows how many jobs and hours are in a day', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
-    const d = new Date();
-    d.setDate(15);
-    d.setHours(11, 0, 0, 0);
+    const d = dayThisMonth(5, 11);
     // Two jobs totalling 3 hours, so the cell has to report both numbers.
     await win.DB.addJob({ name: 'Grid Load A', scheduledAt: d.getTime(), scheduledDurationMins: 120 });
     const d2 = new Date(d);
@@ -751,7 +759,7 @@
     await win.Scheduler.open();
     await wait(400);
     const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
-      .find((c) => c.querySelector('.cal-daynum').textContent === '15');
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(5).getDate()));
     assert(cell, 'the 15th should be in the grid');
     const load = cell.querySelector('.cal-load');
     assert(load, 'a booked day should show its load');
@@ -763,15 +771,13 @@
   test('Scheduler: the day view lays out hourly slots and spans long jobs', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
-    const d = new Date();
-    d.setDate(16);
-    d.setHours(10, 0, 0, 0);
+    const d = dayThisMonth(6, 10);
     await win.DB.addJob({ name: 'Long Job', scheduledAt: d.getTime(), scheduledDurationMins: 120 });
 
     await win.Scheduler.open();
     await wait(300);
     Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
-      .find((c) => c.querySelector('.cal-daynum').textContent === '16').click();
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(6).getDate())).click();
     await wait(300);
 
     const rows = Array.from(doc.querySelectorAll('.slot-row')).map((r) => r.textContent);
@@ -791,7 +797,7 @@
     await win.Scheduler.open();
     await wait(300);
     Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
-      .find((c) => c.querySelector('.cal-daynum').textContent === '17').click();
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(7).getDate())).click();
     await wait(300);
 
     const pmRow = Array.from(doc.querySelectorAll('.slot-row'))
@@ -809,7 +815,7 @@
 
     const saved = (await win.DB.getJobs()).find((j) => j.name === 'Slot Pick Job');
     assertEqual(new Date(saved.scheduledAt).getHours(), 15, 'booked into the 3pm slot');
-    assertEqual(new Date(saved.scheduledAt).getDate(), 17, 'booked onto the selected day');
+    assertEqual(new Date(saved.scheduledAt).getDate(), 7, 'booked onto the selected day');
     assertEqual(saved.scheduledDurationMins, 90, 'duration from the picker');
     assert(doc.getElementById('slot-picker-modal').classList.contains('hidden'), 'picker should close');
   });
@@ -825,7 +831,7 @@
 
     // Pick a day well clear of the seeded bookings.
     const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
-      .find((c) => c.querySelector('.cal-daynum').textContent === '22');
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(8).getDate()));
     cell.click();
     await wait(200);
 
@@ -843,7 +849,7 @@
     const b = jobs.find((j) => j.name === 'Backlog B');
     assert(a.scheduledAt, 'Backlog A should now be booked');
     assert(b.scheduledAt, 'Backlog B should now be booked');
-    assertEqual(new Date(a.scheduledAt).getDate(), 22, 'booked onto the selected day');
+    assertEqual(new Date(a.scheduledAt).getDate(), 8, 'booked onto the selected day');
     // One-tap Book starts from 8am rather than the 7am start of the grid, so
     // an empty day does not put a client in at 7 just because the slot exists.
     assertEqual(new Date(a.scheduledAt).getHours(), 8, 'first booking takes the default start hour');
@@ -855,8 +861,7 @@
   test('Scheduler: booked jobs drop out of the backlog', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
-    const d = new Date();
-    d.setDate(d.getDate() + 4);
+    const d = dayThisMonth(9);
     await win.DB.addJob({ name: 'Already Booked', scheduledAt: d.getTime() });
     await win.Scheduler.open();
     await wait(400);
@@ -915,9 +920,7 @@
     const doc = frame.contentDocument;
     assert(win.ScheduleAgent, 'the booking assistant should be loaded');
 
-    const day = new Date();
-    day.setDate(day.getDate() + 2);
-    day.setHours(9, 0, 0, 0);
+    const day = dayThisMonth(10);
     const job = await win.DB.addJob({ name: 'Agent Slot Job', address: '1 Agent St' });
     await win.DB.updateJob(job.id, { scheduledAt: day.getTime(), scheduledDurationMins: 120 });
 
@@ -945,8 +948,7 @@
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'Agent Confirm Job', address: '2 Agent St' });
-    const day = new Date();
-    day.setDate(day.getDate() + 3);
+    const day = dayThisMonth(11);
 
     await win.Scheduler.open();
     await wait(250);
@@ -977,8 +979,7 @@
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'Agent Decline Job' });
-    const day = new Date();
-    day.setDate(day.getDate() + 4);
+    const day = dayThisMonth(12);
 
     await win.Scheduler.open();
     await wait(250);

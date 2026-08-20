@@ -10,7 +10,13 @@
 
 // A page loaded with ?test=1 gets its own IndexedDB so the automated test
 // suite (tests/run-tests.html) never touches real job data.
-const DB_NAME = new URLSearchParams(location.search).get('test') ? 'field-inspect-db-test' : 'field-inspect-db';
+// ?test=1 gets an isolated DB for the automated suite; ?demo=1 gets another
+// for handing the app to someone to try. Neither can touch real job data.
+const __params = new URLSearchParams(location.search);
+window.IS_DEMO = __params.get('demo') === '1';
+const DB_NAME = __params.get('test') ? 'field-inspect-db-test'
+  : window.IS_DEMO ? 'field-inspect-db-demo'
+  : 'field-inspect-db';
 // v3 adds the `invoices` store. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.

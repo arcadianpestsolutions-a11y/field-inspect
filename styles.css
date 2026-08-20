@@ -1732,3 +1732,22 @@ select {
 }
 .agent-input-row input { flex: 1; min-width: 0; }
 .agent-send { flex-shrink: 0; padding: 0 16px; }
+
+/* ---------- Demo mode banner ---------- */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: calc(6px + var(--safe-top)) 14px 6px;
+  background: var(--warning);
+  color: #2a1d05;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  flex-shrink: 0;
+}
+.demo-banner strong { letter-spacing: 0.08em; }
+.demo-banner .link-btn { color: #2a1d05; text-decoration: underline; flex-shrink: 0; min-height: 32px; padding: 4px 2px; }
+/* The banner sits above the views, which are sized to the full viewport, so
+   they need to give the height back or the last row is pushed off-screen. */
+body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
