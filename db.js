@@ -14,6 +14,11 @@
 // for handing the app to someone to try. Neither can touch real job data.
 const __params = new URLSearchParams(location.search);
 window.IS_DEMO = __params.get('demo') === '1';
+// Test mode is local-only, exactly like demo mode. Without this, running the
+// suite on a browser that happens to hold a live session pulls production
+// records into the test database AND pushes every test fixture up to the real
+// one — which is precisely what happened.
+window.IS_TEST = !!__params.get('test');
 const DB_NAME = __params.get('test') ? 'field-inspect-db-test'
   : window.IS_DEMO ? 'field-inspect-db-demo'
   : 'field-inspect-db';

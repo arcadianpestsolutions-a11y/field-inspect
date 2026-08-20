@@ -81,18 +81,6 @@
   const inspectionFinishBtn = document.getElementById('inspection-finish-btn');
   const inspectionImportBtn = document.getElementById('inspection-import-btn');
 
-  const cameraModal = document.getElementById('camera-modal');
-  const cameraVideo = document.getElementById('camera-video');
-  const cameraCanvas = document.getElementById('camera-canvas');
-  const cameraZonePill = document.getElementById('camera-zone-pill');
-  const cameraCancelBtn = document.getElementById('camera-cancel');
-  const cameraShutterBtn = document.getElementById('camera-shutter');
-  const cameraSwitchBtn = document.getElementById('camera-switch');
-  const cameraErrorEl = document.getElementById('camera-error');
-  const cameraFlashEl = document.getElementById('camera-flash');
-  const shotCounterEl = document.getElementById('shot-counter');
-  const recentShotEl = document.getElementById('recent-shot');
-  const recentShotImg = document.getElementById('recent-shot-img');
 
   const recordModal = document.getElementById('record-modal');
   const recordTargetLabel = document.getElementById('record-target-label');
@@ -121,7 +109,6 @@
   let currentCaptures = [];
   const objectUrls = [];
 
-  let cameraStream = null;
   let facingMode = 'environment';
 
   let mediaRecorder = null;
@@ -142,7 +129,6 @@
   let selectMode = false;
   const selectedCaptureIds = new Set();
 
-  let sessionShotCount = 0;
 
   let inspectionRecorder = null;
   let inspectionStream = null;
@@ -228,14 +214,13 @@
 
   // ---------- View routing ----------
   function showJobListView() {
-    hide(viewJob);
-    hide(viewLogin);
-    document.getElementById('view-report').classList.add('hidden');
-    document.getElementById('view-report-section').classList.add('hidden');
-    document.getElementById('view-archive').classList.add('hidden');
+    // Hides every view rather than a hardcoded list. The list version was the
+    // same trap report.js fell into: the scheduler and invoice screens were
+    // added later and never appeared here, so returning to the job list from
+    // either of them left the old screen showing underneath.
+    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     show(viewJobList);
     currentJobId = null;
-    stopCameraStream();
     renderJobList();
   }
   window.showJobListView = showJobListView;
@@ -991,109 +976,6 @@
     div.textContent = str;
     return div.innerHTML;
   }
-
-  // ---------- Camera ----------
-  let shutterBusy = false;
-
-  async function openCamera() {
-    cameraErrorEl.classList.add('hidden');
-    cameraZonePill.textContent = 'Untagged'; // zoneInput was removed; this whole modal is currently unreachable anyway
-    sessionShotCount = 0;
-    hide(shotCounterEl);
-    hide(recentShotEl);
-    cameraCancelBtn.textContent = '✕';
-    cameraCancelBtn.setAttribute('aria-label', 'Cancel');
-    show(cameraModal);
-    await startCameraStream();
-  }
-
-  function triggerFlash() {
-    cameraFlashEl.classList.remove('flashing');
-    void cameraFlashEl.offsetWidth; // restart the CSS animation
-    cameraFlashEl.classList.add('flashing');
-  }
-
-  function showRecentShot(blob) {
-    const url = URL.createObjectURL(blob);
-    if (recentShotImg.dataset.blobUrl) URL.revokeObjectURL(recentShotImg.dataset.blobUrl);
-    recentShotImg.src = url;
-    recentShotImg.dataset.blobUrl = url;
-    recentShotEl.classList.remove('hidden', 'pop');
-    void recentShotEl.offsetWidth;
-    recentShotEl.classList.add('pop');
-  }
-
-  async function startCameraStream() {
-    stopCameraStream();
-    try {
-      cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: facingMode } },
-        audio: false,
-      });
-      cameraVideo.srcObject = cameraStream;
-    } catch (err) {
-      cameraErrorEl.textContent = 'Could not access camera: ' + (err.message || err.name || 'permission denied') +
-        '. Check your browser/site camera permissions.';
-      cameraErrorEl.classList.remove('hidden');
-    }
-  }
-
-  function stopCameraStream() {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((t) => t.stop());
-      cameraStream = null;
-    }
-  }
-
-  async function closeCamera() {
-    stopCameraStream();
-    hide(cameraModal);
-    if (sessionShotCount > 0) await renderGallery();
-  }
-
-  cameraCancelBtn.addEventListener('click', closeCamera);
-
-  cameraSwitchBtn.addEventListener('click', () => {
-    facingMode = facingMode === 'environment' ? 'user' : 'environment';
-    startCameraStream();
-  });
-
-  // Camera stays open after each shot (rapid-fire) so a whole zone can be
-  // photographed without re-tapping "Photo" between shots — closing is a
-  // separate, deliberate action via the ✕/Done button.
-  cameraShutterBtn.addEventListener('click', async () => {
-    if (!cameraStream || !cameraVideo.videoWidth || shutterBusy) return;
-    shutterBusy = true;
-    cameraCanvas.width = cameraVideo.videoWidth;
-    cameraCanvas.height = cameraVideo.videoHeight;
-    const ctx = cameraCanvas.getContext('2d');
-    ctx.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
-
-    triggerFlash();
-    shutterFeedback();
-
-    cameraCanvas.toBlob(async (blob) => {
-      shutterBusy = false;
-      if (!blob) { toast('Capture failed, try again'); return; }
-      await DB.addCapture({
-        jobId: currentJobId,
-        zone: '', // zoneInput was removed; this whole modal is currently unreachable anyway
-        type: 'photo',
-        photoBlob: blob,
-      });
-      sessionShotCount += 1;
-      shotCounterEl.textContent = `${sessionShotCount} photo${sessionShotCount === 1 ? '' : 's'}`;
-      show(shotCounterEl);
-      showRecentShot(blob);
-      cameraCancelBtn.textContent = '✓';
-      cameraCancelBtn.setAttribute('aria-label', 'Done');
-    }, 'image/jpeg', 0.88);
-  });
-
-  // openCamera() is currently unreachable — its trigger button (Photo, in
-  // the old bottom action bar) was removed since capture now happens via
-  // Start/Finish Inspection or Import Footage. Left in place rather than
-  // purged in case this rapid-fire capture UI gets re-exposed elsewhere.
 
   // ---------- Voice recording ----------
   function pickMimeType() {

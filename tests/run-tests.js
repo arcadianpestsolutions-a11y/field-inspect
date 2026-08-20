@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  window.__suiteBuild = 'reset-v2';
 
   const results = [];
   const resultsList = document.getElementById('results');
@@ -53,14 +54,52 @@
     });
   }
 
+  // deleteDatabase() is blocked while ANY connection is still open, and the
+  // previous version resolved on 'blocked' — so whenever the iframe still
+  // held the database, the reset silently did nothing and the run started on
+  // top of the last run's data. That is how hour totals came out doubled and
+  // scheduler assertions failed for no visible reason. Clearing the object
+  // stores instead cannot be blocked, needs no connection juggling, and is
+  // verified below rather than assumed.
   async function resetTestDb() {
     if (DB.__resetConnection) await DB.__resetConnection();
-    await new Promise((resolve) => {
-      const req = indexedDB.deleteDatabase('field-inspect-db-test');
-      req.onsuccess = resolve;
-      req.onerror = resolve;
-      req.onblocked = resolve; // best-effort; tests are written to be self-isolating either way
+
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open('field-inspect-db-test');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
     });
+
+    const names = Array.from(db.objectStoreNames);
+    if (names.length) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(names, 'readwrite');
+        names.forEach((n) => tx.objectStore(n).clear());
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('reset aborted'));
+      });
+
+      // Prove it actually emptied, so a silent failure can never masquerade
+      // as a passing suite again.
+      const remaining = await new Promise((resolve) => {
+        const tx = db.transaction(names, 'readonly');
+        let total = 0, pending = names.length;
+        names.forEach((n) => {
+          const req = tx.objectStore(n).count();
+          req.onsuccess = () => { total += req.result; if (--pending === 0) resolve(total); };
+          req.onerror = () => { if (--pending === 0) resolve(total); };
+        });
+      });
+      if (remaining !== 0) {
+        db.close();
+        throw new Error(`test database did not reset — ${remaining} records survived`);
+      }
+    }
+    db.close();
+    // Left visible so a failing reset can be diagnosed from outside the
+    // closure instead of by guesswork.
+    window.__lastReset = { at: Date.now(), stores: names, verifiedEmpty: true };
   }
 
   async function reloadFrame() {
@@ -853,6 +892,10 @@
   // Supabase exposes `functions` as a lazily-created property, so replacing
   // the whole property is what actually intercepts the call.
   function stubAgentTransport(win, script) {
+    // Test mode deliberately has no Supabase client (sync is off so the suite
+    // can never touch production), so provide a bare object to hang the stub
+    // on. The assistant resolves its client lazily for exactly this reason.
+    if (!win.supabaseClient) win.supabaseClient = {};
     const original = Object.getOwnPropertyDescriptor(win.supabaseClient, 'functions');
     const captured = [];
     let round = 0;
@@ -1175,7 +1218,15 @@
   }
 
   // ---------- runner ----------
+  let running = false;
+
   async function runAll() {
+    // Two concurrent runs share `results` and the test database, so they
+    // interleave into nonsense: counts drift mid-run and every scheduler
+    // assertion sees double the bookings. Tapping the button twice, or
+    // driving the suite from outside while a run is in flight, both do it.
+    if (running) return;
+    running = true;
     runBtn.disabled = true;
     results.length = 0;
     renderResults();
@@ -1194,6 +1245,7 @@
         renderResults();
       }
     } finally {
+      running = false;
       runBtn.disabled = false;
     }
   }

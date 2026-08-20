@@ -8,6 +8,13 @@
 (() => {
   'use strict';
 
+  // Test and demo modes never touch the cloud. Syncing from a browser that
+  // holds a real session would pull production records into the sandbox and
+  // push every fixture back up to the live database.
+  if (window.IS_TEST || window.IS_DEMO) {
+    console.warn('[sync] test/demo mode — cloud sync disabled.');
+    return;
+  }
   if (!window.supabase || !window.SUPABASE_URL || !window.SUPABASE_PUBLISHABLE_KEY) {
     console.warn('[sync] Supabase not configured — running local-only.');
     return;

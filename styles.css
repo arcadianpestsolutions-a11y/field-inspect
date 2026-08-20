@@ -478,9 +478,6 @@ input:focus, textarea:focus {
 .fab:active { transform: scale(0.94); filter: brightness(0.94); }
 
 /* ---------- Zone bar ---------- */
-.zone-bar {
-  margin-bottom: 16px;
-}
 
 .zone-label {
   display: block;
@@ -650,26 +647,7 @@ input:focus, textarea:focus {
   color: var(--accent-ink);
 }
 
-.capture-tile-saved-badge {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(10,14,26,0.5);
-  color: var(--success);
-  font-size: 2rem;
-  z-index: 3;
-  animation: savedFade 1.4s ease forwards;
-  pointer-events: none;
-}
 
-@keyframes savedFade {
-  0% { opacity: 0; transform: scale(0.7); }
-  20% { opacity: 1; transform: scale(1); }
-  75% { opacity: 1; }
-  100% { opacity: 0; }
-}
 
 /* ---------- Selection action bar ---------- */
 .selection-bar {
@@ -713,24 +691,7 @@ input:focus, textarea:focus {
   flex-shrink: 0;
 }
 
-.action-btn {
-  flex: 1;
-  background: var(--card);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 14px;
-  padding: 12px 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  min-height: 64px;
-}
 
-.action-btn:active { background: var(--bg); }
-.action-icon { font-size: 1.5rem; }
 
 /* ---------- Modals (fullscreen) ---------- */
 .modal {
@@ -790,64 +751,14 @@ input:focus, textarea:focus {
 
 #camera-shutter:active { background: #ccc; }
 
-.camera-error {
-  position: absolute;
-  top: 50%;
-  left: 20px;
-  right: 20px;
-  transform: translateY(-50%);
-  color: #fff;
-  text-align: center;
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
 
-.camera-flash {
-  position: absolute;
-  inset: 0;
-  background: #fff;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 5;
-}
-.camera-flash.flashing {
-  animation: cameraFlash 0.28s ease-out;
-}
 @keyframes cameraFlash {
   0% { opacity: 0.85; }
   100% { opacity: 0; }
 }
 
-.shot-counter {
-  position: absolute;
-  top: calc(14px + var(--safe-top));
-  left: 16px;
-  background: rgba(0,0,0,0.55);
-  color: #fff;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 0.82rem;
-  font-weight: 600;
-}
 
-.recent-shot {
-  position: absolute;
-  bottom: 16px;
-  left: 16px;
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 2px solid rgba(255,255,255,0.8);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
-}
-.recent-shot.pop { animation: shotFlyIn 0.35s ease-out; }
-.recent-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-@keyframes shotFlyIn {
-  0% { opacity: 0; transform: scale(0.4) translateY(10px); }
-  100% { opacity: 1; transform: scale(1) translateY(0); }
-}
 
 /* ---------- Record modal ---------- */
 .record-wrap {
@@ -984,13 +895,6 @@ input:focus, textarea:focus {
 .detail-nav-next { right: 8px; }
 .detail-nav-btn:disabled { opacity: 0; pointer-events: none; }
 
-.detail-counter {
-  display: block;
-  font-size: 0.72rem;
-  font-weight: 400;
-  color: rgba(255,255,255,0.65);
-  margin-top: 2px;
-}
 
 .detail-audio-wrap { width: 100%; max-width: 420px; }
 #detail-audio { width: 100%; }
@@ -1472,14 +1376,7 @@ select {
 .cal-selected .cal-daynum,
 .cal-selected .cal-more { color: var(--accent-ink); }
 
-.cal-dots { display: flex; gap: 3px; }
-.cal-dot {
-  width: 5px; height: 5px; border-radius: 50%;
-  background: var(--accent-2);
-}
-.cal-dot-done { background: var(--success); }
 .cal-selected .cal-dot { background: var(--accent-ink); }
-.cal-more { font-size: 0.6rem; color: var(--text-dim); line-height: 1; }
 
 .agenda-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 
@@ -1578,7 +1475,7 @@ select {
 .slot-free:active { border-color: var(--accent); color: var(--accent); }
 
 /* Agenda / backlog rows */
-.agenda-row, .backlog-row {
+.backlog-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1591,11 +1488,6 @@ select {
   color: var(--text);
   font-family: inherit;
   min-height: 44px;
-}
-.agenda-row:active { background: var(--bg-elev); }
-.agenda-time {
-  font-weight: 800; font-variant-numeric: tabular-nums;
-  color: var(--accent); min-width: 62px; flex-shrink: 0;
 }
 .agenda-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .agenda-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

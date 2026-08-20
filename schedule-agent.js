@@ -13,11 +13,13 @@
 (() => {
   'use strict';
 
-  if (!window.supabaseClient) {
-    console.warn('[schedule-agent] Supabase not configured — booking assistant unavailable.');
-    return;
-  }
-  const supabaseClient = window.supabaseClient;
+  // The client is resolved at call time rather than at load. Bailing out here
+  // meant the whole panel ceased to exist whenever Supabase was unavailable —
+  // including test and demo modes, where sync is deliberately switched off —
+  // so a missing client turned into a missing feature with no explanation.
+  // Now the panel loads, the local tools work, and only the model call needs
+  // a client, which it can say plainly.
+  const getClient = () => window.supabaseClient;
 
   const DAY_START_HOUR = 7;
   const DAY_END_HOUR = 18;
@@ -225,8 +227,10 @@
 
   // ---------- transport ----------
   async function callAgent(messages) {
+    const client = getClient();
+    if (!client) throw new Error('Sign in to use the booking assistant.');
     const now = new Date();
-    const { data, error } = await supabaseClient.functions.invoke('schedule-agent', {
+    const { data, error } = await client.functions.invoke('schedule-agent', {
       body: {
         messages,
         today: toLocalDate(now),
