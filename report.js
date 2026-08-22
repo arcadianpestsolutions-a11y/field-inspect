@@ -42,6 +42,17 @@
   const reportSendBtn = document.getElementById('report-send-btn');
   const reportSaveBtn = document.getElementById('report-save-btn');
 
+  // These four are newer than some deployed index.html files. GitHub Pages
+  // serves assets through a CDN that does not invalidate them together, so a
+  // returning device can briefly pair a fresh report.js with a stale cached
+  // index.html. Referencing a missing element unguarded throws at module load
+  // and takes the whole report screen down with it — which is how "Finish
+  // Inspection hangs" once presented itself. Every use below is guarded.
+  const auditCard = document.getElementById('audit-trail-card');
+  const auditToggleBtn = document.getElementById('audit-toggle-btn');
+  const auditBody = document.getElementById('audit-trail-body');
+  const schemaMismatchNotice = document.getElementById('schema-mismatch-notice');
+
   const sectionBackBtn = document.getElementById('section-back-btn');
   const sectionTitleEl = document.getElementById('section-title');
   const sectionSubtitleEl = document.getElementById('section-subtitle');
@@ -59,6 +70,9 @@
   let currentReport = null; // { jobId, sections: {id: {fieldId: value}}, finalizedAt, updatedAt, aiDraft }
   let currentSectionId = null;
   let pendingSectionValues = {};
+  // Basis text for fields filled from the address, keyed by fieldId, so the
+  // section editor can explain where a value came from.
+  let derivedSiteNotes = {};
   let aiAppliedFieldIds = new Set(); // fields in the currently-open section pre-filled from an AI suggestion, not yet reviewed
   let aiDraftInProgress = false;
   const objectUrls = [];
@@ -84,6 +98,124 @@
     return currentSchema().find((s) => s.id === sectionId);
   }
 
+  // ---------- Audit trail ----------
+  // A termite report is evidence. If a slab fails two years from now and the
+  // owner's insurer asks whether "Live termites found: No" was the answer the
+  // technician gave on site, "the file says No" is not an answer — the file
+  // can be edited. What settles it is a record of when each answer was given,
+  // what it was changed from, by whom, and why.
+  //
+  // The design follows ODK Collect's form audit log, which solves exactly this
+  // problem for field data whose consequences are legal: per-answer change
+  // tracking, a recorded identity, and — the part that matters most here — a
+  // mandatory reason before an already-finalized document can be amended.
+  //
+  // Events live on the report itself (report.auditLog) rather than in their
+  // own store, so they travel with the report through the existing sync path
+  // and can never be separated from the document they describe.
+
+  const AUDIT_TEXT_LIMIT = 140;
+
+  // Audit entries must stay small and readable. Values here can be a 200KB
+  // sketch data URL or an array of photo blobs, so nothing is ever stored
+  // verbatim — what's recorded is enough to see that a change happened and
+  // what kind, without turning the report row into a media archive.
+  function summariseValue(value) {
+    if (value === undefined || value === null || value === '') return '(blank)';
+    if (Array.isArray(value)) {
+      if (!value.length) return '(none)';
+      if (value.every((v) => typeof v === 'string')) {
+        const joined = value.join(', ');
+        return joined.length > AUDIT_TEXT_LIMIT ? joined.slice(0, AUDIT_TEXT_LIMIT) + '…' : joined;
+      }
+      // Photo lists and product lists are arrays of objects.
+      if (value.length && value[0] && value[0].blob !== undefined) {
+        return `${value.length} photo${value.length === 1 ? '' : 's'}`;
+      }
+      if (value.length && value[0] && value[0].productName !== undefined) {
+        const names = value.map((p) => p.productName || '(unnamed)').join(', ');
+        return `${value.length} product${value.length === 1 ? '' : 's'}: ${names}`.slice(0, AUDIT_TEXT_LIMIT);
+      }
+      return `${value.length} item${value.length === 1 ? '' : 's'}`;
+    }
+    const str = String(value);
+    if (str.startsWith('data:image/')) return '(image)';
+    return str.length > AUDIT_TEXT_LIMIT ? str.slice(0, AUDIT_TEXT_LIMIT) + '…' : str;
+  }
+
+  // Deep-ish equality for the value shapes a section can hold. Photo arrays
+  // hold Blobs, which never compare equal through JSON, so they're compared by
+  // identity and length — enough to notice an added or removed photo without
+  // reporting a spurious change every time a section is opened and saved.
+  function valuesEqual(a, b) {
+    if (a === b) return true;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      return a.every((item, i) => {
+        const other = b[i];
+        if (item && typeof item === 'object' && other && typeof other === 'object') {
+          if (item.blob !== undefined || other.blob !== undefined) return item === other || item.id === other.id;
+          return JSON.stringify(item) === JSON.stringify(other);
+        }
+        return item === other;
+      });
+    }
+    if (a && b && typeof a === 'object' && typeof b === 'object') {
+      return JSON.stringify(a) === JSON.stringify(b);
+    }
+    // Treat null/undefined/'' as the same "not answered" state, so merely
+    // opening a section and saving it doesn't manufacture change events.
+    const aBlank = a === undefined || a === null || a === '';
+    const bBlank = b === undefined || b === null || b === '';
+    return aBlank && bBlank;
+  }
+
+  function fieldLabel(section, fieldId) {
+    const field = (section.fields || []).find((f) => f.id === fieldId);
+    return field ? field.label : fieldId;
+  }
+
+  // Returns [{ fieldId, label, from, to }] for everything that actually
+  // changed between the saved section and what's about to replace it.
+  function diffSection(section, before, after) {
+    const changes = [];
+    const ids = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+    for (const fieldId of ids) {
+      const from = before ? before[fieldId] : undefined;
+      const to = after ? after[fieldId] : undefined;
+      if (valuesEqual(from, to)) continue;
+      changes.push({
+        fieldId,
+        label: fieldLabel(section, fieldId),
+        from: summariseValue(from),
+        to: summariseValue(to),
+      });
+    }
+    return changes;
+  }
+
+  function auditActor() {
+    const user = window.Sync && window.Sync.currentUser ? window.Sync.currentUser() : null;
+    if (user) return { userId: user.id || null, userEmail: user.email || '' };
+    if (window.IS_DEMO) return { userId: null, userEmail: 'demo' };
+    return { userId: null, userEmail: '' };
+  }
+
+  function appendAudit(report, entry) {
+    if (!Array.isArray(report.auditLog)) report.auditLog = [];
+    report.auditLog.push({
+      at: Date.now(),
+      ...auditActor(),
+      // Whether the document was already finalized when this happened is the
+      // single most important fact in the log: amendments to a signed-off
+      // report are what get argued about.
+      afterFinalize: !!report.finalizedAt,
+      schemaVersion: window.REPORT_SCHEMA_VERSION || null,
+      ...entry,
+    });
+    return report.auditLog;
+  }
+
   // ---------- Report load / prefill ----------
   async function loadOrCreateReport(jobId) {
     let report = await DB.getReport(jobId);
@@ -103,7 +235,18 @@
       propertyAddress: job ? job.address : '',
       inspectionDate: job && job.inspectionDate ? job.inspectionDate : todayISO(),
     };
-    report = { jobId, sections, finalizedAt: null };
+    report = {
+      jobId,
+      sections,
+      finalizedAt: null,
+      // The question set this report was answered against. Reports outlive
+      // schema edits, so without this stamp a later change to report-schema.js
+      // silently rewrites what old reports appear to say. See SCHEMA_VERSION
+      // in report-schema.js.
+      schemaVersion: window.REPORT_SCHEMA_VERSION || null,
+      auditLog: [],
+    };
+    appendAudit(report, { event: 'created' });
     return report;
   }
 
@@ -140,6 +283,9 @@
       updateAiDraftButton();
       hideAllAppViews();
       show(viewReport);
+      // Best-effort and deliberately not awaited: the report must open at once
+      // even when the address lookups are slow or the site has no signal.
+      autoPopulateSiteFields().catch((err) => console.warn('[report] site auto-fill failed:', err.message || err));
     },
     async openArchive() {
       await renderArchiveList();
@@ -156,6 +302,10 @@
         generatedAt: Date.now(),
         transcript: result.transcript || '',
         draftFields: result.draftFields || {},
+        // Which photograph each suggestion came from. A suggested answer the
+        // technician cannot trace back to an image is one they have to
+        // re-derive from scratch, which costs more time than a blank field.
+        fieldReasons: result.fieldReasons || {},
         frameNotes: result.frameNotes || [],
       };
       await DB.saveReport(report);
@@ -288,7 +438,189 @@
     else show(document.getElementById('view-joblist'));
   });
 
+  // ---------- Audit trail + schema version UI ----------
+  // Every element used here can be absent on a device pairing this script with
+  // a stale cached index.html, so each function bails rather than throwing.
+
+  function fmtAuditTime(ts) {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function auditEntryLine(entry) {
+    const who = entry.userEmail ? escapeHtml(entry.userEmail) : 'unknown user';
+    const when = fmtAuditTime(entry.at);
+    if (entry.event === 'created') return `<strong>Report created</strong> — ${when} by ${who}`;
+    if (entry.event === 'finalized') return `<strong>Report finalized</strong> — ${when} by ${who}`;
+    if (entry.event === 'field-changed') {
+      const where = entry.sectionTitle ? escapeHtml(entry.sectionTitle) : escapeHtml(entry.sectionId || '');
+      return `<strong>${escapeHtml(entry.label || entry.fieldId || 'Field')}</strong> `
+        + `<span class="audit-where">(${where})</span><br>`
+        + `<span class="audit-change">${escapeHtml(entry.from)} → ${escapeHtml(entry.to)}</span><br>`
+        + `<span class="audit-meta">${when} by ${who}</span>`
+        + (entry.reason ? `<br><span class="audit-reason">Reason: ${escapeHtml(entry.reason)}</span>` : '');
+    }
+    return `<strong>${escapeHtml(entry.event || 'event')}</strong> — ${when} by ${who}`;
+  }
+
+  function renderAuditTrail() {
+    if (!auditCard || !auditBody) return;
+    const log = (currentReport && currentReport.auditLog) || [];
+    if (!log.length) { auditCard.classList.add('hidden'); return; }
+    auditCard.classList.remove('hidden');
+
+    const amendments = log.filter((e) => e.afterFinalize).length;
+    if (auditToggleBtn) {
+      const events = `${log.length} event${log.length === 1 ? '' : 's'}`;
+      auditToggleBtn.textContent = amendments
+        ? `🕓 Audit Trail — ${events}, ${amendments} after finalizing`
+        : `🕓 Audit Trail — ${events}`;
+    }
+
+    // Newest first: when something is disputed, the most recent change is
+    // almost always the one being asked about.
+    const rows = [...log].sort((a, b) => b.at - a.at).map((entry) => (
+      `<li class="audit-entry${entry.afterFinalize ? ' audit-amendment' : ''}">`
+      + (entry.afterFinalize ? '<span class="audit-flag">AMENDED AFTER FINALIZING</span>' : '')
+      + auditEntryLine(entry)
+      + '</li>'
+    )).join('');
+
+    auditBody.innerHTML = `<ul class="audit-list">${rows}</ul>`;
+  }
+
+  if (auditToggleBtn && auditBody) {
+    auditToggleBtn.addEventListener('click', () => {
+      auditBody.classList.toggle('hidden');
+    });
+  }
+
+  function renderSchemaNotice() {
+    if (!schemaMismatchNotice) return;
+    const current = window.REPORT_SCHEMA_VERSION || null;
+    const stamped = currentReport ? currentReport.schemaVersion : null;
+    // Reports written before versioning existed have no stamp. That is not a
+    // mismatch to shout about — it is simply unknown, and saying so would be
+    // noise on every legacy report.
+    if (stamped == null || current == null || stamped === current) {
+      schemaMismatchNotice.classList.add('hidden');
+      return;
+    }
+    schemaMismatchNotice.classList.remove('hidden');
+    schemaMismatchNotice.innerHTML =
+      `<strong>Question set has changed since this report was written.</strong>`
+      + `<p class="empty-hint">This report was answered against version ${escapeHtml(String(stamped))}; `
+      + `the app is now on version ${escapeHtml(String(current))}. Some questions may have been added, `
+      + `renamed or removed since. Read the answers as they were recorded — do not assume a blank field `
+      + `means the technician left it empty.</p>`;
+  }
+
+  // ---------- Site fields derived from the address ----------
+  // Two questions in "About the Property Inspected" have answers that can be
+  // worked out from where the property is, before anyone opens the section:
+  // which way the frontage faces, and which way the land falls. Both are
+  // tedious to judge on site and easy to get wrong from memory.
+  //
+  // The rule everywhere else in this app is that AI suggests and never
+  // commits. These are treated differently on purpose: they are derived from
+  // public survey data rather than inferred from imagery, so they are filled
+  // in — but the fill is recorded in the audit trail as machine-derived, and
+  // only ever lands on a field the technician has not answered. A value they
+  // changed is never overwritten, on this visit or any later one.
+  const DERIVED_SITE_FIELDS = ['facade', 'topography'];
+
+  function isUnanswered(section, values, fieldId) {
+    const current = values ? values[fieldId] : undefined;
+    if (current === undefined || current === null || current === '') return true;
+    // Still sitting on the schema default counts as unanswered — nobody has
+    // made a decision about it yet.
+    const field = (section.fields || []).find((f) => f.id === fieldId);
+    return !!(field && field.default !== undefined && current === field.default);
+  }
+
+  async function autoPopulateSiteFields() {
+    if (!(window.Geo && currentJob && currentReport)) return;
+    const schema = currentSchema();
+    const property = schema.find((s) => s.id === 'property');
+    if (!property) return;
+
+    const values = currentReport.sections.property || {};
+    const wanted = DERIVED_SITE_FIELDS.filter((id) => isUnanswered(property, values, id));
+    if (!wanted.length) return;
+
+    let coords;
+    try {
+      coords = await window.Geo.ensureJobCoords(currentJob);
+    } catch (err) {
+      console.warn('[report] could not resolve job coordinates:', err.message || err);
+      return;
+    }
+    if (!coords) return;
+
+    const [facade, topo] = await Promise.all([
+      wanted.includes('facade')
+        ? window.Geo.fetchFacadeOrientation(coords.lat, coords.lng).catch(() => null)
+        : Promise.resolve(null),
+      wanted.includes('topography')
+        ? window.Geo.fetchSiteTopography(coords.lat, coords.lng).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    const filled = [];
+    if (facade && facade.facade && wanted.includes('facade')) {
+      filled.push({
+        fieldId: 'facade',
+        value: facade.facade,
+        label: 'The front facade of the dwelling faces',
+        basis: facade.street
+          ? `frontage to ${facade.street}, ${facade.metres}m away`
+          : `nearest street ${facade.metres}m away`,
+        confident: facade.confident,
+      });
+    }
+    if (topo && topo.topography && wanted.includes('topography')) {
+      filled.push({
+        fieldId: 'topography',
+        value: topo.topography,
+        label: 'Site Topography',
+        basis: `${Math.round(topo.drop)}m of fall across the surrounding 240m`,
+        confident: topo.confident,
+      });
+    }
+    if (!filled.length) return;
+
+    currentReport.sections.property = { ...values };
+    for (const item of filled) {
+      currentReport.sections.property[item.fieldId] = item.value;
+      appendAudit(currentReport, {
+        event: 'auto-filled',
+        sectionId: 'property',
+        sectionTitle: property.title,
+        fieldId: item.fieldId,
+        label: item.label,
+        from: '(blank)',
+        to: item.value,
+        basis: item.basis,
+        confident: !!item.confident,
+      });
+    }
+    // Remember what was derived so the section editor can show its basis and
+    // invite the technician to correct it.
+    derivedSiteNotes = filled.reduce((acc, item) => {
+      acc[item.fieldId] = item;
+      return acc;
+    }, derivedSiteNotes || {});
+
+    await DB.saveReport(currentReport);
+    renderSectionList();
+    const names = filled.map((f) => f.label).join(' and ');
+    toast(`Filled ${names} from the address — check before finalising.`);
+  }
+
   function renderSectionList() {
+    renderAuditTrail();
+    renderSchemaNotice();
     reportSectionList.innerHTML = '';
     let allRequiredGreen = true;
 
@@ -329,7 +661,11 @@
 
   finalizeBtn.addEventListener('click', async () => {
     if (finalizeBtn.disabled) return;
-    if (!confirm('Finalize this report? You can still reopen sections to make corrections afterwards.')) return;
+    if (!confirm('Finalize this report? You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.')) return;
+    // Recorded before finalizedAt is set, so the event itself is correctly
+    // stamped afterFinalize: false — this is the moment of sign-off, not an
+    // amendment to an already-signed document.
+    appendAudit(currentReport, { event: 'finalized' });
     currentReport.finalizedAt = Date.now();
     await DB.saveReport(currentReport);
     await DB.updateJob(currentJobId, {
@@ -431,6 +767,10 @@
     }
   }
 
+  // DELIBERATE, KEEP: Foreman is a companion app Tal is building; this hook
+  // is the join between them, not leftover scaffolding. It looks dormant
+  // because it no-ops unless the technician has a Foreman workspace.
+  //
   // Cross-app hook (optional, non-blocking): Foreman and Field Inspect now
   // share one Supabase project (own `foreman` schema, same login) — see the
   // plan's "shared login + cross-app talk" addendum. If this technician
@@ -625,7 +965,14 @@
       row.classList.add('ai-suggested-value');
       const note = document.createElement('span');
       note.className = 'ai-suggested-note';
-      note.textContent = '✨ AI suggested — review and edit if needed';
+      // Naming the photograph the answer came from turns "the computer said
+      // so" into something the technician can check in two seconds.
+      const reasons = (currentReport.aiDraft && currentReport.aiDraft.fieldReasons
+        && currentReport.aiDraft.fieldReasons[currentSectionId]) || {};
+      const why = reasons[field.id];
+      note.textContent = why
+        ? `✨ AI suggested — ${why}`
+        : '✨ AI suggested — review and edit if needed';
       row.appendChild(note);
 
       // A single delegated listener covers every field type (text inputs,
@@ -1020,6 +1367,20 @@
 
     const ctx = canvas.getContext('2d');
 
+    // The technician's own strokes and labels live on their own offscreen
+    // layer rather than being painted straight onto the visible canvas.
+    // That separation is what makes the traced outline correctable: the base
+    // (grid, aerial photo, polygons) can be re-rendered as many times as the
+    // corners are dragged without ever destroying hand-drawn work.
+    const ink = document.createElement('canvas');
+    ink.width = canvas.width;
+    ink.height = canvas.height;
+    const inkCtx = ink.getContext('2d');
+    inkCtx.strokeStyle = '#1a1a1a';
+    inkCtx.lineWidth = 2.5;
+    inkCtx.lineJoin = 'round';
+    inkCtx.lineCap = 'round';
+
     function drawGrid() {
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1028,24 +1389,39 @@
       for (let x = 0; x <= canvas.width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
       for (let y = 0; y <= canvas.height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
     }
-    drawGrid();
 
     function saveSnapshot() { pendingSectionValues[field.id] = canvas.toDataURL('image/png'); }
 
-    // ---------- Aerial backdrop (Phase 3) ----------
-    // Default footprint: a generous centered rectangle, used for voice-guided
-    // room subdivision when only a satellite image loaded (no real vector
-    // outline) — better than nothing, just less precise than an OSM footprint.
-    let footprintPolygon = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
-    let backdropKind = null; // null | 'osm' | 'satellite'
+    // ---------- Aerial backdrop ----------
+    // Three things can sit underneath the technician's own drawing, and they
+    // stack in this order:
+    //   backdropImage   — an aerial photo of the property, when no vector
+    //                     geometry exists for it and it has to be traced
+    //   sitePolygon     — the legal lot boundary from the NSW cadastre,
+    //                     drawn dashed: it's the site, not the structure
+    //   buildingPolygon — the building's exterior perimeter, drawn solid
+    // Any of them can be absent. Exterior shapes only — nothing here ever
+    // draws the inside of the house.
+    let sitePolygon = null;
+    let buildingPolygon = null;
     let backdropImage = null;
-    let backdropReady = false;
+    let hasFreehandWork = false;
+    let mode = 'draw'; // 'draw' | 'label' | 'corners'
 
-    function drawFootprintPolygon(polygon) {
+    // Declared up here, not with the rest of the UI at the bottom, because
+    // the backdrop loader below reports what it found by rewriting it — and
+    // that runs before the controls are built.
+    const hint = Object.assign(document.createElement('p'), {
+      className: 'empty-hint',
+      textContent: 'Draw the outline with your finger, then switch to Add Label and tap anywhere to name a room or flag something. Trace Building reads the exterior perimeter off an aerial photo to start you off.',
+    });
+
+    function drawPolygon(polygon, style) {
       ctx.save();
-      ctx.strokeStyle = '#2c7a4b';
-      ctx.lineWidth = 2.5;
-      ctx.fillStyle = 'rgba(44,122,75,0.06)';
+      ctx.strokeStyle = style.stroke;
+      ctx.fillStyle = style.fill;
+      ctx.lineWidth = style.width;
+      if (style.dash) ctx.setLineDash(style.dash);
       ctx.beginPath();
       polygon.forEach(([x, y], i) => {
         const px = x * canvas.width, py = y * canvas.height;
@@ -1057,38 +1433,92 @@
       ctx.restore();
     }
 
-    function redrawBase() {
-      drawGrid();
-      if (backdropKind === 'osm') drawFootprintPolygon(footprintPolygon);
-      else if (backdropKind === 'satellite' && backdropImage) ctx.drawImage(backdropImage, 0, 0, canvas.width, canvas.height);
+    // Corner handles are deliberately large: this gets used one-handed on a
+    // phone at a job site, so a 9px target with a 22px touch radius (below)
+    // is the difference between usable and infuriating.
+    function drawCornerHandles() {
+      if (!buildingPolygon) return;
+      ctx.save();
+      buildingPolygon.forEach(([x, y]) => {
+        const px = x * canvas.width, py = y * canvas.height;
+        ctx.beginPath();
+        ctx.arc(px, py, 9, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.fill();
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#2c7a4b';
+        ctx.stroke();
+      });
+      ctx.restore();
     }
 
-    // shouldDraw=false is used when restoring an already-saved sketch: we
-    // still want fresh footprint data available for "Describe Rooms", but
-    // must not touch the canvas (it already shows the technician's saved work).
+    function redrawBase() {
+      drawGrid();
+      if (backdropImage) ctx.drawImage(backdropImage, 0, 0, canvas.width, canvas.height);
+      if (sitePolygon) {
+        drawPolygon(sitePolygon, { stroke: '#b26a00', fill: 'rgba(178,106,0,0.05)', width: 2, dash: [6, 4] });
+      }
+      if (buildingPolygon) {
+        drawPolygon(buildingPolygon, { stroke: '#2c7a4b', fill: 'rgba(44,122,75,0.10)', width: 2.5, dash: null });
+      }
+      ctx.drawImage(ink, 0, 0);
+      if (mode === 'corners') drawCornerHandles();
+    }
+
+    // Every redraw goes through here so the saved snapshot never drifts out
+    // of sync with what's on screen. Handles are a transient editing aid, so
+    // the snapshot is taken without them.
+    function commit() {
+      const editing = mode === 'corners';
+      if (editing) { mode = 'draw'; redrawBase(); mode = 'corners'; }
+      else redrawBase();
+      saveSnapshot();
+      if (editing) redrawBase();
+    }
+
+    function setBackdropImage(url) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        // The imagery services send Access-Control-Allow-Origin, so this
+        // keeps the canvas untainted and saveSnapshot()'s toDataURL() working.
+        img.crossOrigin = 'anonymous';
+        img.onload = () => { backdropImage = img; resolve(true); };
+        img.onerror = () => { console.warn('[report] aerial backdrop image failed to load'); resolve(false); };
+        img.src = url;
+      });
+    }
+
+    // shouldDraw=false when restoring an already-saved sketch: the footprint
+    // is still worth fetching so a later redraw has it, but the canvas must
+    // not be touched — it already shows the technician's saved work.
     async function loadFootprintData(shouldDraw) {
-      if (!(window.AI && currentJob && typeof currentJob.addressLat === 'number' && typeof currentJob.addressLng === 'number')) return;
+      if (!(window.Geo && currentJob)) return;
+      // Jobs created by typing the address rather than tapping a suggestion
+      // carry no coordinates, which is why the mud map often came up blank
+      // with nothing said about why. Resolve the address now instead.
+      const coords = await window.Geo.ensureJobCoords(currentJob);
+      if (!coords) {
+        hint.textContent = 'No map location for this address yet, so there is no aerial backdrop. Draw the outline by hand, or check the address on the job.';
+        return;
+      }
       try {
-        const footprint = await window.AI.fetchFootprint(currentJob.addressLat, currentJob.addressLng);
-        if (footprint.source === 'osm' && footprint.polygon && footprint.polygon.length >= 3) {
-          footprintPolygon = footprint.polygon;
-          backdropKind = 'osm';
-          if (shouldDraw) { redrawBase(); saveSnapshot(); }
-          backdropReady = true;
-          updateDescribeRoomsBtn();
+        const footprint = await window.Geo.fetchFootprint(coords.lat, coords.lng);
+        const polygon = footprint.polygon;
+        const usable = Array.isArray(polygon) && polygon.length >= 3;
+
+        if (footprint.source === 'osm' && usable) {
+          buildingPolygon = polygon;
+          hint.textContent = 'Outline loaded from map data. Adjust Corners to correct it, or draw over it.';
+        } else if (footprint.source === 'cadastre' && usable) {
+          sitePolygon = polygon;
+          if (footprint.lotId) hint.textContent = `Site boundary shown for ${footprint.lotId}. Trace the building inside it.`;
         } else if (footprint.source === 'satellite' && footprint.imageUrl) {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => {
-            backdropImage = img;
-            backdropKind = 'satellite';
-            if (shouldDraw) { redrawBase(); saveSnapshot(); }
-            backdropReady = true;
-            updateDescribeRoomsBtn();
-          };
-          img.onerror = () => console.warn('[report] aerial backdrop image failed to load');
-          img.src = footprint.imageUrl;
+          if (!(await setBackdropImage(footprint.imageUrl))) return;
+        } else {
+          return;
         }
+
+        if (shouldDraw) commit();
       } catch (err) {
         console.warn('[report] aerial backdrop fetch failed:', err.message || err);
       }
@@ -1096,52 +1526,152 @@
 
     const existing = pendingSectionValues[field.id];
     if (existing) {
+      // A saved sketch is a flat image — the polygon behind it is gone, so it
+      // is restored onto the ink layer and treated as hand-drawn work.
       const img = new Image();
-      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.onload = () => { inkCtx.drawImage(img, 0, 0, canvas.width, canvas.height); redrawBase(); };
       img.src = existing;
-      backdropReady = true; // an already-flattened sketch counts as "has content" for the Describe Rooms gate
+      hasFreehandWork = true;
       loadFootprintData(false);
     } else {
+      drawGrid();
       loadFootprintData(true);
     }
 
-    let mode = 'draw'; // 'draw' | 'label'
-    ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth = 2.5;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-
     function pos(e) {
       const rect = canvas.getBoundingClientRect();
-      const point = e.touches ? e.touches[0] : e;
+      const point = e.touches && e.touches.length ? e.touches[0] : (e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e);
       return { x: (point.clientX - rect.left) * (canvas.width / rect.width), y: (point.clientY - rect.top) * (canvas.height / rect.height) };
     }
 
+    // ---------- Corner editing ----------
+    const GRAB_RADIUS = 22;
+    let draggingCorner = -1;
+    let lastTapAt = 0;
+    let lastTapCorner = -1;
+
+    function cornerAt(p) {
+      if (!buildingPolygon) return -1;
+      let best = -1, bestDist = GRAB_RADIUS;
+      buildingPolygon.forEach(([x, y], i) => {
+        const d = Math.hypot(x * canvas.width - p.x, y * canvas.height - p.y);
+        if (d < bestDist) { bestDist = d; best = i; }
+      });
+      return best;
+    }
+
+    // Where along the perimeter a tap falls, so tapping an edge can insert a
+    // corner the model missed — common where tree canopy hid a whole wing.
+    function edgeAt(p) {
+      if (!buildingPolygon || buildingPolygon.length < 2) return -1;
+      let best = -1, bestDist = 18;
+      for (let i = 0; i < buildingPolygon.length; i++) {
+        const a = buildingPolygon[i];
+        const b = buildingPolygon[(i + 1) % buildingPolygon.length];
+        const ax = a[0] * canvas.width, ay = a[1] * canvas.height;
+        const bx = b[0] * canvas.width, by = b[1] * canvas.height;
+        const dx = bx - ax, dy = by - ay;
+        const lenSq = dx * dx + dy * dy;
+        if (!lenSq) continue;
+        let t = ((p.x - ax) * dx + (p.y - ay) * dy) / lenSq;
+        t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(ax + t * dx - p.x, ay + t * dy - p.y);
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      return best;
+    }
+
+    function startCornerEdit(e) {
+      const p = pos(e);
+      const idx = cornerAt(p);
+      const now = Date.now();
+
+      if (idx >= 0) {
+        // Double-tap a corner to delete it (never below a triangle).
+        if (idx === lastTapCorner && now - lastTapAt < 400 && buildingPolygon.length > 3) {
+          buildingPolygon.splice(idx, 1);
+          lastTapCorner = -1;
+          commit();
+          e.preventDefault();
+          return;
+        }
+        lastTapCorner = idx;
+        lastTapAt = now;
+        draggingCorner = idx;
+        e.preventDefault();
+        return;
+      }
+
+      const edge = edgeAt(p);
+      if (edge >= 0) {
+        buildingPolygon.splice(edge + 1, 0, [p.x / canvas.width, p.y / canvas.height]);
+        draggingCorner = edge + 1;
+        commit();
+      }
+      e.preventDefault();
+    }
+
+    function moveCorner(e) {
+      if (draggingCorner < 0) return;
+      const p = pos(e);
+      buildingPolygon[draggingCorner] = [
+        Math.max(0, Math.min(1, p.x / canvas.width)),
+        Math.max(0, Math.min(1, p.y / canvas.height)),
+      ];
+      redrawBase();
+      e.preventDefault();
+    }
+
+    function endCornerEdit() {
+      if (draggingCorner < 0) return;
+      draggingCorner = -1;
+      commit();
+    }
+
+    // ---------- Freehand drawing ----------
     let drawing = false;
     function start(e) {
+      if (mode === 'corners') { startCornerEdit(e); return; }
       if (mode === 'label') {
         const p = pos(e);
         const text = window.prompt('Label for this spot (e.g. Kitchen, High moisture, Damage):', '');
         if (text) {
-          ctx.fillStyle = '#c0552a';
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.font = '13px sans-serif';
-          ctx.fillText(text, p.x + 8, p.y + 4);
-          saveSnapshot();
+          inkCtx.fillStyle = '#c0552a';
+          inkCtx.beginPath();
+          inkCtx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          inkCtx.fill();
+          inkCtx.font = '13px sans-serif';
+          inkCtx.fillText(text, p.x + 8, p.y + 4);
+          hasFreehandWork = true;
+          commit();
         }
         e.preventDefault();
         return;
       }
       drawing = true;
       const p = pos(e);
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
+      inkCtx.beginPath();
+      inkCtx.moveTo(p.x, p.y);
       e.preventDefault();
     }
-    function move(e) { if (!drawing || mode !== 'draw') return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
-    function end() { if (!drawing) return; drawing = false; saveSnapshot(); }
+
+    function move(e) {
+      if (mode === 'corners') { moveCorner(e); return; }
+      if (!drawing || mode !== 'draw') return;
+      const p = pos(e);
+      inkCtx.lineTo(p.x, p.y);
+      inkCtx.stroke();
+      redrawBase();
+      e.preventDefault();
+    }
+
+    function end() {
+      if (mode === 'corners') { endCornerEdit(); return; }
+      if (!drawing) return;
+      drawing = false;
+      hasFreehandWork = true;
+      commit();
+    }
 
     canvas.addEventListener('mousedown', start);
     canvas.addEventListener('mousemove', move);
@@ -1163,25 +1693,141 @@
     labelBtn.className = 'btn btn-secondary flex1';
     labelBtn.textContent = '🏷️ Add Label';
 
+    const cornersBtn = document.createElement('button');
+    cornersBtn.type = 'button';
+    cornersBtn.className = 'btn btn-secondary flex1';
+    cornersBtn.textContent = '📐 Adjust Corners';
+
     function setMode(next) {
+      if (next === 'corners' && !buildingPolygon) {
+        toast('No outline to adjust yet — use Trace Building first, or draw one by hand.');
+        return;
+      }
       mode = next;
       drawBtn.classList.toggle('active', mode === 'draw');
       labelBtn.classList.toggle('active', mode === 'label');
+      cornersBtn.classList.toggle('active', mode === 'corners');
+      redrawBase();
+      if (mode === 'corners') {
+        hint.textContent = 'Drag a corner to move it. Tap an edge to add a corner. Double-tap a corner to delete it.';
+      }
     }
     drawBtn.addEventListener('click', () => setMode('draw'));
     labelBtn.addEventListener('click', () => setMode('label'));
+    cornersBtn.addEventListener('click', () => setMode('corners'));
 
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
     clearBtn.className = 'btn btn-secondary';
     clearBtn.textContent = 'Clear';
     clearBtn.addEventListener('click', () => {
-      // Clear wipes the technician's own drawing/labels/room polygons back
-      // to the base layer — it does not lose an already-loaded backdrop.
-      redrawBase();
-      ctx.strokeStyle = '#1a1a1a';
-      ctx.lineWidth = 2.5;
-      saveSnapshot();
+      // Clear wipes the technician's own drawing and labels back to the base
+      // layer — it does not lose an already-loaded backdrop or outline.
+      inkCtx.clearRect(0, 0, ink.width, ink.height);
+      hasFreehandWork = false;
+      commit();
+    });
+
+    // Australian houses are overwhelmingly rectilinear, so a trace read off a
+    // partly-obscured roof can be snapped back to right angles: take the
+    // dominant wall direction and force every edge onto that axis or its
+    // perpendicular. This is deterministic geometry, not another guess — it
+    // turns an approximately-right outline into a plausible footprint, and
+    // it's the cheapest way to recover from canopy blurring the corners.
+    function squareUp(polygon) {
+      if (!polygon || polygon.length < 4) return polygon;
+      // Aspect-correct so angles are measured in real-world space, not in the
+      // canvas's stretched coordinates.
+      const ar = canvas.width / canvas.height;
+      const pts = polygon.map(([x, y]) => [x * ar, y]);
+
+      let bestAngle = 0, bestLen = -1;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (len > bestLen) { bestLen = len; bestAngle = Math.atan2(b[1] - a[1], b[0] - a[0]); }
+      }
+      const cos = Math.cos(-bestAngle), sin = Math.sin(-bestAngle);
+      const rot = pts.map(([x, y]) => [x * cos - y * sin, x * sin + y * cos]);
+
+      // In the rotated frame every wall should be axis-aligned: for each edge,
+      // move whichever coordinate varies less onto a shared value.
+      for (let i = 0; i < rot.length; i++) {
+        const j = (i + 1) % rot.length;
+        const dx = Math.abs(rot[j][0] - rot[i][0]);
+        const dy = Math.abs(rot[j][1] - rot[i][1]);
+        if (dx < dy) {
+          const mid = (rot[i][0] + rot[j][0]) / 2;
+          rot[i][0] = mid; rot[j][0] = mid;
+        } else {
+          const mid = (rot[i][1] + rot[j][1]) / 2;
+          rot[i][1] = mid; rot[j][1] = mid;
+        }
+      }
+
+      const back = rot.map(([x, y]) => [x * cos + y * sin, -x * sin + y * cos]);
+      return back.map(([x, y]) => [
+        Math.max(0, Math.min(1, x / ar)),
+        Math.max(0, Math.min(1, y)),
+      ]);
+    }
+
+    const squareBtn = document.createElement('button');
+    squareBtn.type = 'button';
+    squareBtn.className = 'btn btn-secondary flex1';
+    squareBtn.textContent = '📏 Square Up';
+    squareBtn.addEventListener('click', () => {
+      if (!buildingPolygon) { toast('No outline to square up yet.'); return; }
+      buildingPolygon = squareUp(buildingPolygon);
+      commit();
+      hint.textContent = 'Corners squared to right angles. Adjust Corners if any wall moved the wrong way.';
+    });
+
+    // Reads the building's exterior perimeter off aerial photos and lays it
+    // down as the base shape, for when no open dataset has a vector outline
+    // for the property — or has one, but for the wrong building. A starting
+    // shape to correct, not an answer — hence a button the technician presses
+    // rather than something that happens to them.
+    const traceBtn = document.createElement('button');
+    traceBtn.type = 'button';
+    traceBtn.className = 'btn btn-secondary flex1';
+    traceBtn.textContent = '🛰️ Trace Building';
+    traceBtn.addEventListener('click', async () => {
+      if (!(window.Geo && currentJob)) return;
+      // The trace itself runs on the Edge Function, unlike the rest of the
+      // sketch pad's geo features — so it is the one thing here that needs a
+      // signed-in session, and says so rather than appearing to do nothing.
+      if (!window.AI) {
+        toast('Tracing needs you to be signed in. The aerial backdrop still works — trace the outline by hand.');
+        return;
+      }
+      const label = traceBtn.textContent;
+      traceBtn.disabled = true;
+      traceBtn.textContent = '🛰️ Tracing…';
+      try {
+        const coords = await window.Geo.ensureJobCoords(currentJob);
+        if (!coords) {
+          toast('Could not find this address on the map. Check the address on the job, then try again.');
+          return;
+        }
+        const traced = await window.AI.traceBuildingOutline(coords.lat, coords.lng);
+        // Show the photo underneath the outline so the technician can see
+        // what was traced and judge it, rather than trusting a bare shape.
+        if (!backdropImage && traced.imageUrl) await setBackdropImage(traced.imageUrl);
+        buildingPolygon = traced.polygon;
+        setMode('corners');
+        commit();
+        const obscured = traced.obscured ? ` Uncertain near: ${traced.obscured}.` : '';
+        hint.textContent = `Traced outline (${traced.confidence} confidence).${traced.note ? ' ' + traced.note : ''}${obscured} Drag any corner that looks wrong.`;
+        toast(traced.confidence === 'low'
+          ? 'Traced, but the roof was hard to see — check every corner.'
+          : 'Outline traced — drag any corner that looks wrong.');
+      } catch (err) {
+        toast(err.message || 'Could not trace the building outline.');
+      } finally {
+        traceBtn.disabled = false;
+        traceBtn.textContent = label;
+      }
     });
 
     controls.appendChild(drawBtn);
@@ -1189,115 +1835,14 @@
     controls.appendChild(clearBtn);
     wrap.appendChild(controls);
 
-    // ---------- Voice-guided room subdivision (Phase 4) ----------
-    const aiControls = document.createElement('div');
-    aiControls.className = 'row gap sketch-controls';
+    const shapeRow = document.createElement('div');
+    shapeRow.className = 'row gap sketch-controls';
+    shapeRow.appendChild(traceBtn);
+    shapeRow.appendChild(cornersBtn);
+    shapeRow.appendChild(squareBtn);
+    wrap.appendChild(shapeRow);
 
-    const describeRoomsBtn = document.createElement('button');
-    describeRoomsBtn.type = 'button';
-    describeRoomsBtn.className = 'btn btn-outline full';
-    describeRoomsBtn.textContent = '🎙️ Describe Rooms';
-    describeRoomsBtn.disabled = !(window.AI && backdropReady);
-    aiControls.appendChild(describeRoomsBtn);
-    wrap.appendChild(aiControls);
-
-    let roomRecordingState = 'idle'; // 'idle' | 'recording' | 'processing'
-    let roomRecorder = null;
-    let roomRecordedChunks = [];
-    let roomRecordingStream = null;
-
-    function updateDescribeRoomsBtn() {
-      if (roomRecordingState !== 'idle') return; // label already set by the recording flow itself
-      describeRoomsBtn.disabled = !(window.AI && backdropReady);
-    }
-
-    function drawRoomPolygon(room) {
-      if (!room.polygon || room.polygon.length < 3) return;
-      ctx.save();
-      ctx.strokeStyle = '#154a8a';
-      ctx.lineWidth = 2;
-      ctx.fillStyle = 'rgba(21,74,138,0.08)';
-      ctx.beginPath();
-      room.polygon.forEach(([x, y], i) => {
-        const px = x * canvas.width, py = y * canvas.height;
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      });
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      if (room.label) {
-        const cx = (room.polygon.reduce((s, p) => s + p[0], 0) / room.polygon.length) * canvas.width;
-        const cy = (room.polygon.reduce((s, p) => s + p[1], 0) / room.polygon.length) * canvas.height;
-        ctx.fillStyle = '#0d2a4d';
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(room.label, cx, cy);
-        ctx.textAlign = 'left';
-      }
-      ctx.restore();
-    }
-
-    async function startRoomRecording() {
-      try {
-        roomRecordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (err) {
-        toast('Microphone access denied');
-        return;
-      }
-      roomRecordedChunks = [];
-      const mimeType = window.pickAudioMimeType ? window.pickAudioMimeType() : '';
-      roomRecorder = mimeType ? new MediaRecorder(roomRecordingStream, { mimeType }) : new MediaRecorder(roomRecordingStream);
-      roomRecorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size > 0) roomRecordedChunks.push(e.data); });
-      roomRecorder.addEventListener('stop', onRoomRecordingStopped);
-      roomRecorder.start();
-      roomRecordingState = 'recording';
-      describeRoomsBtn.disabled = false;
-      describeRoomsBtn.textContent = '⏹ Stop & Generate';
-      describeRoomsBtn.classList.add('active');
-    }
-
-    async function onRoomRecordingStopped() {
-      if (roomRecordingStream) { roomRecordingStream.getTracks().forEach((t) => t.stop()); roomRecordingStream = null; }
-      if (!roomRecordedChunks.length) {
-        roomRecordingState = 'idle';
-        describeRoomsBtn.textContent = '🎙️ Describe Rooms';
-        describeRoomsBtn.classList.remove('active');
-        updateDescribeRoomsBtn();
-        toast('No audio recorded');
-        return;
-      }
-      const blob = new Blob(roomRecordedChunks, { type: roomRecorder.mimeType || 'audio/webm' });
-      roomRecordedChunks = [];
-      roomRecordingState = 'processing';
-      describeRoomsBtn.disabled = true;
-      describeRoomsBtn.textContent = '🤖 Generating rooms…';
-
-      try {
-        const result = await window.AI.subdivideRooms(blob, footprintPolygon);
-        const rooms = result.rooms || [];
-        for (const room of rooms) drawRoomPolygon(room);
-        saveSnapshot();
-        toast(`Added ${rooms.length} room${rooms.length === 1 ? '' : 's'} — adjust with Draw/Label as needed`);
-      } catch (err) {
-        console.error('[room subdivision]', err);
-        toast('Room subdivision failed: ' + (err.message || err));
-      } finally {
-        roomRecordingState = 'idle';
-        describeRoomsBtn.textContent = '🎙️ Describe Rooms';
-        describeRoomsBtn.classList.remove('active');
-        updateDescribeRoomsBtn();
-      }
-    }
-
-    describeRoomsBtn.addEventListener('click', () => {
-      if (roomRecordingState === 'idle') startRoomRecording();
-      else if (roomRecordingState === 'recording' && roomRecorder && roomRecorder.state !== 'inactive') roomRecorder.stop();
-    });
-
-    wrap.appendChild(Object.assign(document.createElement('p'), {
-      className: 'empty-hint',
-      textContent: 'Draw the outline with your finger, then switch to Add Label and tap anywhere to name a room or flag something. If a real property outline loaded above, try 🎙️ Describe Rooms and talk through the room layout for a first-pass sketch — it\'s a draft, single-shot per recording, so touch it up with Draw/Label afterward (re-recording clears and starts over).',
-    }));
+    wrap.appendChild(hint);
     return wrap;
   }
 
@@ -1409,11 +1954,48 @@
   }
 
   sectionSaveBtn.addEventListener('click', async () => {
+    const section = findSection(currentSectionId);
+    const changes = diffSection(section, currentReport.sections[currentSectionId], pendingSectionValues);
+
+    // Amending a finalized report is allowed — corrections are a normal part
+    // of the job — but it must be deliberate and explained. This mirrors ODK's
+    // track-changes-reasons=on-form-edit: the document can change, but not
+    // quietly. An unexplained amendment to a signed-off compliance report is
+    // exactly what an insurer will ask about.
+    let reason = '';
+    if (currentReport.finalizedAt && changes.length) {
+      const summary = changes.slice(0, 3).map((c) => c.label).join(', ');
+      reason = (window.prompt(
+        `This report was finalized on ${fmtDate(currentReport.finalizedAt)}.\n\n`
+        + `You are amending: ${summary}${changes.length > 3 ? ` and ${changes.length - 3} more` : ''}.\n\n`
+        + 'Give a brief reason for the amendment (recorded in the report\'s audit trail):',
+        ''
+      ) || '').trim();
+      if (!reason) {
+        toast('Amendment cancelled — a reason is required to change a finalized report.');
+        return;
+      }
+    }
+
+    for (const change of changes) {
+      appendAudit(currentReport, {
+        event: 'field-changed',
+        sectionId: currentSectionId,
+        sectionTitle: section ? section.title : currentSectionId,
+        fieldId: change.fieldId,
+        label: change.label,
+        from: change.from,
+        to: change.to,
+        reason,
+      });
+    }
+
     currentReport.sections[currentSectionId] = pendingSectionValues;
     await DB.saveReport(currentReport);
     hide(viewReportSection);
     renderSectionList();
     show(viewReport);
+    if (reason) toast(`Amendment recorded (${changes.length} field${changes.length === 1 ? '' : 's'}).`);
   });
 
   sectionBackBtn.addEventListener('click', () => {
@@ -1441,6 +2023,10 @@
     .photos img{width:140px;height:100px;object-fit:cover;border-radius:4px;}
     img.sig{max-width:280px;border:1px solid #ddd;}
     .sketch-page{page-break-before:always;}
+    .amendments-page{page-break-before:always;}
+    .amendments-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;}
+    .amendments-table th,.amendments-table td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top;}
+    .amendments-table th{background:#f2f2f2;}
     .sketch-img{max-width:100%;border:1px solid #ddd;border-radius:4px;}
     .product-pdf-card{border:1px solid #ccc;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:13px;}
     .product-pdf-title{font-weight:bold;font-size:14px;margin-bottom:4px;}
@@ -1524,7 +2110,44 @@
       }
       html += `</div>`;
     }
+    html += buildAmendmentsAppendixHtml(report);
     return html;
+  }
+
+  // A report that was corrected after sign-off and reissued should say so on
+  // its face. If the first copy a client received said one thing and the copy
+  // produced later says another, the difference belongs in the document — not
+  // only in an audit log the client never sees.
+  //
+  // Only post-finalization amendments appear. Ordinary edits made while the
+  // report was still being written are working notes, not amendments, and
+  // printing them would bury the ones that matter.
+  function buildAmendmentsAppendixHtml(report) {
+    const amendments = ((report && report.auditLog) || []).filter((e) => e.afterFinalize && e.event === 'field-changed');
+    if (!amendments.length) return '';
+
+    const rows = amendments
+      .slice()
+      .sort((a, b) => a.at - b.at)
+      .map((e) => `
+        <tr>
+          <td>${escapeHtml(fmtAuditTime(e.at))}</td>
+          <td>${escapeHtml(e.sectionTitle || e.sectionId || '')}<br><strong>${escapeHtml(e.label || e.fieldId || '')}</strong></td>
+          <td>${escapeHtml(e.from)} &rarr; ${escapeHtml(e.to)}</td>
+          <td>${escapeHtml(e.reason || '')}</td>
+          <td>${escapeHtml(e.userEmail || 'unknown')}</td>
+        </tr>`)
+      .join('');
+
+    return `
+      <div class="section amendments-page">
+        <h2>Appendix — Amendments After Finalisation</h2>
+        <p class="field-value">This report was finalised on ${escapeHtml(fmtAuditTime(report.finalizedAt))} and has been amended ${amendments.length} time${amendments.length === 1 ? '' : 's'} since. Each amendment is listed below with the reason recorded at the time.</p>
+        <table class="amendments-table">
+          <thead><tr><th>When</th><th>Field</th><th>Change</th><th>Reason</th><th>By</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   async function exportPdf() {

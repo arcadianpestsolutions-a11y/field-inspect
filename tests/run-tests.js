@@ -1137,54 +1137,81 @@
     }
   });
 
-  test('Inspection: a full start-to-finish run saves footage and opens the report', async () => {
+  test('Inspection: a full start-to-finish run captures photos and opens the report', async () => {
+    // Inspections are photo-only: no MediaRecorder, no footage row. What has
+    // to hold is that the camera opens, each still is saved against the zone
+    // the technician typed, and Finish moves the job to review and opens the
+    // report — with the camera actually released rather than left running.
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'Full Run Job' });
     await win.showJobViewById(job.id);
     await wait(300);
 
-    // A genuine MediaStream from a canvas + oscillator, so MediaRecorder
-    // really encodes and the true code path runs — no camera required.
+    // A genuine MediaStream from a canvas, so the real capture path runs and
+    // the still button has actual pixels to grab — no camera required.
     function realishStream() {
       const c = win.document.createElement('canvas');
       c.width = 320; c.height = 240;
       const ctx = c.getContext('2d');
       let f = 0;
       const t = win.setInterval(() => { ctx.fillStyle = `hsl(${f++ % 360},70%,45%)`; ctx.fillRect(0, 0, 320, 240); }, 50);
-      const vs = c.captureStream(15);
-      const ac = new (win.AudioContext || win.webkitAudioContext)();
-      const osc = ac.createOscillator();
-      const dest = ac.createMediaStreamDestination();
-      osc.connect(dest); osc.start();
-      const s = new win.MediaStream([...vs.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-      s.__cleanup = () => { win.clearInterval(t); try { osc.stop(); ac.close(); } catch (e) {} };
+      const s = c.captureStream(15);
+      s.__cleanup = () => win.clearInterval(t);
       return s;
     }
 
     const origPerm = win.navigator.permissions.query;
     const origGum = win.navigator.mediaDevices.getUserMedia;
     let made = null;
+    let askedForAudio = null;
     try {
       win.navigator.permissions.query = async () => ({ state: 'granted' });
-      win.navigator.mediaDevices.getUserMedia = async () => { made = realishStream(); return made; };
+      win.navigator.mediaDevices.getUserMedia = async (constraints) => {
+        askedForAudio = constraints && constraints.audio;
+        made = realishStream();
+        return made;
+      };
 
       doc.getElementById('start-inspection-btn').click();
       await wait(2200);
-      assert(!doc.getElementById('inspection-modal').classList.contains('hidden'), 'recording modal should open');
+      assert(!doc.getElementById('inspection-modal').classList.contains('hidden'), 'camera modal should open');
       assertEqual((await win.DB.getJob(job.id)).status, 'in_progress', 'job goes in_progress');
+      // Photo capture has no use for the microphone, and not asking for it is
+      // one less permission prompt inside a client's home.
+      assertEqual(askedForAudio, false, 'the microphone is not requested');
 
-      await wait(2200); // let it actually record something
+      // Photograph two subjects, tagging the zone for each.
+      const zoneInput = doc.getElementById('inspection-zone-input');
+      const setValue = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+        setter.call(el, v);
+        el.dispatchEvent(new win.Event('input', { bubbles: true }));
+      };
+
+      setValue(zoneInput, 'Subfloor');
+      doc.getElementById('inspection-still-btn').click();
+      await wait(900);
+      setValue(zoneInput, 'Roof Void');
+      doc.getElementById('inspection-still-btn').click();
+      await wait(900);
+
+      const shots = await win.DB.getCaptures(job.id);
+      assertEqual(shots.length, 2, 'both photos are saved');
+      const zones = shots.map((c) => c.zone).sort();
+      assertEqual(zones.join(','), 'Roof Void,Subfloor', 'each photo keeps the zone it was taken in');
+      assert(shots.every((c) => c.photoBlob && c.photoBlob.size > 0), 'photos are not empty');
+
       doc.getElementById('inspection-finish-btn').click();
-      await wait(6500);
+      await wait(4000);
 
       const after = await win.DB.getJob(job.id);
-      const footage = await win.DB.getFootage(job.id);
       assertEqual(after.status, 'review', 'job moves to review');
-      assertEqual(footage.length, 1, 'the recording is saved');
-      assert(footage[0].blob.size > 0, 'saved footage should not be empty');
+      assert(after.inspectionEndedAt, 'the finish time is recorded');
+      assertEqual((await win.DB.getFootage(job.id)).length, 0, 'no video is recorded any more');
       assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'modal closes');
       assert(!doc.getElementById('finish-inspection-btn').disabled, 'finish button is usable again');
+      assert(made.getTracks().every((t) => t.readyState === 'ended'), 'the camera is released, not left running');
     } finally {
       if (made && made.__cleanup) made.__cleanup();
       win.navigator.permissions.query = origPerm;
@@ -1219,6 +1246,194 @@
 
   // ---------- runner ----------
   let running = false;
+
+  // ---------- Audit trail ----------
+  // These drive the real save path rather than calling internals, because the
+  // thing under test is a compliance guarantee: that a change to a signed-off
+  // report cannot happen without leaving a record and a reason.
+
+  function openReportSection(doc, label) {
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => el.textContent.includes(label));
+    assert(li, `section not found: ${label}`);
+    li.click();
+  }
+
+  function setTextInput(win, input, value) {
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    input.dispatchEvent(new win.Event('input', { bubbles: true }));
+  }
+
+  test('Audit: a new report is stamped with the schema version', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Audit Stamp Job' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    // The report is only persisted once something is saved, so save a section.
+    const doc = frame.contentDocument;
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    doc.getElementById('section-save-btn').click();
+    await wait(300);
+
+    const saved = await win.DB.getReport(job.id);
+    assert(saved, 'report should exist after a section save');
+    assertEqual(saved.schemaVersion, win.REPORT_SCHEMA_VERSION, 'schema version stamped on the report');
+    assert(Array.isArray(saved.auditLog), 'report carries an audit log');
+    assert(saved.auditLog.some((e) => e.event === 'created'), 'creation is recorded');
+  });
+
+  test('Audit: changing an answer records the old and new value', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Audit Change Job' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    const input = doc.querySelector('#report-section-fields input[type="text"]');
+    assert(input, 'a text input should render');
+    setTextInput(win, input, 'Audited Client Name');
+    doc.getElementById('section-save-btn').click();
+    await wait(300);
+
+    const saved = await win.DB.getReport(job.id);
+    const changes = saved.auditLog.filter((e) => e.event === 'field-changed');
+    assert(changes.length >= 1, 'a field change is recorded');
+    const entry = changes.find((e) => e.to === 'Audited Client Name');
+    assert(entry, 'the new value is recorded');
+    assert(entry.label, 'the change records a human-readable field label');
+    assertEqual(entry.afterFinalize, false, 'change before finalizing is not flagged as an amendment');
+    assert(!entry.reason, 'no reason is demanded before finalizing');
+  });
+
+  test('Audit: re-saving a section unchanged records nothing', async () => {
+    // A log full of "changed X from blank to blank" every time someone opens a
+    // section is a log nobody reads, which defeats the point of having one.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Audit Noise Job' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    doc.getElementById('section-save-btn').click();
+    await wait(300);
+    const first = (await win.DB.getReport(job.id)).auditLog.length;
+
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    doc.getElementById('section-save-btn').click();
+    await wait(300);
+    const second = (await win.DB.getReport(job.id)).auditLog.length;
+
+    assertEqual(second, first, 'saving an unchanged section adds no audit events');
+  });
+
+  test('Audit: amending a finalized report is refused without a reason', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Audit Refuse Job' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    doc.getElementById('section-save-btn').click();
+    await wait(300);
+
+    // Finalize directly — the button is gated on every section being green,
+    // which is not what this test is about.
+    const report = await win.DB.getReport(job.id);
+    report.finalizedAt = Date.now();
+    await win.DB.saveReport(report);
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    const input = doc.querySelector('#report-section-fields input[type="text"]');
+    setTextInput(win, input, 'SNEAKY EDIT');
+
+    const realPrompt = win.prompt;
+    win.prompt = () => null; // technician cancels the reason dialog
+    try {
+      doc.getElementById('section-save-btn').click();
+      await wait(300);
+    } finally {
+      win.prompt = realPrompt;
+    }
+
+    const after = await win.DB.getReport(job.id);
+    const sneaky = JSON.stringify(after.sections).includes('SNEAKY EDIT');
+    assert(!sneaky, 'a cancelled amendment must not be written to the report');
+    assert(!after.auditLog.some((e) => e.to === 'SNEAKY EDIT'), 'a cancelled amendment is not logged as happening');
+  });
+
+  test('Audit: an amendment after finalizing is flagged and carries its reason', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Audit Amend Job' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    doc.getElementById('section-save-btn').click();
+    await wait(300);
+
+    const report = await win.DB.getReport(job.id);
+    report.finalizedAt = Date.now();
+    await win.DB.saveReport(report);
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    openReportSection(doc, 'Client Details');
+    await wait(200);
+    const input = doc.querySelector('#report-section-fields input[type="text"]');
+    setTextInput(win, input, 'Corrected Name');
+
+    const realPrompt = win.prompt;
+    win.prompt = () => 'Client advised the spelling was wrong';
+    try {
+      doc.getElementById('section-save-btn').click();
+      await wait(300);
+    } finally {
+      win.prompt = realPrompt;
+    }
+
+    const after = await win.DB.getReport(job.id);
+    const amendment = after.auditLog.find((e) => e.to === 'Corrected Name');
+    assert(amendment, 'the amendment is recorded');
+    assertEqual(amendment.afterFinalize, true, 'it is flagged as post-finalization');
+    assertEqual(amendment.reason, 'Client advised the spelling was wrong', 'the reason is preserved');
+    assert(JSON.stringify(after.sections).includes('Corrected Name'), 'the amendment is actually applied');
+  });
+
+  test('Audit: image values are summarised, never stored in the log', async () => {
+    // A signature or mud map is a data URL hundreds of kilobytes long. Copying
+    // those into an append-only log would bloat every report sync indefinitely.
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Audit Image Job' });
+    const bigDataUrl = 'data:image/png;base64,' + 'A'.repeat(5000);
+
+    await win.DB.saveReport({ jobId: job.id, sections: {}, finalizedAt: null, auditLog: [], schemaVersion: win.REPORT_SCHEMA_VERSION });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+
+    const doc = frame.contentDocument;
+    openReportSection(doc, 'Site Sketch');
+    await wait(400);
+    doc.getElementById('section-save-btn').click();
+    await wait(400);
+
+    const saved = await win.DB.getReport(job.id);
+    const serialised = JSON.stringify(saved.auditLog);
+    assert(!serialised.includes('A'.repeat(200)), 'no raw image payload lands in the audit log');
+    assert(serialised.length < 20000, `audit log stays small (was ${serialised.length} bytes)`);
+    void bigDataUrl;
+  });
 
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they

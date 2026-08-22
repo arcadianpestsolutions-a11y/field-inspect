@@ -1,7 +1,7 @@
 // Client for the `analyze-inspection` Supabase Edge Function — AI report
-// drafting, zone/room recognition, and voice-guided mud-map room
-// subdivision. All API keys stay server-side in the Edge Function; this
-// module only ever talks to Supabase, never Anthropic/OpenAI directly.
+// drafting and zone recognition from inspection footage. All API keys stay
+// server-side in the Edge Function; this module only ever talks to Supabase,
+// never Anthropic/OpenAI directly.
 //
 // Mirrors sync.js's own local-only fallback: if Supabase isn't configured,
 // window.AI simply doesn't exist, and callers should check for it.
@@ -111,145 +111,6 @@
     });
   }
 
-  function pickClosestWay(elements, lat, lng) {
-    const ways = elements.filter((el) => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 3);
-    if (!ways.length) return null;
-    let best = null;
-    let bestDist = Infinity;
-    for (const way of ways) {
-      const cLat = way.geometry.reduce((sum, p) => sum + p.lat, 0) / way.geometry.length;
-      const cLng = way.geometry.reduce((sum, p) => sum + p.lon, 0) / way.geometry.length;
-      const dist = Math.hypot(cLat - lat, cLng - lng);
-      if (dist < bestDist) { bestDist = dist; best = way; }
-    }
-    return best;
-  }
-
-  // Converts a real lat/lon building outline into a normalized 0-1 polygon
-  // in canvas space (0,0 top-left), with a little padding so the outline
-  // doesn't touch the edges. Latitude increases north but canvas y
-  // increases downward, hence the flip on the y axis.
-  function normalizePolygon(geometry) {
-    const lats = geometry.map((p) => p.lat);
-    const lngs = geometry.map((p) => p.lon);
-    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-    const latSpan = Math.max(maxLat - minLat, 1e-9);
-    const lngSpan = Math.max(maxLng - minLng, 1e-9);
-    const pad = 0.12;
-    return geometry.map((p) => [
-      pad + (1 - 2 * pad) * ((p.lon - minLng) / lngSpan),
-      pad + (1 - 2 * pad) * (1 - (p.lat - minLat) / latSpan),
-    ]);
-  }
-
-  // GeoJSON rings are [lng, lat] tuples (note the order) — convert to the
-  // same {lat, lon} shape Overpass's geometry uses so normalizePolygon()
-  // works for either source unchanged.
-  function geoJsonRingToLatLon(ring) {
-    return ring.map(([lng, lat]) => ({ lat, lon: lng }));
-  }
-
-  // Second-tier footprint source: Nominatim's reverse geocode can return
-  // real polygon geometry (not just a point) when the matched OSM feature
-  // is a way/relation with area — same free/keyless service already used
-  // for address autocomplete, just a different endpoint/param.
-  async function fetchNominatimPolygon(lat, lng) {
-    // zoom=18 was tested and found to over-zoom to a bare Point for some
-    // buildings (e.g. the Sydney Opera House) instead of matching the
-    // building way itself; zoom=17 reliably resolved to a real Polygon in
-    // testing while staying precise enough not to match a whole suburb.
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&polygon_geojson=1&zoom=17`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const geojson = data && data.geojson;
-    if (!geojson) return null;
-    let ring = null;
-    if (geojson.type === 'Polygon' && geojson.coordinates[0] && geojson.coordinates[0].length >= 3) {
-      ring = geojson.coordinates[0];
-    } else if (geojson.type === 'MultiPolygon' && geojson.coordinates[0] && geojson.coordinates[0][0] && geojson.coordinates[0][0].length >= 3) {
-      ring = geojson.coordinates[0][0];
-    }
-    return ring ? geoJsonRingToLatLon(ring) : null;
-  }
-
-  // Fetches a real building footprint (preferred) or a satellite-image
-  // fallback for the given coordinates, to use as the mud-map sketch's
-  // background layer. Three tiers, all free/keyless:
-  //   1. OSM Overpass — vector building outline (best case).
-  //   2. Nominatim reverse polygon — a second shot at vector geometry when
-  //      Overpass's node placement missed the building.
-  //   3. A tightly-cropped satellite photo of just the property — last
-  //      resort only, when neither service has area data for this address.
-  // Returns { source: 'osm', polygon } | { source: 'satellite', imageUrl } | { source: 'none' }.
-  async function fetchFootprint(lat, lng) {
-    try {
-      const overpassQuery = `[out:json][timeout:15];way["building"](around:60,${lat},${lng});out geom;`;
-      const res = await fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        body: 'data=' + encodeURIComponent(overpassQuery),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const way = pickClosestWay(data.elements || [], lat, lng);
-        if (way) return { source: 'osm', polygon: normalizePolygon(way.geometry) };
-      }
-    } catch (err) {
-      console.warn('[ai] Overpass footprint lookup failed, trying Nominatim polygon next:', err.message || err);
-    }
-
-    try {
-      const geometry = await fetchNominatimPolygon(lat, lng);
-      if (geometry) return { source: 'osm', polygon: normalizePolygon(geometry) };
-    } catch (err) {
-      console.warn('[ai] Nominatim polygon lookup failed, falling back to satellite imagery:', err.message || err);
-    }
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { source: 'none' };
-    // ~25-30m either side (~55m total span) — tight enough to frame just the
-    // target property and its immediate surrounds, not the whole street.
-    const pad = 0.00025;
-    const bbox = [lng - pad, lat - pad, lng + pad, lat + pad].join(',');
-    const imageUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export' +
-      `?bbox=${bbox}&bboxSR=4326&size=680,840&format=jpg&f=image`;
-    return { source: 'satellite', imageUrl };
-  }
-
-  // WMO weather codes, per Open-Meteo's docs — https://open-meteo.com/en/docs
-  const WMO_WEATHER_DESCRIPTIONS = {
-    0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
-    45: 'Fog', 48: 'Depositing rime fog',
-    51: 'Light drizzle', 53: 'Moderate drizzle', 55: 'Dense drizzle',
-    56: 'Light freezing drizzle', 57: 'Dense freezing drizzle',
-    61: 'Slight rain', 63: 'Moderate rain', 65: 'Heavy rain',
-    66: 'Light freezing rain', 67: 'Heavy freezing rain',
-    71: 'Slight snow fall', 73: 'Moderate snow fall', 75: 'Heavy snow fall', 77: 'Snow grains',
-    80: 'Slight rain showers', 81: 'Moderate rain showers', 82: 'Violent rain showers',
-    85: 'Slight snow showers', 86: 'Heavy snow showers',
-    95: 'Thunderstorm', 96: 'Thunderstorm with slight hail', 99: 'Thunderstorm with heavy hail',
-  };
-
-  // Real-time weather at the property's coordinates, via Open-Meteo — free,
-  // keyless, no signup (same philosophy as Nominatim/Overpass elsewhere in
-  // this file). Returns a short human-readable string, or null on failure.
-  async function fetchCurrentWeather(lat, lng) {
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    try {
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`;
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const cw = data.current_weather;
-      if (!cw) return null;
-      const desc = WMO_WEATHER_DESCRIPTIONS[cw.weathercode] || 'Conditions unavailable';
-      return `${desc}, ${Math.round(cw.temperature)}°C, wind ${Math.round(cw.windspeed)} km/h`;
-    } catch (err) {
-      console.warn('[ai] weather fetch failed:', err.message || err);
-      return null;
-    }
-  }
-
   async function invoke(body) {
     const { data, error } = await supabaseClient.functions.invoke('analyze-inspection', { body });
     if (error) throw error;
@@ -257,10 +118,48 @@
     return data;
   }
 
-  // Analyzes a finished inspection's footage: samples frames, sends them
-  // plus the recording's audio for transcription + drafting. Returns
-  // { transcript, draftFields, frameNotes } — caller persists this onto
-  // report.aiDraft, never directly into report.sections (suggestions only).
+  // Traces the subject building's exterior perimeter out of aerial photos and
+  // returns it as a 0-1 polygon ready to draw on the sketch canvas.
+  //
+  // This covers the case where no vector building outline exists in any open
+  // dataset: the model reads the roofline out of the imagery instead. It is
+  // deliberately NOT part of the automatic fetchFootprint cascade, because it
+  // costs an API call and takes a few seconds. The technician asks for it,
+  // and what comes back is a starting shape they correct on the canvas.
+  //
+  // Every available capture is sent, not just the best one. Tree canopy is
+  // the main reason a trace comes back wrong, and the two providers fly on
+  // different dates — a corner lost under a canopy in one is often plainly
+  // visible in the other.
+  //
+  // Exterior perimeter only: no interior walls, no room subdivision.
+  async function traceBuildingOutline(lat, lng) {
+    const captures = window.Geo ? await window.Geo.fetchAerialImages(lat, lng) : [];
+    const images = [];
+    for (const capture of captures) {
+      const match = /^data:(image\/\w+);base64,(.+)$/.exec(capture.dataUrl);
+      if (match) images.push({ label: capture.label, mediaType: match[1], base64: match[2] });
+    }
+    if (!images.length) throw new Error('No aerial imagery available for this address.');
+
+    const data = await invoke({ action: 'trace-building', images });
+    if (!data || !Array.isArray(data.polygon) || data.polygon.length < 3) {
+      throw new Error('Could not make out a building outline in the aerial imagery.');
+    }
+    return {
+      polygon: data.polygon,
+      confidence: data.confidence || 'medium',
+      note: data.note || '',
+      obscured: data.obscured || '',
+      imageUrl: captures[0].dataUrl,
+    };
+  }
+
+  // Legacy path, kept for jobs recorded before inspections became photo-only
+  // and for footage brought in through Import Footage: samples frames, sends
+  // them plus the recording's audio for transcription and drafting. Returns
+  // { transcript, draftFields, frameNotes } — the caller persists this onto
+  // report.aiDraft, never straight into report.sections (suggestions only).
   async function analyzeInspection(footageBlob, jobType) {
     const frames = await extractFrames(footageBlob, 12);
     const audioBase64 = await blobToBase64(footageBlob);
@@ -276,15 +175,37 @@
     });
   }
 
-  // footprint: normalized (0-1) polygon, same coordinate space as the
-  // sketch canvas. Returns { transcript, rooms: [{label, polygon}] }.
-  async function subdivideRooms(audioBlob, footprint) {
-    const audioBase64 = await blobToBase64(audioBlob);
+  // Drafts the report from the photographs taken during a walkthrough — the
+  // path used since inspections became photo-only.
+  //
+  // This is a better input than the video frames it replaces, and the prompt
+  // exploits that: each image is one the technician deliberately took, and it
+  // arrives labelled with the zone they were standing in. The Edge Function is
+  // told to read every photo against the whole question set rather than only
+  // the obstruction fields — a photo of a subfloor bearer speaks to moisture,
+  // ventilation, ant capping and workings all at once, and previously all of
+  // that went unused.
+  const INSPECTION_PHOTO_LIMIT = 24;
+
+  async function analyzeInspectionPhotos(captures, jobType) {
+    const usable = (captures || []).filter((c) => c && c.photoBlob).slice(0, INSPECTION_PHOTO_LIMIT);
+    if (!usable.length) throw new Error('No photos were captured for this inspection.');
+
+    const photos = await Promise.all(usable.map(async (capture, i) => ({
+      // The zone is the single most useful thing the model gets: it turns
+      // "a wall" into "a subfloor wall", which is the difference between a
+      // guess and a finding.
+      zone: capture.zone || '',
+      sequence: i + 1,
+      takenAt: capture.createdAt || null,
+      dataUrl: await blobToDataUrl(capture.photoBlob),
+    })));
+
     return invoke({
-      action: 'subdivide-rooms',
-      audioBase64,
-      audioMimeType: audioBlob.type || 'audio/webm',
-      footprint,
+      action: 'draft-report',
+      reportType: jobType || 'termite',
+      photos,
+      fieldSchema: buildAiFillableFieldSchema(undefined, jobType),
     });
   }
 
@@ -304,5 +225,7 @@
     return invoke({ action: 'draft-report', reportType: jobType || 'termite', frames, fieldSchema });
   }
 
-  window.AI = { analyzeInspection, subdivideRooms, fetchFootprint, fetchCurrentWeather, analyzeSectionPhotos };
+  window.AI = {
+    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline,
+  };
 })();

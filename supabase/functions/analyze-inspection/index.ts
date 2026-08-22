@@ -1,10 +1,9 @@
-// Single Edge Function handling two actions for the AI-assisted inspection
-// features:
-//   - 'draft-report': analyzes sampled video frames + audio narration from a
-//     finished inspection, returns draft values for aiFillable report fields.
-//   - 'subdivide-rooms': analyzes a spoken room description + a known
-//     building footprint, returns a proposed room-polygon subdivision for
-//     the mud-map sketch.
+// Edge Function backing the AI-assisted inspection features:
+//   - 'draft-report': reads the zone-labelled photographs from an inspection
+//     (or, for older jobs and imported footage, sampled video frames plus
+//     narration) and returns draft values for aiFillable report fields.
+//   - 'trace-building': reads a building's exterior perimeter out of aerial
+//     photography, returning a polygon that seeds the mud-map sketch.
 //
 // Both API keys (Anthropic, OpenAI) are Edge Function secrets, set via:
 //   supabase secrets set ANTHROPIC_API_KEY=... OPENAI_API_KEY=...
@@ -67,7 +66,7 @@ async function callClaude(systemPrompt: string, userContent: unknown[]): Promise
     },
     body: JSON.stringify({
       model: 'claude-sonnet-5',
-      max_tokens: 4096,
+      max_tokens: 8192,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
     }),
@@ -86,49 +85,92 @@ function extractJson(text: string): any {
 }
 
 async function handleDraftReport(body: any) {
-  const { frames, audioBase64, audioMimeType, fieldSchema, reportType } = body;
-  if (!Array.isArray(frames) || !fieldSchema) {
-    return json({ error: 'draft-report requires frames[] and fieldSchema' }, 400);
+  const { frames, photos, audioBase64, audioMimeType, fieldSchema, reportType } = body;
+  // `photos` is the current shape: zone-labelled photographs from a
+  // walkthrough. `frames` is the older one — video stills, still produced by
+  // Import Footage and by jobs recorded before inspections became photo-only.
+  const usingPhotos = Array.isArray(photos) && photos.length > 0;
+  if (!usingPhotos && !Array.isArray(frames)) {
+    return json({ error: 'draft-report requires photos[] or frames[]' }, 400);
   }
+  if (!fieldSchema) return json({ error: 'draft-report requires fieldSchema' }, 400);
+
   const isPestTreatment = reportType === 'pest_treatment';
 
   const transcription = audioBase64
     ? await transcribeAudio(audioBase64, audioMimeType || 'audio/webm')
     : { text: '', segments: [] };
 
-  // Cap frames sent to the model — keeps cost/latency bounded regardless of
-  // inspection length; the client is responsible for sensible sampling.
-  const imageBlocks = frames.slice(0, 12).map((f: { timestamp: number; dataUrl: string }) => {
-    const match = f.dataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+  function imageBlock(dataUrl: string) {
+    const match = String(dataUrl || '').match(/^data:(image\/\w+);base64,(.+)$/);
     return {
       type: 'image',
       source: { type: 'base64', media_type: match ? match[1] : 'image/jpeg', data: match ? match[2] : '' },
     };
-  });
+  }
 
   const domainDescription = isPestTreatment
     ? 'a general pest treatment / chemical application report (residential, commercial, or industrial pest control, Australia)'
-    : 'a termite inspection report (AS 3660.2-2017, Australia)';
+    : 'a termite inspection report (AS 4349.3 / AS 3660.2-2017, Australia)';
   const zoneExamples = isPestTreatment
     ? '(e.g. "Kitchen", "Roof Void", "Exterior Perimeter")'
     : '(e.g. "Kitchen", "Subfloor", "Roof Void")';
-  const systemPrompt = `You are assisting a licensed pest technician drafting ${domainDescription}. You are given still frames sampled from the technician's walkthrough video and a transcript of their spoken narration. Your job: propose draft values ONLY for the fields listed below, based on what's visible/audible. Never invent specifics you can't support from the frames or transcript (species, product names, exact measurements, etc.) — leave a field out of your response entirely if you're not reasonably confident, rather than guessing. This is a DRAFT for a licensed professional to review, edit, and confirm before it becomes part of a compliance document — it is not the final report.
+
+  // Photographs are deliberate and zone-labelled, so they support a much more
+  // thorough reading than sampled video frames did. The instruction that
+  // matters most is the second block: previously the model effectively used
+  // photos to answer the obstruction fields and little else, so a clear shot
+  // of a subfloor bearer — which speaks to moisture, ventilation, ant capping
+  // and workings all at once — went mostly unused.
+  const sourceDescription = usingPhotos
+    ? `You are given ${photos.length} photograph${photos.length === 1 ? '' : 's'} the technician deliberately took during the inspection. Each is labelled with the zone they were standing in and the order it was taken. These are considered photographs of things the technician chose to record, not incidental frames — treat every one as evidence that was worth capturing, and work out WHY each was taken.`
+    : 'You are given still frames sampled from the technician\'s walkthrough video, and a transcript of any spoken narration.';
+
+  const systemPrompt = `You are assisting a licensed pest technician drafting ${domainDescription}.
+
+${sourceDescription}
+
+READ EVERY PHOTO AGAINST THE WHOLE QUESTION SET, NOT JUST THE OBVIOUS FIELD.
+A single image usually answers several questions at once. A subfloor photograph can show mudding (workings), damp staining (high moisture), blocked vents (ventilation), the state of ant capping, and stored goods against a wall (an obstruction) — all at the same time. Work through the field list below and, for each field, ask whether anything in ANY of the photographs bears on it. Do not stop at the first field a photo seems to be "for".
+
+This applies especially to the yes/no findings. If the photographs show clear evidence relevant to a yes/no question, answer it. If they show the area plainly with no sign of the thing being asked about, that is also evidence and "No" may well be the right answer — say so. Only leave a field out when the photographs genuinely do not bear on it.
+
+WHAT YOU MUST NOT DO.
+Never invent specifics the images cannot support: termite species, product names, measured moisture percentages, timber types you cannot see, or the condition of an area that was not photographed. Absence of a photo is not evidence of absence — if no one photographed the roof void, say nothing about the roof void. Prefer leaving a field out to guessing at it. This is a DRAFT a licensed professional reviews, edits and confirms before it becomes a compliance document; a wrong confident answer costs them more time than a blank.
 
 Fields you may fill (id, section, label, type, options if applicable):
 ${JSON.stringify(fieldSchema, null, 2)}
 
-Also identify, for distinct time ranges in the footage, what zone/room is being shown ${zoneExamples} and any brief pest-relevant notes for that zone.
+For each field you fill, give a one-line reason naming which photo or photos support it, so the technician can check your reading rather than take it on trust.
+
+Also summarise what each zone showed ${zoneExamples}.
 
 Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
 {
   "draftFields": { "<sectionId>": { "<fieldId>": "<value>" } },
-  "frameNotes": [ { "startSeconds": 0, "endSeconds": 12, "zone": "Kitchen", "notes": "..." } ]
+  "fieldReasons": { "<sectionId>": { "<fieldId>": "photo 3 (Subfloor) shows ..." } },
+  "frameNotes": [ { "zone": "Subfloor", "notes": "...", "photoNumbers": [3, 4] } ]
 }`;
 
-  const userContent = [
-    { type: 'text', text: `Narration transcript:\n${transcription.text || '(no narration captured)'}` },
-    ...imageBlocks,
-  ];
+  const userContent: unknown[] = [];
+
+  if (usingPhotos) {
+    for (const photo of photos) {
+      const zone = photo.zone ? String(photo.zone) : 'zone not recorded';
+      userContent.push({ type: 'text', text: `Photo ${photo.sequence} — ${zone}` });
+      userContent.push(imageBlock(photo.dataUrl));
+    }
+    userContent.push({
+      type: 'text',
+      text: 'Work through the field list and fill every field these photographs genuinely bear on.',
+    });
+  } else {
+    userContent.push({
+      type: 'text',
+      text: `Narration transcript:\n${transcription.text || '(no narration captured)'}`,
+    });
+    for (const frame of frames.slice(0, 12)) userContent.push(imageBlock(frame.dataUrl));
+  }
 
   const raw = await callClaude(systemPrompt, userContent);
   const parsed = extractJson(raw);
@@ -136,36 +178,113 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   return json({
     transcript: transcription.text,
     draftFields: parsed.draftFields || {},
+    fieldReasons: parsed.fieldReasons || {},
     frameNotes: parsed.frameNotes || [],
   });
 }
 
-async function handleSubdivideRooms(body: any) {
-  const { audioBase64, audioMimeType, footprint } = body;
-  if (!audioBase64 || !footprint) {
-    return json({ error: 'subdivide-rooms requires audioBase64 and footprint' }, 400);
-  }
+// 'trace-building': reads a building's exterior perimeter out of aerial
+// photos of the property, so the mud-map sketch starts from the real shape of
+// the house instead of a blank grid.
+//
+// Background: when the open datasets have nothing, there is nothing else to
+// fall back on. OSM building coverage locally is patchy (spot checks around
+// Ingleburn returned 15, 9, 1 and 0 buildings within 60m) and Overpass
+// rate-limits hard, and NSW Spatial Services publishes cadastre (lot
+// boundaries) but no building layer at all. Geoscape's national building
+// dataset is commercial, and Microsoft's 11.3M-building Australian release is
+// a ~6GB bulk download rather than a queryable API. Reading the roofline out
+// of the imagery is the one approach that works from a phone, per-property,
+// on demand.
+//
+// Tree canopy is by far the biggest cause of a poor trace, so the prompt
+// below leans hard on the three things that recover an outline the canopy has
+// hidden: cross-referencing two captures flown on different dates, reading
+// the building's shadow (which falls on open ground the canopy doesn't
+// cover), and exploiting the fact that houses are rectilinear so an occluded
+// corner can be inferred from the walls that are visible.
+//
+// The result is a starting shape for a licensed technician to correct on
+// site — same rule as every other AI feature here: suggest, never commit.
+async function handleTraceBuilding(body: any) {
+  // `images` is the current shape; a lone imageBase64 is still accepted so a
+  // client cached from a previous release keeps working after this deploys.
+  const images = Array.isArray(body.images) && body.images.length
+    ? body.images
+    : body.imageBase64
+      ? [{ label: 'aerial capture', base64: body.imageBase64, mediaType: body.imageMediaType }]
+      : [];
 
-  const transcription = await transcribeAudio(audioBase64, audioMimeType || 'audio/webm');
+  if (!images.length) return json({ error: 'trace-building requires images[]' }, 400);
 
-  const systemPrompt = `You are helping a pest inspector sketch a rough mud-map of a property. You're given the known exterior footprint of the building as a polygon in a 0-1 normalized coordinate space (0,0 = top-left, 1,1 = bottom-right, matching how it's drawn on screen), and a spoken description of the room layout. Propose a rough subdivision of the footprint into labeled rooms matching the description. This is an approximate reference sketch, not a survey — reasonable estimates are fine, precision is not expected.
+  const systemPrompt = `You are tracing a building's exterior perimeter from aerial photography, to seed the base shape of a pest inspection "mud map" (site sketch).
 
-Known footprint (normalized polygon, in drawing order):
-${JSON.stringify(footprint)}
+You are given ${images.length === 1 ? 'one aerial image' : `${images.length} aerial images of the SAME property, flown on different dates`}. Each is a tight, north-up crop centred on the subject property, roughly 67m tall by 54m wide. ${images.length > 1 ? 'The captures differ in season, sun angle and tree growth. Cross-reference them: a roof corner buried under canopy or shadow in one image is frequently plain to see in another. Build ONE outline using the best evidence from across all of them.' : ''}
 
-Spoken room description (transcript):
-${transcription.text}
+Identify the MAIN building at the centre of the image — the dwelling or primary structure. Ignore detached sheds and garages, driveways, pools, pergolas, and neighbouring buildings intruding at the edges.
 
-Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
-{
-  "rooms": [ { "label": "Kitchen", "polygon": [[0.1,0.1],[0.5,0.1],[0.5,0.4],[0.1,0.4]] } ]
-}
-All polygon coordinates must be normalized 0-1 and stay within the given footprint.`;
+TREE COVER IS THE MAIN DIFFICULTY. When canopy hides part of the roof, do not guess vaguely and do not shrink the outline to only the part you can see — that produces a building smaller than reality, which is worse than a considered estimate. Instead, recover the hidden edges using:
+1. THE SHADOW. The building casts a hard-edged shadow onto open ground, and that shadow is usually clear of the canopy that hides the roof itself. A shadow's outline is a reliable, correctly-proportioned copy of the roofline — read the hidden corners off it.
+2. STRAIGHT LINES CONTINUE. Ridge lines, gutters, eaves and wall lines run straight and do not change direction under a tree. Project a visible wall through the canopy until it meets another projected wall, and put the corner there.
+3. RECTILINEAR GEOMETRY. Australian houses are overwhelmingly rectangular, L-shaped, T-shaped or stepped. Corners are 90 degrees; opposite walls are parallel and usually equal length. If three corners are visible and a fourth is hidden, its position is determined — compute it, don't guess it.
+4. ROOF TEXTURE AND COLOUR. Tile and metal roofs differ in colour and texture from tree canopy even in shadow. Canopy is irregular and blobby; roofs are flat planes with straight boundaries.
 
-  const raw = await callClaude(systemPrompt, [{ type: 'text', text: 'Generate the room subdivision now.' }]);
+Rules for the outline itself:
+- Do NOT subdivide it. No interior walls, no rooms.
+- Do NOT trace eaves separately from the wall line — one single closed outline.
+- Keep corners square where the building clearly is square, and opposite walls parallel where they clearly are.
+- Do NOT smooth it into a blob, and do NOT return a plain bounding rectangle unless the building genuinely is a simple rectangle.
+- Typically 4-12 corners.
+
+Give coordinates as [x, y] fractions of the image, where [0,0] is the top-left corner and [1,1] is the bottom-right. All images share the same bounds, so one coordinate system covers them all. List the points in order around the perimeter, and do not repeat the first point at the end.
+
+Be honest about uncertainty rather than confident and wrong — a technician is standing at the property and will correct this, so telling them WHERE to look is genuinely useful:
+- "confidence": "high" only if you could see or soundly infer every corner.
+- "obscured": a short plain-English list of which parts of the building you had to infer, e.g. "north-west corner and the rear wing". Empty string if none.
+
+Respond with ONLY a JSON object, no other text, no markdown fences:
+{"polygon": [[x,y], ...], "confidence": "high" | "medium" | "low", "note": "<one short sentence on what you traced>", "obscured": "<what you had to infer, or empty>"}`;
+
+  const userContent: unknown[] = [];
+  images.forEach((img: any, i: number) => {
+    userContent.push({ type: 'text', text: `Image ${i + 1}: ${img.label || 'aerial capture'}` });
+    userContent.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.base64 },
+    });
+  });
+  userContent.push({
+    type: 'text',
+    text: "Trace the main building's exterior perimeter. Use the shadow and the straight-line/right-angle rules to place any corner the tree canopy hides.",
+  });
+
+  const raw = await callClaude(systemPrompt, userContent);
   const parsed = extractJson(raw);
 
-  return json({ transcript: transcription.text, rooms: parsed.rooms || [] });
+  // The client draws this straight onto a canvas, so every vertex must be a
+  // finite number inside the image before it goes back.
+  const polygon = (Array.isArray(parsed.polygon) ? parsed.polygon : [])
+    .filter((p: any) => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+    .map((p: number[]) => [
+      Math.min(1, Math.max(0, p[0])),
+      Math.min(1, Math.max(0, p[1])),
+    ]);
+
+  // Deliberately a 200 carrying an `error` field, not a 4xx: supabase-js
+  // collapses every non-2xx into a generic "non-2xx status code" message and
+  // discards the body, so a status code here would cost the technician the
+  // one sentence that actually tells them what went wrong. The client's
+  // invoke() helper already checks `data.error` and throws on it.
+  if (polygon.length < 3) {
+    return json({ error: 'Could not make out a building outline in this imagery.' });
+  }
+
+  return json({
+    polygon,
+    confidence: parsed.confidence || 'medium',
+    note: parsed.note || '',
+    obscured: parsed.obscured || '',
+  });
 }
 
 Deno.serve(async (req) => {
@@ -182,8 +301,9 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     if (body.action === 'draft-report') return await handleDraftReport(body);
-    if (body.action === 'subdivide-rooms') return await handleSubdivideRooms(body);
-    return json({ error: 'Unknown action — expected "draft-report" or "subdivide-rooms"' }, 400);
+    if (body.action === 'trace-building') return await handleTraceBuilding(body);
+
+    return json({ error: 'Unknown action — expected "draft-report" or "trace-building"' }, 400);
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);

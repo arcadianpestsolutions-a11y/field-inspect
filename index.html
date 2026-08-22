@@ -181,7 +181,7 @@
   <div class="camera-wrap">
     <video id="inspection-video" playsinline autoplay muted></video>
     <div class="inspection-rec-pill">
-      <span class="rec-dot"></span>
+      <span class="session-dot"></span>
       <span id="inspection-modal-timer">0:00</span>
     </div>
     <div class="camera-zone-pill" id="inspection-zone-pill"></div>
@@ -252,7 +252,14 @@
       <button id="ai-draft-btn" class="btn btn-outline full">🤖 Generate AI Draft</button>
     </div>
 
+    <div id="schema-mismatch-notice" class="card schema-mismatch hidden"></div>
+
     <ul id="report-section-list" class="report-section-list"></ul>
+
+    <div id="audit-trail-card" class="card audit-card hidden">
+      <button id="audit-toggle-btn" class="btn btn-outline full">🕓 Audit Trail</button>
+      <div id="audit-trail-body" class="audit-body hidden"></div>
+    </div>
 
     <button id="finalize-report-btn" class="btn btn-primary full" disabled>Finalize Report</button>
     <p id="finalize-hint" class="empty-hint">All sections need a green tick before the report can be finalized.</p>
@@ -428,8 +435,12 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="version.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+<!-- Vendored, not CDN-loaded. These are render-blocking scripts that run before
+     any app code, so an unreachable or slow CDN at a job site means a blank
+     screen, not a degraded one. Serving them from the same origin also lets the
+     service worker cache them, which is what makes PDF export work offline. -->
+<script src="vendor/supabase.min.js"></script>
+<script src="vendor/html2pdf.bundle.min.js"></script>
 <script src="supabase-config.js"></script>
 <script src="db.js"></script>
 <script src="report-schema.js"></script>
@@ -438,6 +449,7 @@
 <script src="sync.js"></script>
 <script src="media.js"></script>
 <script src="xero.js"></script>
+<script src="geo.js"></script>
 <script src="ai.js"></script>
 <script src="email.js"></script>
 <script src="report.js"></script>

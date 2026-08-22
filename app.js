@@ -130,9 +130,11 @@
   const selectedCaptureIds = new Set();
 
 
-  let inspectionRecorder = null;
+  // Which job has the camera open right now. With no MediaRecorder to
+  // interrogate, this is what tells the UI a photo session is live — it drives
+  // whether Finish is shown and whether the camera reopens on return.
+  let inspectionActiveJobId = null;
   let inspectionStream = null;
-  let inspectionChunks = [];
   let inspectionTimerInterval = null;
   let inspectionStartedAt = 0;
   let pendingImportFiles = [];
@@ -383,7 +385,7 @@
     jobStatusBadge.textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
     jobStatusBadge.className = 'status-badge status-' + (job.status || 'new');
 
-    const isRecording = !!inspectionRecorder && inspectionRecorder.state === 'recording' && currentJobId === job.id;
+    const isRecording = !!inspectionActiveJobId && inspectionActiveJobId === job.id;
 
     if (isRecording) {
       hide(startInspectionBtn);
@@ -511,23 +513,30 @@
       li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
 
       // A booking is more actionable than a due date, so it wins the badge
-      // slot when a job has both.
-      if (job.scheduledAt) {
+      // slot while the job is still outstanding. Once the job is finished the
+      // booking is just history: the technician turned up and did the work, so
+      // a past appointment must never be labelled "Missed", and the useful
+      // thing to surface instead is when the property is next due.
+      const finished = job.status === 'completed';
+      const due = dueInfo(job);
+
+      if (job.scheduledAt && !(finished && due)) {
         const when = new Date(job.scheduledAt);
         const days = Math.round((when - Date.now()) / 86400000);
+        const late = days < 0 && !finished;
         const badge = document.createElement('span');
-        badge.className = 'due-badge ' + (days < 0 ? 'due-overdue' : days <= 7 ? 'due-soon' : 'due-later');
+        badge.className = 'due-badge ' + (late ? 'due-overdue' : days < 0 ? 'due-later' : days <= 7 ? 'due-soon' : 'due-later');
         const h = when.getHours();
         const time = `${h % 12 === 0 ? 12 : h % 12}${when.getMinutes() ? ':' + String(when.getMinutes()).padStart(2, '0') : ''}${h < 12 ? 'am' : 'pm'}`;
         badge.textContent = days === 0 ? `Today ${time}`
           : days === 1 ? `Tomorrow ${time}`
-          : days < 0 ? `Missed ${fmtDate(job.scheduledAt)}`
+          : late ? `Missed ${fmtDate(job.scheduledAt)}`
+          : days < 0 ? fmtDate(job.scheduledAt)
           : `${fmtDate(job.scheduledAt)} ${time}`;
         li.querySelector('.job-item-top').appendChild(badge);
       }
 
-      const due = dueInfo(job);
-      if (due && !job.scheduledAt) {
+      if (due && (finished || !job.scheduledAt)) {
         const badge = document.createElement('span');
         badge.className = `due-badge due-${due.level}`;
         badge.textContent = due.label;
@@ -1131,6 +1140,21 @@
       // So: if permission is already granted the camera should appear quickly
       // and a short deadline is right; if we are still waiting on a person,
       // give them a genuinely human amount of time.
+      // Browsers only expose the camera in a secure context: https, or
+      // localhost. Served over plain http from a LAN address — which is
+      // exactly how someone tests a build on their phone before deploying —
+      // navigator.mediaDevices is undefined, and reaching straight for
+      // getUserMedia below throws "Cannot read properties of undefined",
+      // which tells the technician nothing about the real problem.
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        releaseStream();
+        toast(window.isSecureContext
+          ? 'This browser does not support camera capture.'
+          : 'The camera needs a secure connection (https). Open the app on its https address rather than an IP address.');
+        resetButton();
+        return;
+      }
+
       let permission = 'unknown';
       try {
         if (navigator.permissions && navigator.permissions.query) {
@@ -1150,17 +1174,20 @@
       // Lets a second tap on the button abandon the wait immediately.
       abandonPendingStart = () => { gaveUp = true; };
       const request = navigator.mediaDevices.getUserMedia({
-        // 720p is ample for a continuous evidence record, and the still
-        // button captures at full sensor resolution for anything that needs
-        // detail. Left uncapped, a phone records 1080p+ at ~8Mbps: a 20
-        // minute inspection is ~1.2GB pushed over the technician's mobile
-        // data, and ~720GB of stored footage after a year at 50 jobs/month.
+        // Photographs are the evidence now, so the preview is requested at the
+        // highest sensible resolution rather than the 720p that suited
+        // continuous recording — the still button captures whatever the
+        // preview is running at. Nothing streams to disk any more, so the old
+        // bandwidth and storage argument for capping it no longer applies.
         video: {
           facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
         },
-        audio: true,
+        // No microphone. Photo capture has no use for it, and not asking is
+        // both one less permission prompt and one less thing recorded inside
+        // a client's home.
+        audio: false,
       });
       // If the camera turns up after we stopped waiting, nobody else holds a
       // reference to it — release it or the indicator light stays on.
@@ -1200,38 +1227,28 @@
       return;
     }
 
-    // MediaRecorder construction and start() can both throw (NotSupportedError
-    // on an unsupported mime type, InvalidStateError on a dead track). These
-    // used to sit outside any try/catch, so a failure here left the camera on,
-    // the modal open, and no recorder — with nothing said about it.
+    // An inspection is a series of deliberate photographs, not a continuous
+    // recording. Video was capturing 20 minutes of mostly floor and ceiling to
+    // find the handful of frames that mattered, and the report only ever cited
+    // stills anyway. Photographing each subject means every image is one the
+    // technician chose, tagged with the zone they were standing in — which is
+    // both better evidence and a far better input for the draft, because the
+    // model is reading considered photographs instead of motion-blurred frames.
+    //
+    // No MediaRecorder is created here any more. Import Footage still exists
+    // for jobs where video genuinely helps, and older jobs keep playing theirs.
     try {
       inspectionVideo.srcObject = inspectionStream;
       inspectionZoneInput.value = '';
       inspectionZonePill.textContent = 'Untagged';
       show(inspectionModal);
-
-      inspectionChunks = [];
-      // Bitrate has to be capped explicitly — MediaRecorder defaults to
-      // whatever the encoder feels like, typically several Mbps. 1.2Mbps at
-      // 720p is a clear evidence record at roughly a sixth of the size.
-      const mimeType = pickVideoMimeType();
-      const recorderOptions = { videoBitsPerSecond: 1200000, audioBitsPerSecond: 64000 };
-      inspectionRecorder = mimeType
-        ? new MediaRecorder(inspectionStream, { mimeType, ...recorderOptions })
-        : new MediaRecorder(inspectionStream, recorderOptions);
-
-      inspectionRecorder.addEventListener('dataavailable', (e) => {
-        if (e.data && e.data.size > 0) inspectionChunks.push(e.data);
-      });
-
-      inspectionRecorder.start(1000);
+      inspectionActiveJobId = currentJobId;
     } catch (err) {
-      console.error('[inspection] recorder failed to start:', err);
-      inspectionRecorder = null;
+      console.error('[inspection] camera preview failed to start:', err);
       inspectionVideo.srcObject = null;
       hide(inspectionModal);
       releaseStream();
-      toast('This device could not start video recording: ' + ((err && err.message) || err));
+      toast('Could not open the camera preview: ' + ((err && err.message) || err));
       resetButton();
       return;
     }
@@ -1250,7 +1267,7 @@
     await DB.updateJob(jobIdForStart, { status: 'in_progress', inspectionStartedAt });
     const job = await DB.getJob(jobIdForStart);
     renderInspectionControls(job);
-    toast('Inspection started — recording video & audio');
+    toast('Inspection started — photograph each area, tagging the zone as you go.');
 
     // Both are best-effort, fire-and-forget: neither should delay the
     // camera preview opening, and both only fill an empty field (never
@@ -1260,8 +1277,8 @@
       window.ReportUI.prefillFieldValue(jobIdForStart, 'clientDetails', 'inspectionTime', hhmm)
         .catch((err) => console.warn('[inspection] could not prefill inspection time:', err.message || err));
     }
-    if (window.AI && typeof job.addressLat === 'number' && typeof job.addressLng === 'number') {
-      window.AI.fetchCurrentWeather(job.addressLat, job.addressLng)
+    if (window.Geo && typeof job.addressLat === 'number' && typeof job.addressLng === 'number') {
+      window.Geo.fetchCurrentWeather(job.addressLat, job.addressLng)
         .then((weather) => weather && window.ReportUI && window.ReportUI.prefillFieldValue(jobIdForStart, 'clientDetails', 'weather', weather))
         .catch((err) => console.warn('[inspection] could not prefill weather:', err.message || err));
     }
@@ -1295,40 +1312,27 @@
     openImportModal();
   });
 
-  function pickVideoMimeType() {
-    const candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
-    for (const c of candidates) {
-      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
-    }
-    return '';
-  }
 
   let finishInspectionInProgress = false;
 
   async function finishInspection() {
     // Guard against double-taps and make sure a tap is NEVER silently
-    // swallowed — previously, a null inspectionRecorder (session state lost
-    // to backgrounding/reload) made this function return with zero
-    // feedback, which is exactly what "I tapped Finish and nothing
-    // happened" looks like from the outside.
+    // swallowed — "I tapped Finish and nothing happened" is what this
+    // function's whole shape exists to prevent.
     if (finishInspectionInProgress) return;
     finishInspectionInProgress = true;
     finishInspectionBtn.disabled = true;
     inspectionFinishBtn.disabled = true;
     const jobIdAtStart = currentJobId;
 
-    // Outer safety net covering the WHOLE function: if anything below hangs
-    // (a DB call, a UI transition, anything) for longer than this, force
-    // the button back to a usable state and say so plainly, rather than
-    // leaving it stuck disabled with no way to tell what happened.
-    // 12s was too tight and fired on jobs that were working fine: saving a
-    // 20-minute recording writes ~180MB into IndexedDB, which on a mid-range
-    // phone genuinely takes a while. Firing early told the technician it had
-    // "got stuck" while it was still saving, and inviting them to tap again
-    // mid-write is the worst possible advice. The deadline is now generous,
-    // and the wait says what is actually happening so it does not look frozen.
+    // Outer safety net covering the whole function: if anything below hangs,
+    // put the button back into a usable state and say plainly what it was
+    // doing, rather than leaving it stuck disabled. Photo sessions finish far
+    // faster than the old video ones — there is no multi-hundred-megabyte
+    // write any more — but a slow device writing a dozen full-resolution
+    // photographs still deserves headroom.
     let watchdogFired = false;
-    let finishStage = 'stopping the recording';
+    let finishStage = 'closing the camera';
     const setStage = (s) => { finishStage = s; };
 
     const progressTimer = setInterval(() => {
@@ -1337,109 +1341,63 @@
 
     const watchdog = setTimeout(() => {
       watchdogFired = true;
-      console.warn('[inspection] finishInspection watchdog fired after 60s while ' + finishStage);
-      toast('Still stuck while ' + finishStage + '. Your recording is saved on this device — reopen the job and try Finish again.');
+      console.warn('[inspection] finishInspection watchdog fired after 45s while ' + finishStage);
+      toast('Still stuck while ' + finishStage + '. Your photos are saved on this device — reopen the job and try Finish again.');
       finishInspectionInProgress = false;
       finishInspectionBtn.disabled = false;
       inspectionFinishBtn.disabled = false;
-    }, 60000);
+    }, 45000);
 
     try {
-      if (!inspectionRecorder) {
-        // No live recording in this session — most likely the tab was
-        // backgrounded, reloaded, or the recording was started on another
-        // device. Recover instead of doing nothing. Each step below has its
-        // own try/catch so a failure anywhere still leaves a specific,
-        // visible clue about which step broke instead of a blanket failure.
-        toast('No active recording found — finishing this inspection.');
-        clearInterval(inspectionTimerInterval);
-        hide(inspectionModal);
-
-        try {
-          await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
-        } catch (err) {
-          console.error('[inspection] updateJob failed:', err);
-          if (!watchdogFired) toast('Could not update the job status: ' + (err.message || err));
-          return;
-        }
-
-        try {
-          await ReportUI.openReview(jobIdAtStart);
-        } catch (err) {
-          console.error('[inspection] openReview failed:', err);
-          if (!watchdogFired) toast('Job marked finished, but the report view failed to open — open it from the job screen instead.');
-        }
-        return;
-      }
-
-      // Never wait forever on the 'stop' event — MediaRecorder implementations
-      // (iOS Safari in particular) can fail to fire it reliably in some
-      // states. Race against a timeout so Finish always completes with
-      // visible feedback instead of hanging silently.
-      const stopped = new Promise((resolve) => {
-        inspectionRecorder.addEventListener('stop', resolve, { once: true });
-      });
-      if (inspectionRecorder.state !== 'inactive') inspectionRecorder.stop();
-      const stoppedInTime = await Promise.race([
-        stopped.then(() => true),
-        new Promise((resolve) => setTimeout(() => resolve(false), 5000)),
-      ]);
-      if (!stoppedInTime) {
-        console.warn('[inspection] MediaRecorder did not fire "stop" within 5s — proceeding with whatever was captured.');
-      }
-
       clearInterval(inspectionTimerInterval);
       if (inspectionStream) {
         inspectionStream.getTracks().forEach((t) => t.stop());
         inspectionStream = null;
       }
       inspectionVideo.srcObject = null;
+      inspectionActiveJobId = null;
       hide(inspectionModal);
-
-      setStage('saving the recording');
-      if (inspectionChunks.length) {
-        const blob = new Blob(inspectionChunks, { type: (inspectionRecorder && inspectionRecorder.mimeType) || 'video/webm' });
-        await DB.addFootage({
-          jobId: jobIdAtStart,
-          zone: '',
-          source: 'live',
-          kind: 'video',
-          blob,
-          note: 'Live inspection recording',
-        });
-
-        // Fire-and-forget: analyze in the background so Finish doesn't block
-        // on it. jobIdAtStart is captured since the user may navigate
-        // elsewhere before this resolves.
-        if (window.AI && window.ReportUI) {
-          const jobForAi = await DB.getJob(jobIdAtStart);
-          window.AI.analyzeInspection(blob, jobForAi && jobForAi.jobType)
-            .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
-            .then(() => toast('AI draft ready — review suggested values in the report'))
-            .catch((err) => {
-              // Previously this only logged to console — a failure here was
-              // indistinguishable from "AI Draft doesn't do anything at all"
-              // from the user's side. Always surface it.
-              console.warn('[ai draft] background analysis failed:', err.message || err);
-              toast('AI draft failed to generate — you can retry from the report’s "Generate AI Draft" button.');
-            });
-        }
-      } else {
-        toast('Inspection finished — no video was captured (recording may have been interrupted).');
-      }
-      inspectionChunks = [];
-      inspectionRecorder = null;
 
       setStage('updating the job');
       try {
         await DB.updateJob(jobIdAtStart, { status: 'review', inspectionEndedAt: Date.now() });
       } catch (err) {
         console.error('[inspection] updateJob failed:', err);
-        if (!watchdogFired) toast('Recording saved, but could not update the job status: ' + (err.message || err));
+        if (!watchdogFired) toast('Could not update the job status: ' + (err.message || err));
         return;
       }
 
-      toast('Inspection finished — opening report for review');
+      // Draft the report from the photographs taken during the walkthrough.
+      // Fire-and-forget, because the technician should reach the report
+      // immediately rather than waiting on an upload — jobIdAtStart is
+      // captured since they may navigate away before it resolves.
+      setStage('reading the photos');
+      let photoCount = 0;
+      try {
+        const captures = await DB.getCaptures(jobIdAtStart);
+        const photos = captures.filter((c) => c.photoBlob);
+        photoCount = photos.length;
+
+        if (photos.length && window.AI && window.ReportUI) {
+          const jobForAi = await DB.getJob(jobIdAtStart);
+          window.AI.analyzeInspectionPhotos(photos, jobForAi && jobForAi.jobType)
+            .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
+            .then(() => toast('AI draft ready — review the suggested answers in the report'))
+            .catch((err) => {
+              // Only logging this would make a failure indistinguishable from
+              // "the AI draft does nothing", which is how it once looked.
+              console.warn('[ai draft] photo analysis failed:', err.message || err);
+              toast('AI draft failed to generate — retry from the report’s "Generate AI Draft" button.');
+            });
+        }
+      } catch (err) {
+        console.warn('[inspection] could not start photo analysis:', err.message || err);
+      }
+
+      toast(photoCount
+        ? `Inspection finished — ${photoCount} photo${photoCount === 1 ? '' : 's'} captured. Opening report.`
+        : 'Inspection finished — no photos were taken, so there is nothing to draft from.');
+
       try {
         await ReportUI.openReview(jobIdAtStart);
       } catch (err) {
@@ -1450,8 +1408,7 @@
       clearInterval(progressTimer);
       clearTimeout(watchdog);
       // If the watchdog already fired and reset everything, don't stomp on
-      // state a second time (e.g. re-disabling nothing, or resetting a flag
-      // a fresh tap may have already set back to true).
+      // state a second time — a fresh tap may already have set it back.
       if (!watchdogFired) {
         finishInspectionInProgress = false;
         finishInspectionBtn.disabled = false;
@@ -1459,17 +1416,6 @@
       }
     }
   }
-
-  // Best-effort safety net: if the tab is about to be backgrounded while
-  // actively recording, force-flush whatever MediaRecorder has buffered so
-  // far into inspectionChunks. Doesn't protect against the tab being fully
-  // killed (no client-side JS can), but covers the far more common
-  // "switched apps for a minute and came back" case.
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && inspectionRecorder && inspectionRecorder.state === 'recording') {
-      try { inspectionRecorder.requestData(); } catch (err) { /* not fatal — best effort only */ }
-    }
-  });
 
   startInspectionBtn.addEventListener('click', () => {
     // While a camera request is outstanding the same button cancels it.
@@ -1493,7 +1439,7 @@
     hide(importModal);
     if (importOpenedFromInspection) {
       importOpenedFromInspection = false;
-      if (inspectionRecorder && inspectionRecorder.state === 'recording') show(inspectionModal);
+      if (inspectionActiveJobId) show(inspectionModal);
     }
   }
 

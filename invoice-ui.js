@@ -153,15 +153,26 @@
   }
 
   async function renderXeroState() {
-    if (!window.Xero) {
-      xeroStateEl.innerHTML = '<span class="xero-pill xero-off">Xero not configured</span>';
-      xeroBtn.disabled = true;
-      return;
-    }
+    // The invoice view is reused for every invoice, so the button has to be
+    // reset each time: without this it keeps whatever label the previously
+    // opened invoice left on it, and a fresh draft reads "Already sent to
+    // Xero".
+    xeroBtn.textContent = 'Send to Xero as draft';
+    xeroBtn.disabled = false;
+
+    // Whether this invoice reached Xero is a fact about the invoice, not about
+    // this device — so it's reported before anything is asked of the local
+    // Xero client. Otherwise an invoice that was pushed weeks ago reads
+    // "Xero not configured" on a phone that hasn't connected Xero, or offline.
     if (current.xeroInvoiceId) {
       xeroStateEl.innerHTML =
         `<span class="xero-pill xero-on">In Xero as ${escapeHtml(current.xeroStatus || 'DRAFT')}</span>`;
       xeroBtn.textContent = 'Already sent to Xero';
+      xeroBtn.disabled = true;
+      return;
+    }
+    if (!window.Xero) {
+      xeroStateEl.innerHTML = '<span class="xero-pill xero-off">Xero not configured</span>';
       xeroBtn.disabled = true;
       return;
     }

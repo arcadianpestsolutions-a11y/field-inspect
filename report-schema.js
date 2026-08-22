@@ -345,5 +345,22 @@ function defaultValuesForSection(section) {
   return values;
 }
 
+// BUMP THIS whenever a field is added, removed, renamed, or has its options
+// or required-ness changed in either schema.
+//
+// A finalized report is a compliance document, and its meaning depends on the
+// questions that were on screen when the technician answered them. Without a
+// version stamped on each report, editing this file silently reinterprets
+// every report ever written: a renamed field reads as blank, a removed one
+// disappears from the PDF, a new required field makes old reports look
+// incomplete. Stamping the version doesn't migrate anything — it makes the
+// mismatch visible instead of silent, which is the part that matters when
+// someone disputes a finding years later.
+//
+// History:
+//   1 — first versioned release (termite + pest treatment schemas as shipped)
+const SCHEMA_VERSION = 1;
+
 window.REPORT_SCHEMA = REPORT_SCHEMA;
+window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;
 window.ReportSchemaUtils = { isFieldVisible, computeSectionStatus, defaultValuesForSection, YES_NO };

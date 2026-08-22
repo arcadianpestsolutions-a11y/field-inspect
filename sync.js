@@ -44,6 +44,14 @@
   function isReady() { return !!currentSession && isOnline(); }
   function currentUserId() { return currentSession && currentSession.user ? currentSession.user.id : null; }
 
+  // Synchronous identity accessor, unlike getSession() which awaits a round
+  // trip. The report audit log stamps who made a change while it is already
+  // mid-write, and cannot await anything without racing the save it belongs to.
+  function currentUser() {
+    const user = currentSession && currentSession.user;
+    return user ? { id: user.id || null, email: user.email || '' } : null;
+  }
+
   supabaseClient.auth.onAuthStateChange((_event, session) => {
     currentSession = session;
     authListeners.forEach((fn) => { try { fn(session); } catch (e) { /* ignore listener errors */ } });
@@ -174,8 +182,15 @@
     return merged;
   }
 
+  // Flipped the first time the server rejects audit_log/schema_version because
+  // migration 008 hasn't been run against this project yet. Without this, every
+  // report push would fail from the moment this build ships until someone runs
+  // the migration — losing ordinary report sync to protect a new column. The
+  // audit trail still exists locally and pushes as soon as the column does.
+  let reportAuditColumnsMissing = false;
+
   function localReportToRemote(report, pushedSections) {
-    return {
+    const row = {
       job_id: report.jobId,
       sections: pushedSections,
       // aiDraft is text-only (transcript + suggested field values) — no
@@ -185,6 +200,19 @@
       updated_by: currentUserId(),
       updated_at: report.updatedAt || Date.now(),
     };
+    if (!reportAuditColumnsMissing) {
+      row.audit_log = Array.isArray(report.auditLog) ? report.auditLog : [];
+      row.schema_version = report.schemaVersion || null;
+    }
+    return row;
+  }
+
+  // PostgREST answers an unknown column with PGRST204 and a message naming it.
+  function isMissingColumnError(error) {
+    if (!error) return false;
+    const code = error.code || '';
+    const msg = String(error.message || '');
+    return code === 'PGRST204' || /audit_log|schema_version/.test(msg);
   }
 
   function remoteReportToLocal(rr, existingLocal) {
@@ -193,8 +221,29 @@
       sections: mergeRemoteSections(rr.sections, existingLocal ? existingLocal.sections : {}),
       aiDraft: rr.ai_draft || (existingLocal ? existingLocal.aiDraft : null),
       finalizedAt: rr.finalized_at || null,
+      // The audit log only ever grows, and each device may hold events the
+      // other has never seen — a plain last-write-wins overwrite here would
+      // erase exactly the history the log exists to preserve. Union by
+      // timestamp+event+field instead, so no device can destroy another's
+      // record of a change.
+      auditLog: mergeAuditLogs(rr.audit_log, existingLocal ? existingLocal.auditLog : null),
+      schemaVersion: rr.schema_version || (existingLocal ? existingLocal.schemaVersion : null),
       updatedAt: rr.updated_at,
     };
+  }
+
+  function mergeAuditLogs(remote, local) {
+    const all = [...(Array.isArray(remote) ? remote : []), ...(Array.isArray(local) ? local : [])];
+    const seen = new Set();
+    const merged = [];
+    for (const entry of all) {
+      if (!entry || typeof entry !== 'object') continue;
+      const key = `${entry.at}|${entry.event}|${entry.sectionId || ''}|${entry.fieldId || ''}|${entry.to || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(entry);
+    }
+    return merged.sort((a, b) => (a.at || 0) - (b.at || 0));
   }
 
   // ---------- Push (best effort, called from db.js after every local write) ----------
@@ -212,7 +261,12 @@
     if (!isReady()) return;
     try {
       const { sections, newPaths } = await sectionsForPush(report.jobId, report.sections);
-      const { error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections));
+      let { error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections));
+      if (error && !reportAuditColumnsMissing && isMissingColumnError(error)) {
+        reportAuditColumnsMissing = true;
+        console.warn('[sync] reports.audit_log / schema_version not in the database yet — run supabase-migration-008-audit-trail.sql. Report sync continues without them.');
+        ({ error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections)));
+      }
       if (error) throw error;
       // Record the storage paths locally so the next save doesn't re-upload
       // bytes that are already backed up. putReportRaw deliberately does NOT
@@ -602,6 +656,7 @@
 
   window.Sync = {
     getSession,
+    currentUser,
     signIn,
     signOut,
     onAuthChange,
