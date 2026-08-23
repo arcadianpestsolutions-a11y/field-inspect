@@ -122,6 +122,7 @@
         <button id="import-footage-btn" class="btn btn-secondary flex1">⤒ Import Footage</button>
       </div>
       <button id="view-report-btn" class="btn btn-outline full hidden">📄 Open Report</button>
+      <div id="doc-type-row" class="doc-type-row hidden"></div>
       <button id="view-invoice-btn" class="btn btn-outline full hidden">💰 Invoice</button>
     </div>
 
@@ -259,6 +260,10 @@
     <div id="audit-trail-card" class="card audit-card hidden">
       <button id="audit-toggle-btn" class="btn btn-outline full">🕓 Audit Trail</button>
       <div id="audit-trail-body" class="audit-body hidden"></div>
+    </div>
+
+    <div id="preflight-card" class="card preflight-card hidden">
+      <div id="preflight-body" class="preflight-body"></div>
     </div>
 
     <button id="finalize-report-btn" class="btn btn-primary full" disabled>Finalize Report</button>
@@ -445,6 +450,8 @@
 <script src="db.js"></script>
 <script src="report-schema.js"></script>
 <script src="pest-treatment-schema.js"></script>
+<script src="pest-products.js"></script>
+<script src="termite-management-schemas.js"></script>
 <script src="invoicing.js"></script>
 <script src="sync.js"></script>
 <script src="media.js"></script>

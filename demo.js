@@ -400,6 +400,7 @@
 
     pestCommercial(spec, media) {
       const s = baseSections(window.PEST_TREATMENT_SCHEMA);
+      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1) });
       Object.assign(s.clientDetails, clientBlock(null, spec, {
         applicationFinishTime: '12:05',
         weather: 'Fine, 23°C, wind 9 km/h NE',
@@ -420,12 +421,15 @@
         treatmentNotes: 'Crack-and-crevice application to harbourage points, gel bait to void areas behind and beneath appliances. External perimeter band applied to the amenities block.',
       });
       s.chemicals.products = [
-        { productName: 'Temprid 75', apvmaNumber: '62851', activeConstituent: 'Imidacloprid 75 g/L, Beta-cyfluthrin 37.5 g/L', batchNumber: 'TP-2026-0418', quantityApplied: '6 L applied', dilutionRate: '8 mL / L water' },
-        { productName: 'Maxforce Gold Cockroach Gel', apvmaNumber: '60427', activeConstituent: 'Imidacloprid 21.5 g/kg', batchNumber: 'MF-2026-1130', quantityApplied: '35 g', dilutionRate: 'Ready to use' },
-        { productName: 'Coopex Residual Insecticide', apvmaNumber: '34899', activeConstituent: 'Permethrin 250 g/kg', batchNumber: 'CX-2026-0077', quantityApplied: '4 L applied', dilutionRate: '12.5 g / L water' },
+        { id: 'p1', productName: 'Temprid 75', activeConstituent: 'Beta-cyfluthrin 25 g/L, Imidacloprid 50 g/L', areaApplied: ['Internal', 'External'], concentrateUsed: '48 mL', totalMixApplied: '6 L', dilutionRate: '8 mL / L', batchNumber: 'TP-2026-0418' },
+        { id: 'p2', productName: 'Maxforce Gold Cockroach Gel', activeConstituent: 'Fipronil 0.3 g/kg', areaApplied: ['Internal'], totalMixApplied: '35 g', batchNumber: 'MF-2026-1130' },
+        { id: 'p3', productName: 'Coopex Dusting Powder', activeConstituent: 'Permethrin 25:75 250 g/kg', areaApplied: ['Roof Void'], totalMixApplied: '400 g', batchNumber: 'CX-2026-0077' },
       ];
       Object.assign(s.safety, {
-        appliedOutdoorsWithSpray: 'Yes', windSpeed: '9 km/h', windDirection: 'NE',
+        risksPresent: ['People / children', 'Dog(s)'],
+        riskActions: ['Informed people/children to vacate the area', 'Moved animals to an unaffected part of the property'],
+        safeToCommence: 'Yes', spillKitAvailable: 'Yes', sdsOnSite: 'Yes', firstAidOnSite: 'Yes',
+        appliedOutdoorsWithSpray: 'Yes', windSpeed: '9', windDirection: 'NE', temperature: '23',
         ppeUsed: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots'],
         signagePlaced: 'Yes', occupantsNotified: 'Yes',
         reEntryPeriod: '4 hours, or once surfaces are dry', withholdingPeriod: 'Not applicable',
@@ -445,6 +449,7 @@
 
     pestChildcare(spec, media) {
       const s = REPORTS.pestCommercial(spec, media);
+      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1) });
       Object.assign(s.clientDetails, clientBlock(null, spec, {
         applicationFinishTime: '14:35',
         weather: 'Fine, 21°C, wind 6 km/h E',
@@ -464,11 +469,14 @@
         treatmentNotes: 'External perimeter band to the playground edging and building line. Gel bait to the toddler room threshold void. No product applied to play surfaces or soft-fall.',
       });
       s.chemicals.products = [
-        { productName: 'Termidor Residual', apvmaNumber: '50419', activeConstituent: 'Fipronil 100 g/L', batchNumber: 'TD-2026-0912', quantityApplied: '5 L applied', dilutionRate: '6 mL / L water' },
-        { productName: 'Advion Ant Gel', apvmaNumber: '67670', activeConstituent: 'Indoxacarb 4.5 g/kg', batchNumber: 'AD-2026-0233', quantityApplied: '20 g', dilutionRate: 'Ready to use' },
+        { id: 'p1', productName: 'Termidor HE Residual Termiticide', activeConstituent: 'Fipronil 96 g/L', areaApplied: ['External', 'Garden / Landscape'], concentrateUsed: '30 mL', totalMixApplied: '5 L', dilutionRate: '6 mL / L', batchNumber: 'TD-2026-0912' },
+        { id: 'p2', productName: 'Advion Ant Gel', activeConstituent: 'Indoxacarb 0.5 g/kg', areaApplied: ['Internal'], totalMixApplied: '20 g', batchNumber: 'AD-2026-0233' },
       ];
       Object.assign(s.safety, {
-        appliedOutdoorsWithSpray: 'Yes', windSpeed: '6 km/h', windDirection: 'E',
+        risksPresent: ['People / children', 'Dog(s)'],
+        riskActions: ['Informed people/children to vacate the area', 'Moved animals to an unaffected part of the property'],
+        safeToCommence: 'Yes', spillKitAvailable: 'Yes', sdsOnSite: 'Yes', firstAidOnSite: 'Yes',
+        appliedOutdoorsWithSpray: 'Yes', windSpeed: '6', windDirection: 'E', temperature: '23',
         ppeUsed: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots'],
         signagePlaced: 'Yes', occupantsNotified: 'Yes',
         reEntryPeriod: '12 hours — centre cleared for opening next morning',
@@ -485,6 +493,7 @@
 
     pestIndustrial(spec, media) {
       const s = REPORTS.pestCommercial(spec, media);
+      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1) });
       Object.assign(s.clientDetails, clientBlock(null, spec, {
         applicationFinishTime: '13:10',
         weather: 'Windy, 24°C, wind 21 km/h W',
@@ -505,11 +514,14 @@
         treatmentNotes: '14 lockable stations installed and mapped to the site plan — 8 external perimeter, 6 internal along the northern racking. All stations numbered and logged.',
       });
       s.chemicals.products = [
-        { productName: 'Contrac Blox', apvmaNumber: '48221', activeConstituent: 'Bromadiolone 0.05 g/kg', batchNumber: 'CB-2026-0561', quantityApplied: '1.4 kg across 14 stations', dilutionRate: 'Ready to use' },
-        { productName: 'Temprid 75', apvmaNumber: '62851', activeConstituent: 'Imidacloprid 75 g/L, Beta-cyfluthrin 37.5 g/L', batchNumber: 'TP-2026-0418', quantityApplied: '9 L applied', dilutionRate: '8 mL / L water' },
+        { id: 'p1', productName: 'Contrac Blox', activeConstituent: 'Bromadiolone 0.05 g/kg', areaApplied: ['Internal', 'External', 'Bin area'], totalMixApplied: '1.4 kg across 14 stations', batchNumber: 'CB-2026-0561' },
+        { id: 'p2', productName: 'Temprid 75', activeConstituent: 'Beta-cyfluthrin 25 g/L, Imidacloprid 50 g/L', areaApplied: ['Internal', 'External'], concentrateUsed: '72 mL', totalMixApplied: '9 L', dilutionRate: '8 mL / L', batchNumber: 'TP-2026-0418' },
       ];
       Object.assign(s.safety, {
-        appliedOutdoorsWithSpray: 'Yes', windSpeed: '21 km/h', windDirection: 'W',
+        risksPresent: ['People / children', 'Dog(s)'],
+        riskActions: ['Informed people/children to vacate the area', 'Moved animals to an unaffected part of the property'],
+        safeToCommence: 'Yes', spillKitAvailable: 'Yes', sdsOnSite: 'Yes', firstAidOnSite: 'Yes',
+        appliedOutdoorsWithSpray: 'Yes', windSpeed: '21', windDirection: 'W', temperature: '23',
         ppeUsed: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots'],
         signagePlaced: 'Yes', occupantsNotified: 'Yes',
         reEntryPeriod: '4 hours for treated zones', withholdingPeriod: 'Not applicable', sdsAvailable: 'Yes',

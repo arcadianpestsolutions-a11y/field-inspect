@@ -23,9 +23,18 @@ const PEST_TREATMENT_SCHEMA = [
     icon: '👤',
     color: '#b45309',
     fields: [
+      // The report's cover image. Required, because it is the first thing the
+      // client sees and the report is visibly unfinished without it — the
+      // cover renders a large empty band where the photo should be, which is
+      // what a service report looked like when this was optional.
+      {
+        id: 'coverPhoto',
+        label: 'Front of property — this becomes the report cover',
+        type: 'photos', required: true, aiFillable: true,
+      },
       { id: 'clientName', label: 'Client Name', type: 'text', required: true },
       { id: 'clientAddress', label: 'Client Address', type: 'text' },
-      { id: 'clientPhone', label: 'Client Phone', type: 'text' },
+      { id: 'clientPhone', label: 'Client Phone', type: 'text', required: true },
       { id: 'clientEmail', label: 'Client Email', type: 'text' },
       { id: 'propertyAddress', label: 'Treated Property Address', type: 'text', required: true },
       {
@@ -133,40 +142,103 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'safety',
     number: 7,
-    title: 'Safety & Compliance',
-    subtitle: 'Safety measures taken and the pesticide-use record details required by law.',
+    title: 'Risk Assessment & Safety',
+    subtitle: 'What was around the treatment area, what you did about it, and the pesticide-use record the law requires.',
     icon: '⚠️',
     color: '#b91c1c',
     fields: [
+      // A pesticide job in an occupied home is a risk assessment whether or
+      // not anyone writes one down. Recording what was present makes the
+      // action taken mean something — a report saying "moved animals to an
+      // unaffected part of the property" with no animals recorded reads as
+      // boilerplate, and that is exactly how it has been going out.
+      {
+        id: 'risksPresent',
+        label: 'What was present on or near the treatment area?',
+        type: 'multiselect', required: true,
+        options: ['People / children', 'Dog(s)', 'Cat(s)', 'Caged bird(s)', 'Fish / aquarium',
+          'Other animals', 'Vegetable garden', "Child's play area", 'Clothes line', 'Pool',
+          'Waterways / stormwater', 'A/C unit', 'Food preparation area', 'Nothing of concern'],
+        aiFillable: true,
+      },
+      {
+        id: 'riskActions',
+        label: 'What did you do about it?',
+        type: 'multiselect',
+        options: ['Informed people/children to vacate the area', 'Moved animals to an unaffected part of the property',
+          'Covered or removed caged birds', 'Covered fish tank / turned off pump', 'Used low-toxicity product internally',
+          'All rodent bait placed in tamper-proof stations', 'Treated after hours', 'Removed obstacles from the area',
+          'Covered food preparation surfaces', 'Kept product clear of the pool and stormwater'],
+        aiFillable: true,
+        // Reversed dependency, deliberately: the action is the field the
+        // technician reaches for, so the prompt fires there rather than on a
+        // field they have already skipped past.
+        requiresCompanion: {
+          fieldId: 'risksPresent',
+          label: 'What was present on or near the treatment area?',
+          message: 'You recorded an action taken to manage a risk, but nothing in the risks list. Tick what was actually there — or "Nothing of concern" if the action was precautionary.',
+        },
+      },
+      { id: 'additionalRiskAction', label: 'Anything else you did to make the site safe', type: 'textarea' },
+
+      { id: 'spillKitAvailable', label: 'Spill kit on the vehicle?', type: 'yesno', default: 'Yes' },
+      { id: 'sdsOnSite', label: 'Safety Data Sheets on site?', type: 'yesno', default: 'Yes' },
+      { id: 'ppeUsed', label: 'PPE worn', type: 'multiselect', required: true,
+        options: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots', 'Other'], aiFillable: true },
+      { id: 'firstAidOnSite', label: 'First aid kit on site?', type: 'yesno', default: 'Yes' },
+      {
+        id: 'safeToCommence', label: 'Was it safe to commence work?', type: 'yesno',
+        required: true, default: 'Yes',
+      },
+      {
+        id: 'unsafeReason', label: 'Why was it not safe, and what happened instead?',
+        type: 'textarea', required: true,
+        showIf: { field: 'safeToCommence', equals: 'No' },
+      },
+
       // Wind speed and direction must be recorded whenever a pesticide is
-      // applied OUTDOORS with spray equipment (NSW Pesticides Regulation
-      // 2017 cl 36) — at the start of the application and again on any
-      // significant change. Only shown once the technician says the job
-      // included outdoor spraying, so indoor-only jobs aren't cluttered.
+      // applied OUTDOORS with spray equipment (NSW Pesticides Regulation 2017
+      // cl 36), at the start of application and on any significant change.
+      // Only shown once the technician says the job included outdoor
+      // spraying, so indoor-only jobs aren't cluttered with it.
       {
         id: 'appliedOutdoorsWithSpray',
         label: 'Was any pesticide applied outdoors using spray equipment?',
         type: 'yesno', required: true,
       },
       {
-        id: 'windSpeed', label: 'Estimated wind speed (km/h, at start of application)', type: 'text',
+        id: 'windSpeed', label: 'Wind speed at start of application (km/h)', type: 'text',
         showIf: { field: 'appliedOutdoorsWithSpray', equals: 'Yes' }, required: true,
+        // Auto-filled from the weather lookup at Start Inspection; the range
+        // exists for the times it is typed by hand.
+        range: { min: 0, max: 90, unit: 'km/h' },
+        aiFillable: true,
       },
       {
-        id: 'windDirection', label: 'Wind direction (at start of application)', type: 'select',
+        id: 'windDirection', label: 'Wind direction at start of application', type: 'select',
         options: ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'],
         showIf: { field: 'appliedOutdoorsWithSpray', equals: 'Yes' }, required: true,
+        aiFillable: true,
       },
       {
-        id: 'windChanges', label: 'Significant changes in wind during application (time + new speed/direction)',
+        id: 'temperature', label: 'Temperature (°C)', type: 'text',
+        showIf: { field: 'appliedOutdoorsWithSpray', equals: 'Yes' },
+        // A service report went to a client reading "Temperature: 222". The
+        // range is what stops the next one.
+        range: { min: -10, max: 55, unit: '°C' },
+        aiFillable: true,
+      },
+      {
+        id: 'windChanges', label: 'Significant wind change during application (time + new speed/direction)',
         type: 'textarea', showIf: { field: 'appliedOutdoorsWithSpray', equals: 'Yes' },
       },
-      { id: 'ppeUsed', label: 'PPE Used', type: 'multiselect', options: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots', 'Other'], aiFillable: true },
+
       { id: 'signagePlaced', label: 'Warning signage / tape placed?', type: 'yesno' },
-      { id: 'occupantsNotified', label: 'Occupants notified prior to treatment?', type: 'yesno' },
-      { id: 'reEntryPeriod', label: 'Re-entry Period', type: 'text' },
-      { id: 'withholdingPeriod', label: 'Withholding Period', type: 'text' },
-      { id: 'sdsAvailable', label: 'Safety Data Sheet (SDS) available on request?', type: 'yesno', default: 'Yes' },
+      { id: 'occupantsNotified', label: 'Occupants notified before treatment?', type: 'yesno' },
+      { id: 'reEntryPeriod', label: 'Re-entry period', type: 'text', required: true,
+        default: 'Once surfaces are dry (approximately 2 hours)' },
+      { id: 'withholdingPeriod', label: 'Withholding period', type: 'text', default: 'Not applicable' },
+      { id: 'sdsAvailable', label: 'Safety Data Sheet available on request?', type: 'yesno', default: 'Yes' },
     ],
   },
   {
@@ -177,10 +249,38 @@ const PEST_TREATMENT_SCHEMA = [
     icon: '📝',
     color: '#166534',
     fields: [
-      { id: 'followUpRequired', label: 'Follow-up treatment required?', type: 'yesno' },
-      { id: 'followUpDate', label: 'Recommended Follow-up Date', type: 'date', showIf: { field: 'followUpRequired', equals: 'Yes' } },
-      { id: 'generalRecommendations', label: 'General Recommendations for the Client', type: 'textarea', aiFillable: true },
-      { id: 'additionalNotes', label: 'Additional Notes', type: 'textarea' },
+      // These four were free-text boxes and were blank on every report
+      // examined — a blank box at the end of a long form is the easiest thing
+      // in the world to skip. As pickable options they take one tap each, and
+      // they are the part of the report a client actually acts on.
+      {
+        id: 'housekeepingRecs', label: 'Housekeeping & cleaning', type: 'multiselect', aiFillable: true,
+        options: ['No action needed', 'Clean behind and under appliances', 'Store food in sealed containers',
+          'Clear crumbs and spills promptly', 'Empty bins more frequently', 'Reduce clutter in storage areas',
+          'Clean pet feeding area daily'],
+      },
+      {
+        id: 'rubbishRecs', label: 'Rubbish & waste', type: 'multiselect', aiFillable: true,
+        options: ['No action needed', 'Move bins away from the building line', 'Keep bin lids closed',
+          'Remove green waste piles', 'Clear stored cardboard and packaging', 'Remove timber stacked against the house'],
+      },
+      {
+        id: 'moistureRecs', label: 'Water & moisture', type: 'multiselect', aiFillable: true,
+        options: ['No action needed', 'Repair leaking tap or pipe', 'Clear blocked gutters',
+          'Improve drainage away from the building', 'Fix pooling water near the slab',
+          'Improve subfloor ventilation', 'Reduce over-watering of garden beds'],
+      },
+      {
+        id: 'proofingRecs', label: 'Building maintenance & proofing', type: 'multiselect', aiFillable: true,
+        options: ['No action needed', 'Seal gaps around pipe penetrations', 'Fit door seals / brush strips',
+          'Repair damaged flyscreens', 'Seal cracks in external walls', 'Trim vegetation back from the building',
+          'Screen weep holes', 'Repair damaged roof tiles or eaves'],
+      },
+      { id: 'followUpRequired', label: 'Follow-up treatment required?', type: 'yesno', required: true },
+      { id: 'followUpDate', label: 'Recommended Follow-up Date', type: 'date', required: true, showIf: { field: 'followUpRequired', equals: 'Yes' } },
+      { id: 'treatmentLimitations', label: 'Treatment limitations / warranty conditions', type: 'textarea' },
+      { id: 'generalRecommendations', label: 'Anything else the client should know', type: 'textarea', aiFillable: true },
+      { id: 'additionalNotes', label: 'Internal notes (not shown to the client)', type: 'textarea' },
     ],
   },
   {

@@ -415,7 +415,11 @@
     assert(U.isFieldVisible(windSpeed, { appliedOutdoorsWithSpray: 'Yes' }), 'wind shown for outdoor spraying');
   });
 
-  test('UI: report header follows the job type', async () => {
+  test('UI: report header names the actual document, not just the job type', async () => {
+    // A termite job used to open as "Termite Inspection Report" whatever it
+    // really was, conflating AS 4349.3 (timber pest inspection) with AS 3660.2
+    // (termite management). They are different documents with different scopes
+    // and the header is the technician's only cue for which one they are in.
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const termite = await win.DB.addJob({ name: 'Header Termite' });
@@ -423,7 +427,13 @@
 
     await win.ReportUI.openReview(termite.id);
     await wait(150);
-    assertEqual(doc.getElementById('report-title').textContent, 'Termite Inspection Report', 'termite header');
+    assertEqual(doc.getElementById('report-title').textContent,
+      'Timber Pest Inspection Report', 'a termite job defaults to the timber pest inspection');
+
+    await win.ReportUI.openReview(termite.id, 'termite_action_plan');
+    await wait(150);
+    assertEqual(doc.getElementById('report-title').textContent,
+      'Termite Management Action Plan', 'and follows the document actually chosen');
 
     await win.ReportUI.openReview(pest.id);
     await wait(150);
@@ -1433,6 +1443,259 @@
     assert(!serialised.includes('A'.repeat(200)), 'no raw image payload lands in the audit log');
     assert(serialised.length < 20000, `audit log stays small (was ${serialised.length} bytes)`);
     void bigDataUrl;
+  });
+
+  // ---------- Form validation ----------
+  // Each of these is a real defect found in a submitted Formitize report that
+  // went to a client. The test is the record of what happened and the proof it
+  // can't happen again — if one starts failing, that error is back.
+
+  function pestSection(id) {
+    const section = window.PEST_TREATMENT_SCHEMA.find((s) => s.id === id);
+    assert(section, 'pest schema section not found: ' + id);
+    return section;
+  }
+
+  const SAFE_SAFETY = {
+    risksPresent: ['People / children'],
+    ppeUsed: ['Gloves'],
+    safeToCommence: 'Yes',
+    reEntryPeriod: '2 hours',
+    appliedOutdoorsWithSpray: 'No',
+  };
+
+  test('Validation: an impossible temperature is rejected', () => {
+    // A service report went to a client reading "Temperature: 222".
+    const U = window.ReportSchemaUtils;
+    const safety = pestSection('safety');
+    const withBadTemp = { ...SAFE_SAFETY, appliedOutdoorsWithSpray: 'Yes', windSpeed: '9', windDirection: 'NE', temperature: '222' };
+    const errors = U.sectionValidationErrors(safety, withBadTemp);
+    assert(errors.some((e) => e.kind === 'range' && /222/.test(e.message)), 'a temperature of 222 must be caught');
+
+    const withGoodTemp = { ...withBadTemp, temperature: '22' };
+    assertEqual(U.sectionValidationErrors(safety, withGoodTemp).length, 0, 'a real temperature passes');
+  });
+
+  test('Validation: wind speed is range-checked too', () => {
+    const U = window.ReportSchemaUtils;
+    const safety = pestSection('safety');
+    const base = { ...SAFE_SAFETY, appliedOutdoorsWithSpray: 'Yes', windDirection: 'NE', temperature: '22' };
+    assert(U.sectionValidationErrors(safety, { ...base, windSpeed: '900' }).some((e) => e.kind === 'range'),
+      '900 km/h is not a wind speed');
+    assertEqual(U.sectionValidationErrors(safety, { ...base, windSpeed: '12' }).length, 0, '12 km/h is fine');
+  });
+
+  test('Validation: an action taken against a risk that was never recorded', () => {
+    // Seen in a real report: "Informed people/children to vacate the area"
+    // with the risks-present list empty.
+    const U = window.ReportSchemaUtils;
+    const safety = pestSection('safety');
+    const errors = U.sectionValidationErrors(safety, {
+      ...SAFE_SAFETY,
+      risksPresent: [],
+      riskActions: ['Informed people/children to vacate the area'],
+    });
+    assert(errors.some((e) => e.kind === 'companion'), 'the contradiction must be flagged');
+    assert(errors.some((e) => /Nothing of concern/.test(e.message)), 'and it must say how to resolve it honestly');
+  });
+
+  test('Validation: a diluted product needs its concentrate figure', () => {
+    // Blank on every product row of every report examined.
+    const U = window.ReportSchemaUtils;
+    const chemicals = pestSection('chemicals');
+    const errors = U.sectionValidationErrors(chemicals, {
+      products: [{ id: 'p1', productName: 'Temprid 75', areaApplied: ['Internal'], totalMixApplied: '8 L' }],
+    });
+    assert(errors.some((e) => /concentrate used is blank/.test(e.message)), 'a diluted product without concentrate is incomplete');
+  });
+
+  test('Validation: a ready-to-use product is not asked for a concentrate figure', () => {
+    // The reason the field was being skipped: it was shown for gels and baits
+    // too, where the honest answer does not exist.
+    const U = window.ReportSchemaUtils;
+    const chemicals = pestSection('chemicals');
+    const errors = U.sectionValidationErrors(chemicals, {
+      products: [{ id: 'p1', productName: 'Contrac Blox', areaApplied: ['External'], totalMixApplied: '350 g' }],
+    });
+    assertEqual(errors.length, 0, 'a bait recorded with an amount applied is complete');
+  });
+
+  test('Validation: a product row with no area recorded is incomplete', () => {
+    const U = window.ReportSchemaUtils;
+    const errors = U.sectionValidationErrors(pestSection('chemicals'), {
+      products: [{ id: 'p1', productName: 'Contrac Blox', areaApplied: [], totalMixApplied: '350 g' }],
+    });
+    assert(errors.some((e) => /no area recorded/.test(e.message)), 'an area is required');
+  });
+
+  test('Validation: the cover photo is required', () => {
+    // Reports were going out with an empty band where the cover image belongs.
+    const U = window.ReportSchemaUtils;
+    const errors = U.sectionValidationErrors(pestSection('clientDetails'), {
+      clientName: 'A Client', clientPhone: '0400 000 000', propertyAddress: '1 Test St',
+      propertyType: 'Residential', inspectionDate: '2026-08-23',
+      inspectionTime: '09:00', applicationFinishTime: '09:45',
+    });
+    assert(errors.some((e) => e.fieldId === 'coverPhoto'), 'no cover photo must block the report');
+  });
+
+  test('Validation: every product in the picker carries its active constituent', () => {
+    // The whole point of the picklist — the chemistry is never typed.
+    assert(Array.isArray(window.PEST_PRODUCTS) && window.PEST_PRODUCTS.length > 30, 'the product library is loaded');
+    for (const product of window.PEST_PRODUCTS) {
+      assert(product.name && product.name.length > 2, 'product has a name');
+      assert(product.active && /\d/.test(product.active), `${product.name} has a concentration in its active constituent`);
+      assert(product.form, `${product.name} declares a formulation`);
+    }
+    assertEqual(window.PestProducts.activeFor('Temprid 75'), 'Beta-cyfluthrin 25 g/L, Imidacloprid 50 g/L', 'lookup returns the chemistry');
+    assertEqual(window.PestProducts.isReadyToUse('Contrac Blox'), true, 'a bait is ready to use');
+    assertEqual(window.PestProducts.isReadyToUse('Temprid 75'), false, 'a concentrate is not');
+  });
+
+  test('Validation: a clean report reports nothing outstanding', () => {
+    const U = window.ReportSchemaUtils;
+    const errors = U.sectionValidationErrors(pestSection('safety'), SAFE_SAFETY);
+    assertEqual(errors.length, 0, 'a properly filled safety section is clean');
+  });
+
+  // ---------- Document types ----------
+  // Termite work is five documents, not one. 215 of Arcadian's last 1,400
+  // submissions were action plans, certificates and service records — none of
+  // which the app could produce. These check the registry keeps them distinct
+  // and that a report never forgets which one it is.
+
+  test('Documents: a termite job offers all four termite documents', () => {
+    const win = frame.contentWindow;
+    const ids = win.ReportUI.documentTypesFor('termite').map((d) => d.id).sort();
+    assertEqual(ids.join(','),
+      'termite_action_plan,termite_certificate,termite_service_record,timber_pest_inspection',
+      'all four termite documents are offered');
+    const pest = win.ReportUI.documentTypesFor('pest_treatment').map((d) => d.id);
+    assertEqual(pest.join(','), 'general_pest', 'a general pest job offers only its own document');
+  });
+
+  test('Documents: each schema is structurally sound', () => {
+    const win = frame.contentWindow;
+    const VALID = new Set(['text', 'textarea', 'select', 'yesno', 'multiselect', 'date', 'time',
+      'photos', 'signature', 'static', 'productList', 'stationList', 'sketch', 'number']);
+    const schemas = [
+      ['action plan', win.TERMITE_ACTION_PLAN_SCHEMA],
+      ['certificate', win.TERMITE_CERTIFICATE_SCHEMA],
+      ['service record', win.TERMITE_SERVICE_RECORD_SCHEMA],
+    ];
+    for (const [name, schema] of schemas) {
+      assert(Array.isArray(schema) && schema.length >= 6, `${name} has its sections`);
+      const seen = new Set();
+      for (const section of schema) {
+        assert(!seen.has(section.id), `${name}: section ${section.id} is not duplicated`);
+        seen.add(section.id);
+        const fieldIds = new Set();
+        for (const field of section.fields || []) {
+          assert(!fieldIds.has(field.id), `${name}: ${section.id}.${field.id} is not duplicated`);
+          fieldIds.add(field.id);
+          assert(VALID.has(field.type), `${name}: ${section.id}.${field.id} has a known type`);
+          // A showIf pointing at a field that isn't there hides the field
+          // forever, and nothing says why.
+          if (field.showIf) {
+            assert((section.fields || []).some((f) => f.id === field.showIf.field),
+              `${name}: ${section.id}.${field.id} showIf targets a real field`);
+          }
+        }
+      }
+    }
+  });
+
+  test('Documents: a report remembers which document it is', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Doc Type Memory', jobType: 'termite' });
+
+    await win.ReportUI.openReview(job.id, 'termite_service_record');
+    await wait(250);
+    assertEqual(doc.getElementById('report-title').textContent,
+      'Termite Management Plan Service Record', 'the service record opens under its own title');
+
+    // Persist it, then reopen with no hint at all — it must still be a service
+    // record and not fall back to the inspection.
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => /System Being Serviced/.test(el.textContent));
+    assert(li, 'the service record has its own sections');
+    li.click();
+    await wait(250);
+    doc.getElementById('section-save-btn').click();
+    await wait(350);
+
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.documentType, 'termite_service_record', 'the document type is stamped on the report');
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    assertEqual(doc.getElementById('report-title').textContent,
+      'Termite Management Plan Service Record', 'reopening without a hint keeps the same document');
+  });
+
+  test('Documents: a report written before document types still opens', async () => {
+    // Every existing report has no documentType stamp. They must keep
+    // resolving to the schema they were answered against, not blank out.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Legacy Report', jobType: 'termite' });
+    await win.DB.saveReport({ jobId: job.id, sections: { findings: { liveTermitesFound: 'No' } }, finalizedAt: null });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(300);
+    assertEqual(doc.getElementById('report-title').textContent,
+      'Timber Pest Inspection Report', 'an unstamped termite report falls back to the inspection');
+    assert(doc.querySelectorAll('#report-section-list .report-section-item').length > 5,
+      'and its sections still render');
+  });
+
+  test('Documents: the service record demands a per-station result', () => {
+    // A service record without per-station results is just an assertion that
+    // somebody attended.
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const stations = win.TERMITE_SERVICE_RECORD_SCHEMA.find((s) => s.id === 'stations');
+    const empty = U.sectionValidationErrors(stations, {
+      systemCondition: 'Intact and functioning', stationsDamaged: 'No',
+    });
+    assert(empty.some((e) => e.fieldId === 'stationRecords'), 'no stations recorded is incomplete');
+
+    const filled = U.sectionValidationErrors(stations, {
+      stationRecords: [{ id: 's1', stationNumber: '1', status: 'No activity', action: 'Nothing required' }],
+      systemCondition: 'Intact and functioning', stationsDamaged: 'No',
+    });
+    assertEqual(filled.length, 0, 'one recorded station satisfies it');
+  });
+
+  test('Documents: the action plan requires what cannot be treated', () => {
+    // A management plan that quietly omits its own gaps is the one that gets
+    // argued about later.
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const works = win.TERMITE_ACTION_PLAN_SCHEMA.find((s) => s.id === 'proposedWorks');
+    const errors = U.sectionValidationErrors(works, {
+      managementMethod: ['Chemical soil treated zone (AS 3660.2)'],
+      treatmentExtent: 'Complete perimeter',
+      areasToTreat: ['External perimeter'],
+      drillingRequired: 'No',
+      productsProposed: [{ id: 'p1', productName: 'Termidor HE Residual Termiticide', areaApplied: ['External'], concentrateUsed: '300 mL', totalMixApplied: '50 L' }],
+    });
+    assert(errors.some((e) => e.fieldId === 'untreatableAreas'),
+      'the plan must state what it cannot cover');
+  });
+
+  test('Documents: the certificate requires the durable notice to be evidenced', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const notice = win.TERMITE_CERTIFICATE_SCHEMA.find((s) => s.id === 'durableNotice');
+    const claimed = U.sectionValidationErrors(notice, { noticeInstalled: 'Yes' });
+    assert(claimed.some((e) => e.fieldId === 'noticeLocation'), 'where it was fixed is required');
+    assert(claimed.some((e) => e.fieldId === 'noticePhoto'), 'a photo of it is required');
+
+    const omitted = U.sectionValidationErrors(notice, { noticeInstalled: 'No' });
+    assert(omitted.some((e) => e.fieldId === 'noticeOmittedReason'),
+      'and if none was fixed, that needs explaining');
   });
 
   async function runAll() {

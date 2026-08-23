@@ -62,6 +62,9 @@
   const finishInspectionBtn = document.getElementById('finish-inspection-btn');
   const importFootageBtn = document.getElementById('import-footage-btn');
   const viewReportBtn = document.getElementById('view-report-btn');
+  // Newer than some deployed index.html files, so guarded at every use — the
+  // same CDN-skew hazard the audit refs carry.
+  const docTypeRow = document.getElementById('doc-type-row');
   const viewInvoiceBtn = document.getElementById('view-invoice-btn');
 
   const importModal = document.getElementById('import-modal');
@@ -416,8 +419,10 @@
     if (job.status === 'review' || job.status === 'completed') {
       show(viewReportBtn);
       viewReportBtn.textContent = job.status === 'completed' ? '✓ View Finalized Report' : '📄 Open Report';
+      renderDocumentTypePicker(job).catch((err) => console.warn('[job] document picker failed:', err.message || err));
     } else {
       hide(viewReportBtn);
+      if (docTypeRow) docTypeRow.classList.add('hidden');
     }
 
     // Invoicing only makes sense once there's work to bill for, so it appears
@@ -1479,6 +1484,55 @@
     pendingImportFiles = [];
     await renderGallery();
   });
+
+  // ---------- Which document is this job producing? ----------
+  // Termite work is five different documents, not one. The job screen offers
+  // whichever apply, with the one already started shown as current — a
+  // property can carry an inspection this year and a service record the next,
+  // and neither should require making a new job.
+  async function renderDocumentTypePicker(job) {
+    if (!docTypeRow || !window.ReportUI || !window.ReportUI.documentTypesFor) return;
+    const types = window.ReportUI.documentTypesFor(job.jobType);
+
+    // Nothing to choose between on a general pest job — one document, and the
+    // Open Report button already covers it.
+    if (types.length < 2) { docTypeRow.classList.add('hidden'); return; }
+
+    const existing = await DB.getReport(job.id);
+    const currentId = existing && existing.documentType;
+    docTypeRow.classList.remove('hidden');
+    docTypeRow.innerHTML = '';
+
+    const heading = document.createElement('p');
+    heading.className = 'doc-type-heading';
+    heading.textContent = existing ? 'This job’s document' : 'What are you producing for this job?';
+    docTypeRow.appendChild(heading);
+
+    for (const type of types) {
+      const isCurrent = currentId
+        ? currentId === type.id
+        : type.id === 'timber_pest_inspection';
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'doc-type-card' + (isCurrent ? ' active' : '');
+      card.innerHTML =
+        `<span class="doc-type-title">${escapeHtml(type.title)}</span>`
+        + (type.standard ? `<span class="doc-type-standard">${escapeHtml(type.standard)}</span>` : '')
+        + `<span class="doc-type-blurb">${escapeHtml(type.blurb)}</span>`;
+
+      card.addEventListener('click', async () => {
+        // A report already exists and it is a different document — switching
+        // would mean answering a different question set, so it is a decision
+        // rather than a toggle.
+        if (existing && currentId && currentId !== type.id) {
+          toast(`This job already has a ${window.ReportUI.documentTypeOf(existing, job).short}. Create a separate job for the ${type.short}.`);
+          return;
+        }
+        await ReportUI.openReview(job.id, type.id);
+      });
+      docTypeRow.appendChild(card);
+    }
+  }
 
   // ---------- View Report ----------
   viewReportBtn.addEventListener('click', () => ReportUI.openReview(currentJobId));

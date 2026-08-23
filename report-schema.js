@@ -325,16 +325,123 @@ function isFieldVisible(field, values) {
 // closing acknowledgement). That used to be a hardcoded check for the literal
 // section id 'acknowledgement'; it's a schema flag now so a second such
 // section doesn't need a second special case in the status logic.
+// ---------- Field validation ----------
+// Everything here exists because of a specific thing that reached a client's
+// document. These are not hypothetical rules.
+//
+//   "Temperature (degrees Celcius): 222"  — printed on a service report in
+//   August. Nothing rejected it, nobody caught it, the client received it.
+//   Hence `range`.
+//
+//   "Quantity Of Concentrate Used" blank on every product row of every report
+//   examined, while Total Mix Applied was filled. A diluted product with no
+//   concentrate figure is an incomplete pesticide-use record. Hence
+//   `requiredWhen` on repeatable rows.
+//
+//   "Action taken to eliminate any risk: Informed people/children to vacate"
+//   with the risks-present list empty — an action against a risk that was
+//   never recorded. Hence `requiresCompanion`.
+//
+// A rule that merely warns gets ignored at 4pm on a Friday. These block
+// finalisation, and each one says what it wants and why.
+
+function fieldValidationErrors(field, values) {
+  const errors = [];
+  if (!isFieldVisible(field, values)) return errors;
+  const value = values[field.id];
+  const blank = value === undefined || value === null || value === ''
+    || (Array.isArray(value) && value.length === 0);
+
+  if (field.required && blank) {
+    errors.push({ fieldId: field.id, label: field.label, kind: 'missing', message: `${field.label} is required.` });
+    return errors; // no point range-checking something that isn't there
+  }
+  if (blank) return errors;
+
+  if (field.range && (field.type === 'number' || field.type === 'text')) {
+    const num = Number(String(value).replace(/[^0-9.\-]/g, ''));
+    if (!Number.isFinite(num)) {
+      errors.push({ fieldId: field.id, label: field.label, kind: 'notNumber', message: `${field.label} should be a number.` });
+    } else if (num < field.range.min || num > field.range.max) {
+      errors.push({
+        fieldId: field.id,
+        label: field.label,
+        kind: 'range',
+        message: `${field.label} reads ${value}. Expected between ${field.range.min} and ${field.range.max}${field.range.unit ? ' ' + field.range.unit : ''}.`,
+      });
+    }
+  }
+
+  // "You recorded an action but not the thing it was for", and its mirror.
+  if (field.requiresCompanion) {
+    const companion = values[field.requiresCompanion.fieldId];
+    const companionBlank = companion === undefined || companion === null || companion === ''
+      || (Array.isArray(companion) && companion.length === 0);
+    if (companionBlank) {
+      errors.push({
+        fieldId: field.requiresCompanion.fieldId,
+        label: field.requiresCompanion.label || field.requiresCompanion.fieldId,
+        kind: 'companion',
+        message: field.requiresCompanion.message,
+      });
+    }
+  }
+
+  // Repeatable rows: a row that exists must be complete, or it is worse than
+  // no row at all — it looks like a record and isn't one.
+  if (field.type === 'productList' && Array.isArray(value)) {
+    value.forEach((row, i) => {
+      const position = `Product ${i + 1}${row.productName ? ` (${row.productName})` : ''}`;
+      if (!row.productName) {
+        errors.push({ fieldId: field.id, label: field.label, kind: 'rowIncomplete', message: `${position}: no product chosen.` });
+        return;
+      }
+      const readyToUse = window.PestProducts && window.PestProducts.isReadyToUse(row.productName);
+      if (!row.areaApplied || (Array.isArray(row.areaApplied) && !row.areaApplied.length)) {
+        errors.push({ fieldId: field.id, label: field.label, kind: 'rowIncomplete', message: `${position}: no area recorded.` });
+      }
+      if (!readyToUse && !row.concentrateUsed) {
+        errors.push({
+          fieldId: field.id, label: field.label, kind: 'rowIncomplete',
+          message: `${position}: concentrate used is blank. This is a diluted product, so the record needs it.`,
+        });
+      }
+      if (!row.totalMixApplied) {
+        errors.push({
+          fieldId: field.id, label: field.label, kind: 'rowIncomplete',
+          message: `${position}: ${readyToUse ? 'amount applied' : 'total mix applied'} is blank.`,
+        });
+      }
+    });
+  }
+
+  return errors;
+}
+
+function sectionValidationErrors(section, values) {
+  if (section.computed || section.fixed) return [];
+  const errors = [];
+  for (const field of section.fields || []) {
+    errors.push(...fieldValidationErrors(field, values));
+  }
+  return errors;
+}
+
+// A section is green only when it has nothing outstanding — the same signal
+// technicians already read, now covering bad values and not just blanks.
 function computeSectionStatus(section, values) {
   if (section.computed || section.fixed) return 'green';
-  const requiredFields = section.fields.filter((f) => f.required);
-  for (const field of requiredFields) {
-    if (!isFieldVisible(field, values)) continue;
-    const val = values[field.id];
-    const isEmpty = val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0);
-    if (isEmpty) return 'yellow';
+  return sectionValidationErrors(section, values).length ? 'yellow' : 'green';
+}
+
+// Everything standing between this report and a client, across all sections.
+function reportValidationErrors(schema, sections) {
+  const out = [];
+  for (const section of schema) {
+    const errors = sectionValidationErrors(section, (sections && sections[section.id]) || {});
+    for (const error of errors) out.push({ ...error, sectionId: section.id, sectionTitle: section.title });
   }
-  return 'green';
+  return out;
 }
 
 function defaultValuesForSection(section) {
@@ -359,8 +466,11 @@ function defaultValuesForSection(section) {
 //
 // History:
 //   1 — first versioned release (termite + pest treatment schemas as shipped)
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;
-window.ReportSchemaUtils = { isFieldVisible, computeSectionStatus, defaultValuesForSection, YES_NO };
+window.ReportSchemaUtils = {
+  isFieldVisible, computeSectionStatus, defaultValuesForSection, YES_NO,
+  fieldValidationErrors, sectionValidationErrors, reportValidationErrors,
+};

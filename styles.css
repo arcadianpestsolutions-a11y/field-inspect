@@ -1677,3 +1677,77 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .audit-meta { opacity: 0.65; font-size: 12px; }
 .audit-reason { font-style: italic; }
 .schema-mismatch { border-left: 3px solid #b26a00; }
+
+/* ---- Pre-flight check ---- */
+.preflight-card { border-left: 3px solid var(--warn, #b26a00); }
+.preflight-card.preflight-clear { border-left-color: var(--accent); }
+.preflight-heading { font-weight: 600; margin: 0 0 10px; }
+.preflight-ok { margin: 0; color: var(--accent); font-weight: 600; }
+.preflight-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.preflight-item {
+  padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--surface-2, rgba(255,255,255,0.04));
+  border-left: 3px solid var(--border, rgba(255,255,255,0.15));
+  display: flex; flex-direction: column; gap: 2px; font-size: 14px;
+}
+/* Compliance items are the ones that cost money later, so they never look
+   like the same weight of problem as a missing nice-to-have. */
+.preflight-item.preflight-compliance { border-left-color: #c0552a; background: rgba(192,85,42,0.10); }
+.preflight-where { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.65; }
+.preflight-what { font-weight: 500; }
+.preflight-why { font-size: 13px; opacity: 0.75; }
+
+/* ---- Product picker ---- */
+.product-active { margin: 0 0 8px; font-size: 13px; opacity: 0.8; font-style: italic; }
+.product-area-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.product-area-chip {
+  min-height: 44px; padding: 8px 12px; border-radius: 999px; font-size: 14px;
+  border: 1px solid var(--border, rgba(255,255,255,0.2));
+  background: transparent; color: inherit; cursor: pointer;
+}
+.product-area-chip.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.product-card-field select { min-height: 44px; width: 100%; }
+
+/* ---- Document type picker ---- */
+.doc-type-row { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.doc-type-heading { margin: 0 0 2px; font-size: 13px; opacity: 0.7; }
+.doc-type-card {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 12px 14px; min-height: 44px; border-radius: 10px; cursor: pointer;
+  background: var(--surface-2, rgba(255,255,255,0.04)); color: inherit;
+  border: 1px solid var(--border, rgba(255,255,255,0.15));
+}
+.doc-type-card.active { border-color: var(--accent); border-width: 2px; }
+.doc-type-title { font-weight: 600; font-size: 15px; }
+.doc-type-standard { font-size: 11px; letter-spacing: 0.04em; opacity: 0.6; font-family: ui-monospace, monospace; }
+.doc-type-blurb { font-size: 13px; opacity: 0.75; }
+
+/* ---- Bait station records ---- */
+.station-list-field { display: flex; flex-direction: column; gap: 10px; }
+.station-list-cards { display: flex; flex-direction: column; gap: 8px; }
+.station-card {
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--surface-2, rgba(255,255,255,0.04));
+  border-left: 3px solid var(--border, rgba(255,255,255,0.15));
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* Anything other than a clean "no activity" should be findable by scrolling. */
+.station-card.station-notable { border-left-color: #c0552a; background: rgba(192,85,42,0.10); }
+.station-card-header { display: flex; align-items: center; gap: 8px; }
+.station-card-title { font-size: 13px; opacity: 0.7; }
+.station-number { width: 64px; min-height: 40px; text-align: center; font-weight: 600; }
+.station-card-header .product-card-remove { margin-left: auto; }
+.station-chip-row { display: flex; flex-direction: column; gap: 4px; }
+.station-chip-label { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.6; }
+.station-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.station-chip {
+  min-height: 40px; padding: 6px 11px; border-radius: 999px; font-size: 13px;
+  border: 1px solid var(--border, rgba(255,255,255,0.2));
+  background: transparent; color: inherit; cursor: pointer;
+}
+.station-chip.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+/* ---- Pesticide record table in the PDF ---- */
+.product-pdf-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+.product-pdf-table th, .product-pdf-table td { border: 1px solid #ccc; padding: 5px 6px; text-align: left; vertical-align: top; }
+.product-pdf-table th { background: #f2f2f2; }

@@ -10,20 +10,106 @@
   // changed afterwards. Everything below resolves the right schema
   // dynamically instead of capturing one at script-load time, so both
   // report types share this exact same editor/PDF/AI-draft code path.
-  function schemaFor(jobType) {
-    return jobType === 'pest_treatment' ? (window.PEST_TREATMENT_SCHEMA || []) : window.REPORT_SCHEMA;
+  // ---------- Document types ----------
+  // A job used to imply exactly one document: termite jobs got the termite
+  // report, pest jobs got the pest report. That matched about half the real
+  // work. The other half — action plans, certificates of installation, service
+  // visits — had nowhere to go, so 215 of Arcadian's last 1,400 documents were
+  // produced somewhere else entirely.
+  //
+  // A job now chooses which document it is producing. jobType still decides
+  // what is offered (nobody needs a bait-station service record on a general
+  // pest call) and still drives invoicing defaults, so nothing downstream of
+  // it changes.
+  const DOCUMENT_TYPES = {
+    timber_pest_inspection: {
+      id: 'timber_pest_inspection',
+      title: 'Timber Pest Inspection Report',
+      short: 'Inspection',
+      standard: 'AS 4349.3-2010',
+      blurb: 'Full timber pest inspection — termites, borers and decay.',
+      jobTypes: ['termite'],
+      schema: () => window.REPORT_SCHEMA,
+    },
+    termite_action_plan: {
+      id: 'termite_action_plan',
+      title: 'Termite Management Action Plan',
+      short: 'Action Plan',
+      standard: 'AS 3660.2-2017',
+      blurb: 'What you propose to do about what the inspection found, and what it costs.',
+      jobTypes: ['termite'],
+      schema: () => window.TERMITE_ACTION_PLAN_SCHEMA,
+    },
+    termite_certificate: {
+      id: 'termite_certificate',
+      title: 'Certificate of Installation',
+      short: 'Certificate',
+      standard: 'AS 3660.1-2014 / AS 3660.2-2017',
+      blurb: 'Issued once a management system is installed. Asked for years later.',
+      jobTypes: ['termite'],
+      schema: () => window.TERMITE_CERTIFICATE_SCHEMA,
+    },
+    termite_service_record: {
+      id: 'termite_service_record',
+      title: 'Termite Management Plan Service Record',
+      short: 'Service Record',
+      standard: 'AS 3660.2-2017',
+      blurb: 'A periodic visit to an installed system — this is what keeps the warranty alive.',
+      jobTypes: ['termite'],
+      schema: () => window.TERMITE_SERVICE_RECORD_SCHEMA,
+    },
+    general_pest: {
+      id: 'general_pest',
+      title: 'General Pest Treatment Report',
+      short: 'Service Report',
+      standard: '',
+      blurb: 'Chemical application record for a general pest treatment.',
+      jobTypes: ['pest_treatment'],
+      schema: () => window.PEST_TREATMENT_SCHEMA,
+    },
+  };
+
+  function defaultDocumentType(jobType) {
+    return jobType === 'pest_treatment' ? 'general_pest' : 'timber_pest_inspection';
+  }
+
+  function documentTypesFor(jobType) {
+    const wanted = jobType === 'pest_treatment' ? 'pest_treatment' : 'termite';
+    return Object.values(DOCUMENT_TYPES).filter((d) => d.jobTypes.includes(wanted));
+  }
+
+  // The document type lives on the report, not the job: one property can need
+  // an inspection this year and a service record next, and the job record
+  // should not have to be recreated to say so.
+  function documentTypeOf(report, job) {
+    const stamped = report && report.documentType;
+    if (stamped && DOCUMENT_TYPES[stamped]) return DOCUMENT_TYPES[stamped];
+    return DOCUMENT_TYPES[defaultDocumentType(job && job.jobType)];
+  }
+
+  function schemaFor(jobType, report) {
+    // Reports written before document types existed carry no stamp, and must
+    // keep resolving to the schema they were answered against.
+    const docType = documentTypeOf(report, { jobType });
+    const schema = docType && docType.schema();
+    return schema || window.REPORT_SCHEMA;
   }
   // Convenience for the many call sites that only run once a report is open
   // (currentJob is set in openReview before any of them can be reached).
   function currentSchema() {
-    return schemaFor(currentJob && currentJob.jobType);
+    return schemaFor(currentJob && currentJob.jobType, currentReport);
+  }
+
+  function currentDocumentType() {
+    return documentTypeOf(currentReport, currentJob);
   }
 
   // Single source of truth for the report's display name — used by the
   // on-screen header, the print window's <title>, and the PDF cover line,
   // so those three can never drift out of sync.
-  function reportTitleFor(jobType) {
-    return jobType === 'pest_treatment' ? 'General Pest Treatment Report' : 'Termite Inspection Report';
+  function reportTitleFor(jobType, report) {
+    const docType = documentTypeOf(report, { jobType });
+    return docType ? docType.title : 'Inspection Report';
   }
 
   // ---------- Element refs ----------
@@ -48,7 +134,9 @@
   // index.html. Referencing a missing element unguarded throws at module load
   // and takes the whole report screen down with it — which is how "Finish
   // Inspection hangs" once presented itself. Every use below is guarded.
-  const auditCard = document.getElementById('audit-trail-card');
+  const preflightCard = document.getElementById("preflight-card");
+  const preflightBody = document.getElementById("preflight-body");
+  const auditCard = document.getElementById("audit-trail-card");
   const auditToggleBtn = document.getElementById('audit-toggle-btn');
   const auditBody = document.getElementById('audit-trail-body');
   const schemaMismatchNotice = document.getElementById('schema-mismatch-notice');
@@ -217,13 +305,16 @@
   }
 
   // ---------- Report load / prefill ----------
-  async function loadOrCreateReport(jobId) {
+  async function loadOrCreateReport(jobId, wantedDocumentType) {
     let report = await DB.getReport(jobId);
     if (report) return report;
 
     const job = await DB.getJob(jobId);
+    const documentType = (wantedDocumentType && DOCUMENT_TYPES[wantedDocumentType])
+      ? wantedDocumentType
+      : defaultDocumentType(job && job.jobType);
     const sections = {};
-    for (const section of schemaFor(job && job.jobType)) {
+    for (const section of schemaFor(job && job.jobType, { documentType })) {
       sections[section.id] = defaultValuesForSection(section);
     }
     sections.clientDetails = {
@@ -239,6 +330,10 @@
       jobId,
       sections,
       finalizedAt: null,
+      // Which of the five documents this is. Stamped at creation and never
+      // inferred afterwards, because the same property can need an inspection
+      // one visit and a service record the next.
+      documentType,
       // The question set this report was answered against. Reports outlive
       // schema edits, so without this stamp a later change to report-schema.js
       // silently rewrites what old reports appear to say. See SCHEMA_VERSION
@@ -270,15 +365,17 @@
 
   // ---------- Public entry point ----------
   window.ReportUI = {
-    async openReview(jobId) {
+    async openReview(jobId, documentType) {
       currentJobId = jobId;
-      currentReport = await loadOrCreateReport(jobId);
+      currentReport = await loadOrCreateReport(jobId, documentType);
       const job = await DB.getJob(jobId);
       currentJob = job || null;
       // The header is the technician's main cue for which report they're in —
       // it must follow the job type, not stay hardcoded to the termite wording.
-      if (reportTitle) reportTitle.textContent = reportTitleFor(job && job.jobType);
-      reportSubtitle.textContent = job ? job.name : '';
+      if (reportTitle) reportTitle.textContent = reportTitleFor(job && job.jobType, currentReport);
+      const docType = currentDocumentType();
+      reportSubtitle.textContent = (job ? job.name : '')
+        + (docType && docType.standard ? '  ·  ' + docType.standard : '');
       renderSectionList();
       updateAiDraftButton();
       hideAllAppViews();
@@ -287,6 +384,8 @@
       // even when the address lookups are slow or the site has no signal.
       autoPopulateSiteFields().catch((err) => console.warn('[report] site auto-fill failed:', err.message || err));
     },
+    documentTypesFor,
+    documentTypeOf,
     async openArchive() {
       await renderArchiveList();
       hideAllAppViews();
@@ -618,7 +717,93 @@
     toast(`Filled ${names} from the address — check before finalising.`);
   }
 
+  // ---------- Pre-flight check ----------
+  // The last thing between a report and a client.
+  //
+  // Section ticks already show what is outstanding, but they show it on a
+  // screen the technician has usually stopped looking at by the time they hit
+  // Finalize. Every problem found in past reports — a missing cover photo, a
+  // blank concentrate quantity, a temperature of 222 — was visible somewhere
+  // if you went looking. Nobody goes looking at 4pm.
+  //
+  // So this collects everything outstanding into one screen, says why each
+  // one matters in the technician's own terms rather than "field required",
+  // and takes them straight to it. Compliance items are listed first because
+  // those are the ones that cost money later.
+  const COMPLIANCE_FIELDS = new Set([
+    'windSpeed', 'windDirection', 'temperature', 'inspectionTime', 'applicationFinishTime',
+    'products', 'ppeUsed', 'safeToCommence', 'reEntryPeriod', 'inspectorLicence',
+    'inspectorSignature', 'clientSignature', 'agreementSignature',
+  ]);
+
+  const WHY_IT_MATTERS = {
+    coverPhoto: 'The report cover prints a blank band without it.',
+    windSpeed: 'Required by the NSW Pesticides Regulation for outdoor spraying.',
+    windDirection: 'Required by the NSW Pesticides Regulation for outdoor spraying.',
+    temperature: 'Recorded with the pesticide application.',
+    inspectionTime: 'The regulation requires both a start and a finish time.',
+    applicationFinishTime: 'The regulation requires both a start and a finish time.',
+    products: 'The pesticide-use record is incomplete without it.',
+    ppeUsed: 'Part of the safety record for a chemical application.',
+    clientPhone: 'Needed to reach the client about the follow-up.',
+    inspectorLicence: 'A pest report without a licence number is not much of a document.',
+  };
+
+  function preflightItems() {
+    const schema = currentSchema();
+    const utils = window.ReportSchemaUtils;
+    if (!utils || !utils.reportValidationErrors) return [];
+    const errors = utils.reportValidationErrors(schema, currentReport.sections || {});
+    return errors
+      .map((error) => ({
+        ...error,
+        compliance: COMPLIANCE_FIELDS.has(error.fieldId),
+        why: WHY_IT_MATTERS[error.fieldId] || '',
+      }))
+      .sort((a, b) => (b.compliance ? 1 : 0) - (a.compliance ? 1 : 0));
+  }
+
+  function renderPreflight() {
+    if (!preflightCard || !preflightBody) return [];
+    const items = preflightItems();
+
+    if (!items.length) {
+      preflightCard.classList.remove('hidden');
+      preflightCard.classList.add('preflight-clear');
+      preflightBody.innerHTML =
+        '<p class="preflight-ok">✓ Nothing outstanding. Every required answer is in and every value looks sane.</p>';
+      return items;
+    }
+
+    preflightCard.classList.remove('hidden');
+    preflightCard.classList.remove('preflight-clear');
+    const complianceCount = items.filter((i) => i.compliance).length;
+    const heading = complianceCount
+      ? `${items.length} to fix before sending — ${complianceCount} of them compliance`
+      : `${items.length} to fix before sending`;
+
+    const rows = items.map((item, i) => `
+      <li class="preflight-item${item.compliance ? ' preflight-compliance' : ''}" data-section="${escapeHtml(item.sectionId)}" data-index="${i}">
+        <span class="preflight-where">${escapeHtml(item.sectionTitle)}</span>
+        <span class="preflight-what">${escapeHtml(item.message)}</span>
+        ${item.why ? `<span class="preflight-why">${escapeHtml(item.why)}</span>` : ''}
+      </li>`).join('');
+
+    preflightBody.innerHTML = `<p class="preflight-heading">${escapeHtml(heading)}</p><ul class="preflight-list">${rows}</ul>`;
+
+    // Tap an item to land in the section that owns it, rather than making the
+    // technician find it again.
+    preflightBody.querySelectorAll('.preflight-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const sectionId = el.getAttribute('data-section');
+        if (sectionId) openSectionEditor(sectionId);
+      });
+    });
+    return items;
+  }
+
   function renderSectionList() {
+    renderPreflight();
     renderAuditTrail();
     renderSchemaNotice();
     reportSectionList.innerHTML = '';
@@ -1117,30 +1302,173 @@
       row.appendChild(renderSketchField(field));
     } else if (field.type === 'productList') {
       row.appendChild(renderProductListField(field));
+    } else if (field.type === 'stationList') {
+      row.appendChild(renderStationListField(field));
     }
 
     sectionFieldsEl.appendChild(row);
   }
 
-  // Sub-fields shown per entry in a productList field (e.g. the Chemicals /
-  // Products Used section) — same 6 fields for every product, matching a
-  // typical pesticide-use record. Only productName is required per entry;
-  // the rest are commonly on the product label but not always all captured.
-  const PRODUCT_LIST_SUBFIELDS = [
-    { id: 'productName', label: 'Product / Trade Name', required: true },
-    { id: 'apvmaNumber', label: 'APVMA Registration Number' },
-    { id: 'activeConstituent', label: 'Active Constituent(s)' },
-    { id: 'batchNumber', label: 'Batch / Lot Number' },
-    { id: 'quantityApplied', label: 'Quantity Applied (e.g. 2.5 L, 500 g)' },
-    { id: 'dilutionRate', label: 'Dilution / Application Rate' },
-  ];
 
-  // Renders a repeatable list of structured chemical-product records — used
-  // for jobs where more than one product is applied (typical for a general
-  // pest treatment). Each entry is its own small card with all 6 sub-fields
-  // plus a remove button; "+ Add Product" appends a new blank one. Stored as
-  // an array of plain objects on pendingSectionValues[field.id], same
-  // mutate-in-place + redraw pattern as renderPhotosField.
+  // Per-station records for a termite baiting system service.
+  //
+  // Deliberately not the chemical product list wearing a different label: a
+  // station has a number, a physical condition and a bait status, and none of
+  // that is a product. Sharing the renderer would have meant asking for a
+  // dilution rate on a bait station.
+  //
+  // The whole row is chips rather than typing. A service visit is 8 to 20
+  // stations, and anything that takes typing per station gets abbreviated to
+  // "all OK" by station six — which is how a service record stops being a
+  // record. Adding a station is one tap; a status is one tap.
+  const STATION_STATUS = ['No activity', 'Termite activity', 'Bait taken', 'Bait exhausted', 'Damaged', 'Missing', 'Buried'];
+  const STATION_ACTION = ['Nothing required', 'Bait replenished', 'Bait replaced', 'Station repaired', 'Station replaced', 'Station relocated', 'Cleared of debris'];
+
+  function renderStationListField(field) {
+    const wrap = document.createElement('div');
+    wrap.className = 'station-list-field';
+    const cardsWrap = document.createElement('div');
+    cardsWrap.className = 'station-list-cards';
+
+    const stations = pendingSectionValues[field.id] || [];
+    pendingSectionValues[field.id] = stations;
+
+    function chipRow(labelText, options, current, onPick) {
+      const row = document.createElement('div');
+      row.className = 'station-chip-row';
+      row.appendChild(Object.assign(document.createElement('span'), {
+        className: 'station-chip-label', textContent: labelText,
+      }));
+      const chips = document.createElement('div');
+      chips.className = 'station-chips';
+      for (const option of options) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'station-chip' + (current === option ? ' active' : '');
+        chip.textContent = option;
+        chip.addEventListener('click', () => onPick(option));
+        chips.appendChild(chip);
+      }
+      row.appendChild(chips);
+      return row;
+    }
+
+    function redraw() {
+      cardsWrap.innerHTML = '';
+      if (!stations.length) {
+        cardsWrap.appendChild(Object.assign(document.createElement('p'), {
+          className: 'empty-hint',
+          textContent: 'No stations recorded yet — tap "+ Add Station" for each one you checked.',
+        }));
+      }
+
+      stations.forEach((station, idx) => {
+        const card = document.createElement('div');
+        // Anything that isn't a clean "no activity" is worth seeing at a
+        // glance when scrolling back through twenty stations.
+        const notable = station.status && station.status !== 'No activity';
+        card.className = 'station-card' + (notable ? ' station-notable' : '');
+
+        const header = document.createElement('div');
+        header.className = 'station-card-header';
+        const numberInput = document.createElement('input');
+        numberInput.type = 'text';
+        numberInput.className = 'station-number';
+        numberInput.value = station.stationNumber || String(idx + 1);
+        numberInput.setAttribute('aria-label', 'Station number');
+        numberInput.addEventListener('input', () => { station.stationNumber = numberInput.value; });
+        const label = document.createElement('span');
+        label.className = 'station-card-title';
+        label.textContent = 'Station';
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'product-card-remove';
+        removeBtn.textContent = '✕';
+        removeBtn.addEventListener('click', () => { stations.splice(idx, 1); redraw(); });
+        header.appendChild(label);
+        header.appendChild(numberInput);
+        header.appendChild(removeBtn);
+        card.appendChild(header);
+
+        card.appendChild(chipRow('Found', STATION_STATUS, station.status, (v) => {
+          station.status = v;
+          redraw();
+        }));
+        card.appendChild(chipRow('Did', STATION_ACTION, station.action, (v) => {
+          station.action = v;
+          redraw();
+        }));
+
+        // Only ask for detail where something actually happened — a note box
+        // on every one of twenty stations is a note box nobody fills in.
+        if (notable) {
+          const noteRow = document.createElement('div');
+          noteRow.className = 'product-card-field';
+          noteRow.appendChild(Object.assign(document.createElement('label'), { textContent: 'What you saw' }));
+          const note = document.createElement('input');
+          note.type = 'text';
+          note.placeholder = 'e.g. live workings in the bait matrix';
+          note.value = station.note || '';
+          note.addEventListener('input', () => { station.note = note.value; });
+          noteRow.appendChild(note);
+          card.appendChild(noteRow);
+        }
+
+        cardsWrap.appendChild(card);
+      });
+    }
+    redraw();
+
+    const controls = document.createElement('div');
+    controls.className = 'row gap';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn btn-outline flex1';
+    addBtn.textContent = '+ Add Station';
+    addBtn.addEventListener('click', () => {
+      stations.push({ id: DB.uid(), stationNumber: String(stations.length + 1) });
+      redraw();
+    });
+
+    // Most visits are "all of them, all clear". Doing that in one tap and then
+    // correcting the two that weren't is far faster than twenty additions, and
+    // it produces a complete record rather than a partial one.
+    const allClearBtn = document.createElement('button');
+    allClearBtn.type = 'button';
+    allClearBtn.className = 'btn btn-secondary flex1';
+    allClearBtn.textContent = 'All checked, no activity';
+    allClearBtn.addEventListener('click', () => {
+      const count = Number(window.prompt('How many stations are on this property?', String(stations.length || 8)));
+      if (!Number.isFinite(count) || count < 1 || count > 100) return;
+      stations.length = 0;
+      for (let i = 1; i <= count; i++) {
+        stations.push({ id: DB.uid(), stationNumber: String(i), status: 'No activity', action: 'Nothing required' });
+      }
+      redraw();
+    });
+
+    controls.appendChild(addBtn);
+    controls.appendChild(allClearBtn);
+    wrap.appendChild(cardsWrap);
+    wrap.appendChild(controls);
+    return wrap;
+  }
+
+  // Renders a repeatable list of structured chemical-product records.
+  //
+  // The product itself is picked from the shelf list in pest-products.js
+  // rather than typed, and choosing it fills the active constituent in — the
+  // constituent and its concentration are a legal particular of a
+  // pesticide-use record, and asking someone to retype "Beta-cyfluthrin
+  // 25 g/L, Imidacloprid 50 g/L" on a phone at a job is asking for a
+  // transcription error on a document that has to hold up years later.
+  //
+  // The concentrate field only appears for products that are actually
+  // diluted. Every past report examined had it blank on every row, which is
+  // unsurprising when it was also being shown for gels and baits, where the
+  // honest answer is "not applicable" — a field that can't be answered
+  // truthfully teaches people to skip the ones next to it too.
   function renderProductListField(field) {
     const wrap = document.createElement('div');
     wrap.className = 'product-list-field';
@@ -1150,47 +1478,110 @@
     const products = pendingSectionValues[field.id] || [];
     pendingSectionValues[field.id] = products;
 
+    const AREAS = ['Internal', 'External', 'Roof Void', 'Subfloor', 'Garden / Landscape', 'Bin area'];
+
     function redraw() {
       cardsWrap.innerHTML = '';
       if (!products.length) {
         cardsWrap.appendChild(Object.assign(document.createElement('p'), {
           className: 'empty-hint',
-          textContent: 'No products added yet — tap "+ Add Product" to record one.',
+          textContent: 'No products recorded yet — tap "+ Add Product" for each one you applied.',
         }));
       }
+
       products.forEach((product, idx) => {
+        const readyToUse = window.PestProducts && window.PestProducts.isReadyToUse(product.productName);
         const card = document.createElement('div');
         card.className = 'product-card';
 
         const header = document.createElement('div');
         header.className = 'product-card-header';
         const title = document.createElement('span');
-        title.textContent = 'Product ' + (idx + 1);
+        title.textContent = product.productName || 'Product ' + (idx + 1);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'product-card-remove';
         removeBtn.textContent = '✕ Remove';
-        removeBtn.addEventListener('click', () => {
-          products.splice(idx, 1);
-          redraw();
-        });
+        removeBtn.addEventListener('click', () => { products.splice(idx, 1); redraw(); });
         header.appendChild(title);
         header.appendChild(removeBtn);
         card.appendChild(header);
 
-        for (const sub of PRODUCT_LIST_SUBFIELDS) {
-          const subRow = document.createElement('div');
-          subRow.className = 'product-card-field';
-          const label = document.createElement('label');
-          label.textContent = sub.label + (sub.required ? ' *' : '');
+        // --- product picker ---
+        const pickRow = document.createElement('div');
+        pickRow.className = 'product-card-field';
+        pickRow.appendChild(Object.assign(document.createElement('label'), { textContent: 'Product *' }));
+        const select = document.createElement('select');
+        select.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'Choose a product…' }));
+        for (const p of (window.PEST_PRODUCTS || [])) {
+          const opt = document.createElement('option');
+          opt.value = p.name;
+          opt.textContent = window.PestProducts.productLabel(p);
+          if (product.productName === p.name) opt.selected = true;
+          select.appendChild(opt);
+        }
+        select.addEventListener('change', () => {
+          product.productName = select.value;
+          // The chemistry travels with the product — never typed.
+          product.activeConstituent = window.PestProducts.activeFor(select.value);
+          if (window.PestProducts.isReadyToUse(select.value)) delete product.concentrateUsed;
+          redraw();
+        });
+        pickRow.appendChild(select);
+        card.appendChild(pickRow);
+
+        if (product.activeConstituent) {
+          const active = document.createElement('p');
+          active.className = 'product-active';
+          active.textContent = 'Active constituent: ' + product.activeConstituent;
+          card.appendChild(active);
+        }
+
+        // --- areas applied (multi) ---
+        const areaRow = document.createElement('div');
+        areaRow.className = 'product-card-field';
+        areaRow.appendChild(Object.assign(document.createElement('label'), { textContent: 'Applied to *' }));
+        const areaWrap = document.createElement('div');
+        areaWrap.className = 'product-area-chips';
+        product.areaApplied = Array.isArray(product.areaApplied) ? product.areaApplied : [];
+        for (const area of AREAS) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'product-area-chip' + (product.areaApplied.includes(area) ? ' active' : '');
+          chip.textContent = area;
+          chip.addEventListener('click', () => {
+            const at = product.areaApplied.indexOf(area);
+            if (at >= 0) product.areaApplied.splice(at, 1); else product.areaApplied.push(area);
+            redraw();
+          });
+          areaWrap.appendChild(chip);
+        }
+        areaRow.appendChild(areaWrap);
+        card.appendChild(areaRow);
+
+        // --- quantities ---
+        function textRow(labelText, key, placeholder) {
+          const row = document.createElement('div');
+          row.className = 'product-card-field';
+          row.appendChild(Object.assign(document.createElement('label'), { textContent: labelText }));
           const input = document.createElement('input');
           input.type = 'text';
-          input.value = product[sub.id] || '';
-          input.addEventListener('input', () => { product[sub.id] = input.value; });
-          subRow.appendChild(label);
-          subRow.appendChild(input);
-          card.appendChild(subRow);
+          input.placeholder = placeholder || '';
+          input.value = product[key] || '';
+          input.addEventListener('input', () => { product[key] = input.value; });
+          row.appendChild(input);
+          card.appendChild(row);
         }
+
+        if (!readyToUse) {
+          textRow('Concentrate used *', 'concentrateUsed', 'e.g. 60 mL');
+          textRow('Total mix applied *', 'totalMixApplied', 'e.g. 8 L');
+          textRow('Dilution rate', 'dilutionRate', 'e.g. 8 mL / L');
+        } else {
+          textRow('Amount applied *', 'totalMixApplied', 'e.g. 35 g, 14 stations');
+        }
+        textRow('Batch / lot number', 'batchNumber', 'from the label');
+
         cardsWrap.appendChild(card);
       });
     }
@@ -1201,7 +1592,7 @@
     addBtn.className = 'btn btn-outline';
     addBtn.textContent = '+ Add Product';
     addBtn.addEventListener('click', () => {
-      products.push({ id: DB.uid() });
+      products.push({ id: DB.uid(), areaApplied: [] });
       redraw();
     });
 
@@ -2050,10 +2441,10 @@
       ? 'Chemical Application Record'
       : 'In Accordance with AS 4349.3-2010 and AS 3660.2-2017';
     let html = `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
-      <h1>${escapeHtml(reportTitleFor(job && job.jobType))}</h1>
+      <h1>${escapeHtml(reportTitleFor(job && job.jobType, report))}</h1>
       <p>${standardLine}<br>${escapeHtml(job ? job.address : '')}</p>`;
 
-    for (const section of schemaFor(job && job.jobType)) {
+    for (const section of schemaFor(job && job.jobType, report)) {
       const values = report.sections[section.id] || {};
       html += `<div class="section"><div class="section-head" style="background:${section.color}"><h2>${section.number}. ${escapeHtml(section.title)}</h2></div>`;
 
@@ -2092,17 +2483,45 @@
           } else if (field.type === 'productList') {
             const products = val || [];
             if (!products.length) continue;
+            // A real pesticide-use table, not a stack of cards: this is the
+            // part a regulator or an insurer reads, and it should look like a
+            // record rather than a form dump.
             html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div>`;
-            products.forEach((p, idx) => {
-              html += `<div class="product-pdf-card"><div class="product-pdf-title">Product ${idx + 1}${p.productName ? ': ' + escapeHtml(p.productName) : ''}</div>`;
-              if (p.apvmaNumber) html += `<div>APVMA Reg. No: ${escapeHtml(p.apvmaNumber)}</div>`;
-              if (p.activeConstituent) html += `<div>Active Constituent: ${escapeHtml(p.activeConstituent)}</div>`;
-              if (p.batchNumber) html += `<div>Batch/Lot No: ${escapeHtml(p.batchNumber)}</div>`;
-              if (p.quantityApplied) html += `<div>Quantity Applied: ${escapeHtml(p.quantityApplied)}</div>`;
-              if (p.dilutionRate) html += `<div>Dilution/Application Rate: ${escapeHtml(p.dilutionRate)}</div>`;
-              html += `</div>`;
-            });
-            html += `</div>`;
+            html += `<table class="product-pdf-table"><thead><tr>`
+              + `<th>Product</th><th>Active constituent</th><th>Applied to</th>`
+              + `<th>Concentrate</th><th>Total applied</th><th>Batch</th>`
+              + `</tr></thead><tbody>`;
+            for (const p of products) {
+              const areas = Array.isArray(p.areaApplied) ? p.areaApplied.join(', ') : (p.areaApplied || '');
+              html += `<tr>`
+                + `<td>${escapeHtml(p.productName || '')}</td>`
+                + `<td>${escapeHtml(p.activeConstituent || '')}</td>`
+                + `<td>${escapeHtml(areas)}</td>`
+                + `<td>${escapeHtml(p.concentrateUsed || '—')}</td>`
+                + `<td>${escapeHtml(p.totalMixApplied || '')}</td>`
+                + `<td>${escapeHtml(p.batchNumber || '')}</td>`
+                + `</tr>`;
+            }
+            html += `</tbody></table></div>`;
+          } else if (field.type === 'stationList') {
+            const stations = val || [];
+            if (!stations.length) continue;
+            const notable = stations.filter((s) => s.status && s.status !== 'No activity').length;
+            html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div>`;
+            html += `<div class="field-value">${stations.length} station${stations.length === 1 ? '' : 's'} inspected`
+              + (notable ? `, ${notable} requiring attention` : ', all clear') + `.</div>`;
+            html += `<table class="product-pdf-table"><thead><tr>`
+              + `<th>Station</th><th>Found</th><th>Action taken</th><th>Notes</th>`
+              + `</tr></thead><tbody>`;
+            for (const s of stations) {
+              html += `<tr>`
+                + `<td>${escapeHtml(s.stationNumber || '')}</td>`
+                + `<td>${escapeHtml(s.status || '')}</td>`
+                + `<td>${escapeHtml(s.action || '')}</td>`
+                + `<td>${escapeHtml(s.note || '')}</td>`
+                + `</tr>`;
+            }
+            html += `</tbody></table></div>`;
           } else {
             html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">${escapeHtml(fmtVal(val))}</div></div>`;
           }
@@ -2155,7 +2574,7 @@
     const printWin = window.open('', '_blank');
     if (!printWin) { toast('Allow pop-ups to export the PDF'); return; }
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(reportTitleFor(job && job.jobType))}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(reportTitleFor(job && job.jobType, currentReport))}</title>
       <style>${REPORT_PDF_STYLE}</style></head><body>
       <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>
       ${buildReportBodyHtml(job, currentReport)}
