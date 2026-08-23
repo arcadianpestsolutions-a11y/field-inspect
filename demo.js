@@ -614,7 +614,7 @@
     const log = [
       { ...base, at: start, event: 'created' },
       { ...base, at: start + 22 * 60000, event: 'field-changed', sectionId: 'clientDetails',
-        sectionTitle: 'Client Details', fieldId: 'weather', label: 'Weather Conditions at time of inspection',
+        sectionTitle: 'Client & Site', fieldId: 'weather', label: 'Weather Conditions at time of inspection',
         from: '(blank)', to: 'Partly cloudy, 19°C, wind 11 km/h NE', reason: '' },
     ];
     if (!finalizedAt) return log;
@@ -628,7 +628,7 @@
         afterFinalize: true,
         event: 'field-changed',
         sectionId: 'findings',
-        sectionTitle: 'Findings & Observations',
+        sectionTitle: 'What We Found',
         fieldId: 'reinspectionInterval',
         label: 'Recommended Re-inspection Interval',
         from: '6 months',

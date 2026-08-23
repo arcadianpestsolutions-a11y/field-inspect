@@ -1751,3 +1751,45 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .product-pdf-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
 .product-pdf-table th, .product-pdf-table td { border: 1px solid #ccc; padding: 5px 6px; text-align: left; vertical-align: top; }
 .product-pdf-table th { background: #f2f2f2; }
+
+/* The one instruction shown when a job starts. It sits over the camera
+   preview and replaces the old "you are recording" impression with a single
+   thing to do — photograph the front of the property. It clears itself the
+   moment that shot is taken. */
+.inspection-prompt {
+  position: absolute;
+  top: calc(62px + var(--safe-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  text-align: center;
+  max-width: min(88vw, 420px);
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.86);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.inspection-prompt-title { font-size: 1rem; font-weight: 650; color: #f8fafc; }
+.inspection-prompt-sub { font-size: 0.8rem; line-height: 1.35; color: rgba(226, 232, 240, 0.82); }
+
+/* While that shot is outstanding the shutter is the only thing worth
+   tapping, so it says so. */
+#inspection-still-btn.prompting {
+  box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.65);
+  animation: shutter-pulse 1.9s ease-out infinite;
+}
+@keyframes shutter-pulse {
+  70% { box-shadow: 0 0 0 16px rgba(45, 212, 191, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #inspection-still-btn.prompting { animation: none; box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.55); }
+}
+.inspection-rec-label { opacity: 0.85; }

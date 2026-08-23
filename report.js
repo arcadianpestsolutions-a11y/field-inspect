@@ -384,6 +384,33 @@
       // even when the address lookups are slow or the site has no signal.
       autoPopulateSiteFields().catch((err) => console.warn('[report] site auto-fill failed:', err.message || err));
     },
+    // Puts the front-elevation shot straight into the report's cover field.
+    // The technician photographed it for exactly this purpose, so making them
+    // find it again in the gallery and attach it by hand is the kind of step
+    // that turns into "the cover was blank again".
+    async attachCoverPhoto(jobId, blob) {
+      const report = await loadOrCreateReport(jobId);
+      const job = await DB.getJob(jobId);
+      const schema = schemaFor(job && job.jobType, report);
+      // Termite documents carry it as the property photo, pest reports as the
+      // cover — whichever this document actually has.
+      const target = schema
+        .flatMap((s) => (s.fields || []).map((f) => ({ sectionId: s.id, field: f })))
+        .find((x) => x.field.id === 'coverPhoto')
+        || schema
+          .flatMap((s) => (s.fields || []).map((f) => ({ sectionId: s.id, field: f })))
+          .find((x) => x.field.id === 'propertyPhotos');
+      if (!target) return;
+
+      const section = { ...(report.sections[target.sectionId] || {}) };
+      const existing = Array.isArray(section[target.field.id]) ? section[target.field.id] : [];
+      // Never displace a photo the technician chose deliberately.
+      if (existing.length) return;
+      section[target.field.id] = [{ id: DB.uid(), blob }];
+      report.sections[target.sectionId] = section;
+      await DB.saveReport(report);
+      if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
+    },
     documentTypesFor,
     documentTypeOf,
     async openArchive() {
@@ -2272,7 +2299,7 @@
     }
     wrap.appendChild(Object.assign(document.createElement('p'), {
       className: 'empty-hint',
-      textContent: 'This summary updates automatically from your answers in Findings, Access and Conducive Conditions — tap any row to jump there.',
+      textContent: 'This summary updates automatically from your answers in What We Found, Access & Restrictions and Conditions Favouring Attack — tap any row to jump there.',
     }));
     sectionFieldsEl.appendChild(wrap);
   }
@@ -2313,7 +2340,7 @@
     }
     wrap.appendChild(Object.assign(document.createElement('p'), {
       className: 'empty-hint',
-      textContent: 'This summary updates automatically from your answers in Pest Identification, Treatment Details, Chemicals and Recommendations — tap any row to jump there.',
+      textContent: 'This summary updates automatically from your answers in Target Pests & Evidence, Work Carried Out, Products Applied and Advice & Next Steps — tap any row to jump there.',
     }));
     sectionFieldsEl.appendChild(wrap);
   }
@@ -2450,8 +2477,8 @@
 
       if (section.id === 'summary') {
         html += isPestTreatment
-          ? `<p>See Pest Identification, Treatment Details, Chemicals and Recommendations sections for full detail.</p>`
-          : `<p>See Findings, Access and Conducive Conditions sections for full detail.</p>`;
+          ? `<p>See Target Pests & Evidence, Work Carried Out, Products Applied and Advice & Next Steps sections for full detail.</p>`
+          : `<p>See What We Found, Access & Restrictions and Conditions Favouring Attack sections for full detail.</p>`;
       } else if (section.id === 'terms') {
         html += isPestTreatment ? FIXED_TERMS_HTML_PEST : FIXED_TERMS_HTML;
       } else if (section.fixed) {

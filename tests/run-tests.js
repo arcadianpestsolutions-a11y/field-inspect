@@ -462,7 +462,7 @@
       li.click();
     };
 
-    openSection('Chemicals');
+    openSection('Products Applied');
     await wait(200);
     const input = doc.querySelector('.product-card input');
     assert(input, 'product name input should render');
@@ -1190,7 +1190,7 @@
       // Photo capture has no use for the microphone, and not asking for it is
       // one less permission prompt inside a client's home.
       assertEqual(askedForAudio, false, 'the microphone is not requested');
-
+      // Zone tagging for the photos taken after the cover shot.
       // Photograph two subjects, tagging the zone for each.
       const zoneInput = doc.getElementById('inspection-zone-input');
       const setValue = (el, v) => {
@@ -1199,17 +1199,31 @@
         el.dispatchEvent(new win.Event('input', { bubbles: true }));
       };
 
+      // The job now opens on one instruction: photograph the front of the
+      // property. That first shot is the cover, so it takes its own zone and
+      // the zone box only matters from the second shot on.
+      assert(!doc.getElementById('inspection-prompt').classList.contains('hidden'),
+        'the front-of-property prompt is showing');
+      doc.getElementById('inspection-still-btn').click();
+      await wait(1200);
+      assert(doc.getElementById('inspection-prompt').classList.contains('hidden'),
+        'and it clears once that photo is taken');
+
+      // Then photograph two subjects, tagging the zone for each.
       setValue(zoneInput, 'Subfloor');
       doc.getElementById('inspection-still-btn').click();
-      await wait(900);
+      await wait(1500);
       setValue(zoneInput, 'Roof Void');
       doc.getElementById('inspection-still-btn').click();
-      await wait(900);
+      await wait(1800);
 
       const shots = await win.DB.getCaptures(job.id);
-      assertEqual(shots.length, 2, 'both photos are saved');
+      assertEqual(shots.length, 3, 'all three photos are saved');
       const zones = shots.map((c) => c.zone).sort();
-      assertEqual(zones.join(','), 'Roof Void,Subfloor', 'each photo keeps the zone it was taken in');
+      assertEqual(zones.join(','), 'Front Elevation,Roof Void,Subfloor',
+        'each photo keeps the zone it was taken in');
+      assertEqual(shots.filter((c) => c.isFrontElevation).length, 1,
+        'exactly one shot is marked as the front elevation');
       assert(shots.every((c) => c.photoBlob && c.photoBlob.size > 0), 'photos are not empty');
 
       doc.getElementById('inspection-finish-btn').click();
@@ -1282,7 +1296,7 @@
     await wait(200);
     // The report is only persisted once something is saved, so save a section.
     const doc = frame.contentDocument;
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1301,7 +1315,7 @@
     await win.ReportUI.openReview(job.id);
     await wait(200);
 
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     const input = doc.querySelector('#report-section-fields input[type="text"]');
     assert(input, 'a text input should render');
@@ -1328,13 +1342,13 @@
     await win.ReportUI.openReview(job.id);
     await wait(200);
 
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
     const first = (await win.DB.getReport(job.id)).auditLog.length;
 
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1349,7 +1363,7 @@
     const job = await win.DB.addJob({ name: 'Audit Refuse Job' });
     await win.ReportUI.openReview(job.id);
     await wait(200);
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1362,7 +1376,7 @@
 
     await win.ReportUI.openReview(job.id);
     await wait(250);
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     const input = doc.querySelector('#report-section-fields input[type="text"]');
     setTextInput(win, input, 'SNEAKY EDIT');
@@ -1388,7 +1402,7 @@
     const job = await win.DB.addJob({ name: 'Audit Amend Job' });
     await win.ReportUI.openReview(job.id);
     await wait(200);
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1399,7 +1413,7 @@
 
     await win.ReportUI.openReview(job.id);
     await wait(250);
-    openReportSection(doc, 'Client Details');
+    openReportSection(doc, 'Client & Site');
     await wait(200);
     const input = doc.querySelector('#report-section-fields input[type="text"]');
     setTextInput(win, input, 'Corrected Name');
@@ -1433,7 +1447,7 @@
     await wait(200);
 
     const doc = frame.contentDocument;
-    openReportSection(doc, 'Site Sketch');
+    openReportSection(doc, 'Site Plan');
     await wait(400);
     doc.getElementById('section-save-btn').click();
     await wait(400);

@@ -16,9 +16,19 @@
 
 const PEST_TREATMENT_SCHEMA = [
   {
-    id: 'clientDetails',
+    id: 'summary',
     number: 1,
-    title: 'Client Details',
+    title: 'At a Glance',
+    subtitle: 'Written for you from the answers below. Read together with the full report.',
+    icon: '📋',
+    color: '#0f9e8e',
+    computed: true,
+    fields: [],
+  },
+  {
+    id: 'clientDetails',
+    number: 2,
+    title: 'Client & Site',
     subtitle: 'The Client is the person or entity for whom this pest treatment service is being carried out.',
     icon: '👤',
     color: '#b45309',
@@ -59,9 +69,9 @@ const PEST_TREATMENT_SCHEMA = [
   },
   {
     id: 'agreement',
-    number: 2,
-    title: 'About Our Agreement',
-    subtitle: 'Defining the Purpose, Scope and Limitations of this Service.',
+    number: 3,
+    title: 'Service Scope',
+    subtitle: 'What this service covers and its limitations.',
     icon: 'ℹ️',
     color: '#b45309',
     fixed: true,
@@ -77,19 +87,9 @@ const PEST_TREATMENT_SCHEMA = [
     ],
   },
   {
-    id: 'summary',
-    number: 3,
-    title: 'Treatment Summary',
-    subtitle: 'Auto-generated from your answers below — read together with the full report.',
-    icon: '📋',
-    color: '#0f9e8e',
-    computed: true,
-    fields: [],
-  },
-  {
     id: 'pestIdentification',
     number: 4,
-    title: 'Pest Identification',
+    title: 'Target Pests & Evidence',
     subtitle: 'The pest(s) targeted by this treatment and evidence observed on site.',
     icon: '🐜',
     color: '#92400e',
@@ -108,7 +108,7 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'treatmentDetails',
     number: 5,
-    title: 'Treatment Details',
+    title: 'Work Carried Out',
     subtitle: 'The method and areas of treatment carried out.',
     icon: '🧪',
     color: '#0369a1',
@@ -131,7 +131,7 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'chemicals',
     number: 6,
-    title: 'Chemicals / Products Used',
+    title: 'Products Applied',
     subtitle: 'Record of every chemical product applied during this treatment, as required for pesticide use record-keeping. Add one entry per product — most spray jobs use two or three.',
     icon: '🧴',
     color: '#7c2d12',
@@ -142,7 +142,7 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'safety',
     number: 7,
-    title: 'Risk Assessment & Safety',
+    title: 'Site Safety & Records',
     subtitle: 'What was around the treatment area, what you did about it, and the pesticide-use record the law requires.',
     icon: '⚠️',
     color: '#b91c1c',
@@ -244,7 +244,7 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'recommendations',
     number: 8,
-    title: 'Recommendations & Follow-Up',
+    title: 'Advice & Next Steps',
     subtitle: 'Advice for the client and any follow-up treatment required.',
     icon: '📝',
     color: '#166534',
@@ -286,7 +286,7 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'terms',
     number: 9,
-    title: 'Terms & Conditions',
+    title: 'Terms of Service',
     subtitle: 'Terms and conditions related to this pest treatment service.',
     icon: '📖',
     color: '#3d3d8f',
@@ -296,7 +296,7 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'inspector',
     number: 10,
-    title: 'Technician Details',
+    title: 'Technician & Licence',
     subtitle: 'Contact details of the Service Provider and the Technician who carried out the treatment.',
     icon: '🧑‍🔧',
     color: '#6a3d9e',
@@ -313,7 +313,7 @@ const PEST_TREATMENT_SCHEMA = [
   {
     id: 'acknowledgement',
     number: 11,
-    title: 'Client Acknowledgement',
+    title: 'Sign-Off',
     subtitle: 'Acknowledgement and acceptance of the service to be completed by the Client.',
     icon: '✅',
     color: '#a12a72',

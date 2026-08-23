@@ -65,6 +65,7 @@
   // Newer than some deployed index.html files, so guarded at every use — the
   // same CDN-skew hazard the audit refs carry.
   const docTypeRow = document.getElementById('doc-type-row');
+  const inspectionPrompt = document.getElementById('inspection-prompt');
   const viewInvoiceBtn = document.getElementById('view-invoice-btn');
 
   const importModal = document.getElementById('import-modal');
@@ -1112,6 +1113,51 @@
   // has to stay in the technician's hands.
   let abandonPendingStart = null;
 
+  // ---------- The first shot of the job ----------
+  // Starting a job opens straight onto one instruction: photograph the front
+  // of the property. Previously it opened a live camera with a timer running,
+  // which read as "you are now recording" and left the technician to work out
+  // what to do with it.
+  //
+  // That first photograph earns its place twice over. It is the report cover —
+  // the difference between a document that opens on a picture of the client's
+  // house and one that opens on an empty band. And it is the best single
+  // input the draft gets: a front elevation shows wall construction, roof
+  // type, storeys and the general condition of the place, which is most of
+  // the property section answered before anyone has walked around the back.
+  let frontPhotoPending = false;
+
+  function showFrontPhotoPrompt(on) {
+    if (!inspectionPrompt) return;
+    frontPhotoPending = on;
+    inspectionPrompt.classList.toggle('hidden', !on);
+    if (inspectionZoneInput) inspectionZoneInput.classList.toggle('hidden', on);
+    if (inspectionStillBtn) {
+      inspectionStillBtn.classList.toggle('prompting', on);
+      inspectionStillBtn.setAttribute('aria-label', on ? 'Take the front-of-property photo' : 'Take photo');
+    }
+  }
+
+  // Reads what it can off the front elevation and offers it as a draft. Never
+  // written straight into the report — same rule as every other AI suggestion
+  // here: it appears when the technician opens the section, marked as a
+  // suggestion, and they confirm or change it.
+  async function draftPropertyFromFrontPhoto(jobId, blob) {
+    if (!(window.AI && window.AI.analyzeSectionPhotos && window.ReportUI)) return;
+    try {
+      const job = await DB.getJob(jobId);
+      const sectionId = (job && job.jobType === 'pest_treatment') ? 'clientDetails' : 'property';
+      const result = await window.AI.analyzeSectionPhotos([blob], sectionId, job && job.jobType);
+      await window.ReportUI.applyAiDraft(jobId, result);
+      toast('Front photo read — suggested property details are waiting in the report.');
+    } catch (err) {
+      // Worth saying out loud: silently doing nothing here is exactly what
+      // made the old AI draft feel like it did nothing at all.
+      console.warn('[inspection] could not draft from the front photo:', err.message || err);
+      toast('Photo saved, but reading it for property details failed.');
+    }
+  }
+
   async function startInspection() {
     if (startInspectionInProgress) return;
     startInspectionInProgress = true;
@@ -1248,6 +1294,11 @@
       inspectionZonePill.textContent = 'Untagged';
       show(inspectionModal);
       inspectionActiveJobId = currentJobId;
+      // Open on the one instruction that matters, not on an idle camera.
+      // Skipped if this job already has its front shot — a second visit
+      // should not ask for the cover photo again.
+      const already = await DB.getCaptures(currentJobId);
+      showFrontPhotoPrompt(!already.some((c) => c.isFrontElevation));
     } catch (err) {
       console.error('[inspection] camera preview failed to start:', err);
       inspectionVideo.srcObject = null;
@@ -1299,15 +1350,37 @@
     canvas.width = inspectionVideo.videoWidth;
     canvas.height = inspectionVideo.videoHeight;
     canvas.getContext('2d').drawImage(inspectionVideo, 0, 0, canvas.width, canvas.height);
+    const jobIdAtCapture = currentJobId;
+    // Claim the front-photo slot synchronously. Everything below is async,
+    // and a technician who taps twice in quick succession was otherwise
+    // filing their second shot as a second 'front elevation' too.
+    const isFront = frontPhotoPending;
+    if (isFront) showFrontPhotoPrompt(false);
+    // Read the zone now too, for the same reason: by the time the encode
+    // finishes the technician has often already typed the next room in.
+    const zoneAtCapture = isFront ? 'Front Elevation' : inspectionZoneInput.value.trim();
     canvas.toBlob(async (blob) => {
       if (!blob) { toast('Capture failed, try again'); return; }
-      await DB.addCapture({
-        jobId: currentJobId,
-        zone: inspectionZoneInput.value.trim(),
+      const capture = await DB.addCapture({
+        jobId: jobIdAtCapture,
+        zone: zoneAtCapture,
         type: 'photo',
         photoBlob: blob,
       });
-      toast('Photo saved');
+
+      if (!isFront) { toast('Photo saved'); return; }
+
+      // Mark it so a later visit doesn't ask for the cover shot again, and
+      // put it straight into the report's cover field rather than making the
+      // technician find it in the gallery and attach it by hand.
+      await DB.updateCapture(capture.id, { isFrontElevation: true });
+      if (window.ReportUI && window.ReportUI.attachCoverPhoto) {
+        await window.ReportUI.attachCoverPhoto(jobIdAtCapture, blob)
+          .catch((err) => console.warn('[inspection] could not set the cover photo:', err.message || err));
+      }
+      toast('Front photo saved — now work through the property.');
+      // Reading it is best-effort and must not hold up the walkthrough.
+      draftPropertyFromFrontPhoto(jobIdAtCapture, blob);
     }, 'image/jpeg', 0.88);
   });
 
