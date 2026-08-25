@@ -367,6 +367,106 @@
 
 
   // ---------- Address geocoding ----------
+  // ---------- NSW property register fallback ----------
+  // Nominatim's street coverage in NSW is solid, but its house-number-level
+  // data has real gaps — a street that's fully mapped can still have no
+  // address point for a given number, and Nominatim then quietly returns the
+  // street centreline instead of the actual house. There's no way to tell
+  // the two apart from a display_name alone, which is why this only fires
+  // when the top Nominatim hit is missing a house_number.
+  //
+  // The fallback is the Valuer General's own property register (ValNet),
+  // served free and keyless through NSW Spatial Services — the same host
+  // already used elsewhere here for cadastre and imagery. It has real
+  // per-parcel address records with a proper polygon, which Nominatim's
+  // point data usually doesn't. It's NSW-only and occasionally returns a
+  // transient 400 under load, so it's a supplement, never the only source.
+  const NSW_ADDRESS_STOPWORDS = new Set([
+    'ST', 'STREET', 'RD', 'ROAD', 'AVE', 'AVENUE', 'DR', 'DRIVE', 'PL', 'PLACE',
+    'CRES', 'CRESCENT', 'CT', 'COURT', 'CL', 'CLOSE', 'LN', 'LANE', 'PDE', 'PARADE',
+    'HWY', 'HIGHWAY', 'WAY', 'BLVD', 'BOULEVARD', 'GR', 'GROVE', 'CIR', 'CIRCUIT',
+    'NSW', 'AUSTRALIA',
+  ]);
+
+  function ringCentroid(ring) {
+    let sx = 0;
+    let sy = 0;
+    for (const [x, y] of ring) { sx += x; sy += y; }
+    return { lat: sy / ring.length, lng: sx / ring.length };
+  }
+
+  function titleCaseAddress(s) {
+    return String(s).toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  async function nswPropertyCandidates(query) {
+    // Only worth trying once there's a house number to anchor the search —
+    // an equality match on housenumber is what keeps this fast; a bare
+    // wildcard text scan across the whole state times out.
+    const m = query.match(/^(\d+)[a-zA-Z]?\s+(.+)$/);
+    if (!m) return [];
+    const houseNumber = m[1];
+    const rest = m[2].replace(/[^a-zA-Z0-9\s]/g, ' ').trim().toUpperCase();
+    const words = rest.split(/\s+/).filter((w) => w.length > 1 && !NSW_ADDRESS_STOPWORDS.has(w));
+    if (!words.length) return [];
+    const esc = (s) => s.replace(/'/g, "''");
+    const where = `housenumber='${esc(houseNumber)}' AND address LIKE '%${esc(words.join('%'))}%'`;
+    // resultRecordCount trips this particular ArcGIS Server build into
+    // returning a bare "Failed to execute query" 400 no matter how the rest
+    // of the request is formed — found the hard way, not documented
+    // anywhere. Left off; an exact housenumber match rarely returns more
+    // than a couple of rows anyway.
+    const params = new URLSearchParams({
+      where, outFields: 'housenumber,address', returnGeometry: 'true', outSR: '4326', f: 'json',
+    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(
+        `https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Property/MapServer/4/query?${params}`,
+        { signal: controller.signal },
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.features || [])
+        .map((f) => {
+          const ring = f.geometry && f.geometry.rings && f.geometry.rings[0];
+          if (!ring) return null;
+          const c = ringCentroid(ring);
+          return {
+            display_name: titleCaseAddress(f.attributes.address) + ', NSW',
+            lat: String(c.lat),
+            lon: String(c.lng),
+            source: 'nsw-property',
+          };
+        })
+        .filter(Boolean);
+    } catch (err) {
+      return [];
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Every address lookup in the app goes through here — the New Job
+  // autocomplete and geocodeAddress() below both call this, so the NSW
+  // fallback only has to be written once.
+  async function searchAddressCandidates(query, opts) {
+    const signal = opts && opts.signal;
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=au,nz&limit=6&q='
+      + encodeURIComponent(query);
+    const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('address lookup failed');
+    const results = await res.json();
+
+    const topHasHouseNumber = !!(results[0] && results[0].address && results[0].address.house_number);
+    if (!topHasHouseNumber && /^\d/.test(query.trim())) {
+      const extra = await nswPropertyCandidates(query.trim()).catch(() => []);
+      if (extra.length) return [...extra, ...results];
+    }
+    return results;
+  }
+
   // Coordinates were previously captured only when the technician tapped an
   // autocomplete suggestion. Typing the address in full and pressing Create —
   // which is what most people do when they already know the address — left
@@ -377,12 +477,8 @@
   async function geocodeAddress(address) {
     const query = String(address || '').trim();
     if (query.length < 6) return null;
-    const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=0&countrycodes=au,nz&limit=1&q='
-      + encodeURIComponent(query);
     try {
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!res.ok) return null;
-      const results = await res.json();
+      const results = await searchAddressCandidates(query);
       const hit = Array.isArray(results) && results[0];
       if (!hit) return null;
       const lat = parseFloat(hit.lat);
@@ -661,6 +757,7 @@
 
   window.Geo = {
     geocodeAddress,
+    searchAddressCandidates,
     ensureJobCoords,
     fetchFootprint,
     fetchAerialImage,

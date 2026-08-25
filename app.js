@@ -705,10 +705,13 @@
     if (addressAbortController) addressAbortController.abort();
     addressAbortController = new AbortController();
     try {
-      const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=0&countrycodes=au,nz&limit=6&q=' + encodeURIComponent(query);
-      const res = await fetch(url, { signal: addressAbortController.signal, headers: { Accept: 'application/json' } });
-      if (!res.ok) throw new Error('address lookup failed');
-      const results = await res.json();
+      // Nominatim first, with a fallback to NSW's own property register for
+      // addresses whose house number OSM doesn't have — see
+      // Geo.searchAddressCandidates in geo.js for why.
+      const results = window.Geo
+        ? await window.Geo.searchAddressCandidates(query, { signal: addressAbortController.signal })
+        : await fetch('https://nominatim.openstreetmap.org/search?format=json&addressdetails=0&countrycodes=au,nz&limit=6&q=' + encodeURIComponent(query),
+            { signal: addressAbortController.signal, headers: { Accept: 'application/json' } }).then((r) => r.json());
       renderAddressSuggestions(results);
     } catch (err) {
       if (err.name !== 'AbortError') hideAddressSuggestions();
