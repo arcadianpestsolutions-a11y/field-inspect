@@ -14,6 +14,44 @@
 // schema gets for free by matching them, instead of needing a parallel
 // branch for every one of those ids.
 
+// Job categories for general pest work. Picking one on Client & Site
+// prefills PPE (safety section) and Application Equipment (treatment
+// section) with what that kind of job typically needs — a starting point
+// the technician confirms or edits, never a silent answer. See jobCategory
+// below and applyJobCategoryPrefill() in report.js, which only ever writes
+// into a field that's still blank.
+const PEST_JOB_CATEGORIES = [
+  {
+    id: 'exteriorOnly',
+    label: 'Exterior Only',
+    blurb: 'Perimeter and exterior-only treatment — no interior access required.',
+    ppe: ['Nitrile Gloves', 'Eye Protection (Safety Glasses/Goggles)', 'Respirator/Mask', 'Enclosed Footwear', 'Long Sleeves/Pants'],
+    equipment: ['Power Rig / Vehicle-Mounted Sprayer', 'Backpack Sprayer', 'Hand Compression Sprayer'],
+  },
+  {
+    id: 'endOfLeaseFlea',
+    label: 'End of Lease (Flea Treatment)',
+    blurb: 'Flea treatment for a vacating tenancy — full interior coverage.',
+    ppe: ['Nitrile Gloves', 'Eye Protection (Safety Glasses/Goggles)', 'Half-Face Respirator (A1P2 Filter)', 'Disposable Coveralls', 'Shoe Covers'],
+    equipment: ['Hand Compression Sprayer', 'Backpack Sprayer', 'Indoor Aerosol/ULV Fogger (if applicable)'],
+  },
+  {
+    id: 'fullGeneralPest',
+    label: 'Full General Pest',
+    blurb: 'Standard internal and external general pest treatment.',
+    ppe: ['Chemical-Resistant Nitrile Gloves', 'Eye Protection (Safety Glasses/Goggles)', 'Respirator/Mask', 'Enclosed Footwear'],
+    equipment: ['Hand Compression Sprayer', 'Dust Applicator / Hand Duster', 'Gel Bait Gun'],
+  },
+  {
+    id: 'rodentServices',
+    label: 'Rodent Services',
+    blurb: 'Rodent baiting and monitoring — stations, not spray.',
+    ppe: ['Heavy-Duty Rubber/Nitrile Gloves', 'Dust Mask / P2 Respirator', 'Eye Protection (Safety Glasses/Goggles)'],
+    equipment: ['Lockable Rodent Bait Stations', 'Bait Key', 'Flashlight/Headlamp', 'Tracking Powder Applicator'],
+  },
+];
+window.PEST_JOB_CATEGORIES = PEST_JOB_CATEGORIES;
+
 const PEST_TREATMENT_SCHEMA = [
   {
     id: 'summary',
@@ -41,6 +79,12 @@ const PEST_TREATMENT_SCHEMA = [
         id: 'coverPhoto',
         label: 'Front of property — this becomes the report cover',
         type: 'photos', required: true, aiFillable: true,
+      },
+      {
+        id: 'jobCategory',
+        label: 'Job Category',
+        type: 'choiceCards',
+        categories: PEST_JOB_CATEGORIES,
       },
       { id: 'clientName', label: 'Client Name', type: 'text', required: true },
       { id: 'clientAddress', label: 'Client Address', type: 'text' },
@@ -124,7 +168,12 @@ const PEST_TREATMENT_SCHEMA = [
         options: ['Interior', 'Exterior Perimeter', 'Roof Void', 'Subfloor', 'Garden/Landscape',
           'Kitchen', 'Bathroom', 'Roof/Eaves', 'Drainage/Stormwater', 'Other'],
       },
-      { id: 'equipmentUsed', label: 'Equipment Used', type: 'textarea', aiFillable: true },
+      {
+        id: 'equipmentUsed', label: 'Application Equipment', type: 'multiselect', aiFillable: true,
+        options: ['Power Rig / Vehicle-Mounted Sprayer', 'Backpack Sprayer', 'Hand Compression Sprayer',
+          'Indoor Aerosol/ULV Fogger (if applicable)', 'Dust Applicator / Hand Duster', 'Gel Bait Gun',
+          'Lockable Rodent Bait Stations', 'Bait Key', 'Flashlight/Headlamp', 'Tracking Powder Applicator', 'Other'],
+      },
       { id: 'treatmentNotes', label: 'Additional Treatment Notes', type: 'textarea', aiFillable: true },
     ],
   },
@@ -184,7 +233,10 @@ const PEST_TREATMENT_SCHEMA = [
       { id: 'spillKitAvailable', label: 'Spill kit on the vehicle?', type: 'yesno', default: 'Yes' },
       { id: 'sdsOnSite', label: 'Safety Data Sheets on site?', type: 'yesno', default: 'Yes' },
       { id: 'ppeUsed', label: 'PPE worn', type: 'multiselect', required: true,
-        options: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots', 'Other'], aiFillable: true },
+        options: ['Nitrile Gloves', 'Chemical-Resistant Nitrile Gloves', 'Heavy-Duty Rubber/Nitrile Gloves',
+          'Eye Protection (Safety Glasses/Goggles)', 'Respirator/Mask', 'Half-Face Respirator (A1P2 Filter)',
+          'Dust Mask / P2 Respirator', 'Enclosed Footwear', 'Long Sleeves/Pants', 'Disposable Coveralls',
+          'Shoe Covers', 'Other'], aiFillable: true },
       { id: 'firstAidOnSite', label: 'First aid kit on site?', type: 'yesno', default: 'Yes' },
       {
         id: 'safeToCommence', label: 'Was it safe to commence work?', type: 'yesno',

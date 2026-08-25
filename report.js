@@ -744,6 +744,51 @@
     toast(`Filled ${names} from the address — check before finalising.`);
   }
 
+  // Picking a Job Category on Client & Site prefills PPE (safety section)
+  // and Application Equipment (treatment section) with what that kind of
+  // job typically needs. Same rule as everywhere else in this app: it only
+  // ever lands on a field nobody has answered yet, and it's a starting
+  // point to correct, not a recorded fact — the technician still has to
+  // open each section and confirm it against what they actually used.
+  function applyJobCategoryPrefill(categoryLabel) {
+    if (!(window.PEST_JOB_CATEGORIES && currentReport)) return;
+    const cat = window.PEST_JOB_CATEGORIES.find((c) => c.label === categoryLabel);
+    if (!cat) return;
+    const schema = currentSchema();
+    const safetySection = schema.find((s) => s.id === 'safety');
+    const treatmentSection = schema.find((s) => s.id === 'treatmentDetails');
+    if (!safetySection || !treatmentSection) return;
+
+    const filled = [];
+    if (isUnanswered(safetySection, currentReport.sections.safety || {}, 'ppeUsed')) {
+      filled.push({ sectionId: 'safety', sectionTitle: safetySection.title, fieldId: 'ppeUsed', label: 'PPE worn', value: cat.ppe });
+    }
+    if (isUnanswered(treatmentSection, currentReport.sections.treatmentDetails || {}, 'equipmentUsed')) {
+      filled.push({ sectionId: 'treatmentDetails', sectionTitle: treatmentSection.title, fieldId: 'equipmentUsed', label: 'Application equipment', value: cat.equipment });
+    }
+    if (!filled.length) return;
+
+    for (const item of filled) {
+      currentReport.sections[item.sectionId] = { ...(currentReport.sections[item.sectionId] || {}), [item.fieldId]: item.value };
+      appendAudit(currentReport, {
+        event: 'auto-filled',
+        sectionId: item.sectionId,
+        sectionTitle: item.sectionTitle,
+        fieldId: item.fieldId,
+        label: item.label,
+        from: '(blank)',
+        to: item.value.join(', '),
+        basis: `Job Category: ${categoryLabel}`,
+        confident: true,
+      });
+    }
+
+    DB.saveReport(currentReport).catch((err) => console.warn('[report] job category prefill failed to save:', err.message || err));
+    renderSectionList();
+    const names = filled.map((f) => f.label).join(' and ');
+    toast(`${names} pre-filled for ${categoryLabel} — check before finalising.`);
+  }
+
   // ---------- Pre-flight check ----------
   // The last thing between a report and a client.
   //
@@ -1254,6 +1299,28 @@
         refreshVisibility();
       });
       row.appendChild(select);
+    } else if (field.type === 'choiceCards') {
+      // A single-pick set of big tappable cards rather than a dropdown —
+      // built for jobCategory, where the choice itself is the useful action
+      // (it prefills PPE and equipment elsewhere in the report), not just a
+      // value to record. See applyJobCategoryPrefill.
+      const wrap = document.createElement('div');
+      wrap.className = 'choice-cards';
+      for (const cat of field.categories || []) {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'choice-card' + (pendingSectionValues[field.id] === cat.label ? ' active' : '');
+        card.innerHTML = `<span class="choice-card-label">${escapeHtml(cat.label)}</span>`
+          + (cat.blurb ? `<span class="choice-card-blurb">${escapeHtml(cat.blurb)}</span>` : '');
+        card.addEventListener('click', () => {
+          pendingSectionValues[field.id] = cat.label;
+          wrap.querySelectorAll('.choice-card').forEach((c) => c.classList.remove('active'));
+          card.classList.add('active');
+          if (field.id === 'jobCategory') applyJobCategoryPrefill(cat.label);
+        });
+        wrap.appendChild(card);
+      }
+      row.appendChild(wrap);
     } else if (field.type === 'yesno') {
       const wrap = document.createElement('div');
       wrap.className = 'yesno-toggle';
@@ -2306,6 +2373,7 @@
 
   function renderPestTreatmentSummary() {
     const s = (id) => currentReport.sections[id] || {};
+    const client = s('clientDetails');
     const pest = s('pestIdentification');
     const treatment = s('treatmentDetails');
     const chemicals = s('chemicals');
@@ -2316,6 +2384,7 @@
     const productsSummary = products.map((p) => p.productName).filter(Boolean).join(', ');
 
     const rows = [
+      ['Job category', client.jobCategory, 'clientDetails'],
       ['Target pest(s)', (pest.targetPests || []).join(', '), 'pestIdentification'],
       ['Infestation level', pest.infestationLevel, 'pestIdentification'],
       ['Treatment method(s)', (treatment.treatmentMethods || []).join(', '), 'treatmentDetails'],
@@ -2340,7 +2409,7 @@
     }
     wrap.appendChild(Object.assign(document.createElement('p'), {
       className: 'empty-hint',
-      textContent: 'This summary updates automatically from your answers in Target Pests & Evidence, Work Carried Out, Products Applied and Advice & Next Steps — tap any row to jump there.',
+      textContent: 'This summary updates automatically from your answers in Client & Site, Target Pests & Evidence, Work Carried Out, Products Applied and Advice & Next Steps — tap any row to jump there.',
     }));
     sectionFieldsEl.appendChild(wrap);
   }

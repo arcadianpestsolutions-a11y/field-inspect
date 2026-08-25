@@ -466,7 +466,10 @@ function defaultValuesForSection(section) {
 //
 // History:
 //   1 — first versioned release (termite + pest treatment schemas as shipped)
-const SCHEMA_VERSION = 2;
+//   2 — sections renamed and reordered summary-first, both schemas
+//   3 — pest treatment: added jobCategory; equipmentUsed changed from free
+//       text to a picklist; ppeUsed options replaced with graded PPE
+const SCHEMA_VERSION = 3;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;

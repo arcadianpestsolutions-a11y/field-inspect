@@ -400,7 +400,7 @@
 
     pestCommercial(spec, media) {
       const s = baseSections(window.PEST_TREATMENT_SCHEMA);
-      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1) });
+      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1), jobCategory: 'Full General Pest' });
       Object.assign(s.clientDetails, clientBlock(null, spec, {
         applicationFinishTime: '12:05',
         weather: 'Fine, 23°C, wind 9 km/h NE',
@@ -417,7 +417,7 @@
         treatmentPhotos: media.treatmentPhotos,
         treatmentMethods: ['Spray', 'Gel Bait'],
         areasTreated: ['Interior', 'Kitchen', 'Exterior Perimeter'],
-        equipmentUsed: '10 L compression sprayer with fan tip; bait applicator gun.',
+        equipmentUsed: ['Hand Compression Sprayer', 'Gel Bait Gun'],
         treatmentNotes: 'Crack-and-crevice application to harbourage points, gel bait to void areas behind and beneath appliances. External perimeter band applied to the amenities block.',
       });
       s.chemicals.products = [
@@ -430,7 +430,7 @@
         riskActions: ['Informed people/children to vacate the area', 'Moved animals to an unaffected part of the property'],
         safeToCommence: 'Yes', spillKitAvailable: 'Yes', sdsOnSite: 'Yes', firstAidOnSite: 'Yes',
         appliedOutdoorsWithSpray: 'Yes', windSpeed: '9', windDirection: 'NE', temperature: '23',
-        ppeUsed: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots'],
+        ppeUsed: ['Chemical-Resistant Nitrile Gloves', 'Eye Protection (Safety Glasses/Goggles)', 'Respirator/Mask', 'Enclosed Footwear'],
         signagePlaced: 'Yes', occupantsNotified: 'Yes',
         reEntryPeriod: '4 hours, or once surfaces are dry', withholdingPeriod: 'Not applicable',
         sdsAvailable: 'Yes',
@@ -449,7 +449,7 @@
 
     pestChildcare(spec, media) {
       const s = REPORTS.pestCommercial(spec, media);
-      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1) });
+      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1), jobCategory: 'Full General Pest' });
       Object.assign(s.clientDetails, clientBlock(null, spec, {
         applicationFinishTime: '14:35',
         weather: 'Fine, 21°C, wind 6 km/h E',
@@ -465,7 +465,7 @@
       Object.assign(s.treatmentDetails, {
         treatmentMethods: ['Spray', 'Gel Bait'],
         areasTreated: ['Exterior Perimeter', 'Interior', 'Garden/Landscape'],
-        equipmentUsed: '5 L compression sprayer; ant gel applicator.',
+        equipmentUsed: ['Hand Compression Sprayer', 'Gel Bait Gun'],
         treatmentNotes: 'External perimeter band to the playground edging and building line. Gel bait to the toddler room threshold void. No product applied to play surfaces or soft-fall.',
       });
       s.chemicals.products = [
@@ -477,7 +477,7 @@
         riskActions: ['Informed people/children to vacate the area', 'Moved animals to an unaffected part of the property'],
         safeToCommence: 'Yes', spillKitAvailable: 'Yes', sdsOnSite: 'Yes', firstAidOnSite: 'Yes',
         appliedOutdoorsWithSpray: 'Yes', windSpeed: '6', windDirection: 'E', temperature: '23',
-        ppeUsed: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots'],
+        ppeUsed: ['Chemical-Resistant Nitrile Gloves', 'Eye Protection (Safety Glasses/Goggles)', 'Respirator/Mask', 'Enclosed Footwear'],
         signagePlaced: 'Yes', occupantsNotified: 'Yes',
         reEntryPeriod: '12 hours — centre cleared for opening next morning',
         withholdingPeriod: 'Not applicable', sdsAvailable: 'Yes',
@@ -493,7 +493,7 @@
 
     pestIndustrial(spec, media) {
       const s = REPORTS.pestCommercial(spec, media);
-      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1) });
+      Object.assign(s.clientDetails, { coverPhoto: media.propertyPhotos.slice(0, 1), jobCategory: 'Rodent Services' });
       Object.assign(s.clientDetails, clientBlock(null, spec, {
         applicationFinishTime: '13:10',
         weather: 'Windy, 24°C, wind 21 km/h W',
@@ -510,7 +510,7 @@
         treatmentPhotos: media.treatmentPhotos,
         treatmentMethods: ['Bait Stations', 'Spray', 'Exclusion Works'],
         areasTreated: ['Interior', 'Exterior Perimeter', 'Drainage/Stormwater'],
-        equipmentUsed: 'Lockable tamper-resistant bait stations; bait station mapping sheet.',
+        equipmentUsed: ['Lockable Rodent Bait Stations', 'Bait Key', 'Backpack Sprayer'],
         treatmentNotes: '14 lockable stations installed and mapped to the site plan — 8 external perimeter, 6 internal along the northern racking. All stations numbered and logged.',
       });
       s.chemicals.products = [
@@ -522,7 +522,7 @@
         riskActions: ['Informed people/children to vacate the area', 'Moved animals to an unaffected part of the property'],
         safeToCommence: 'Yes', spillKitAvailable: 'Yes', sdsOnSite: 'Yes', firstAidOnSite: 'Yes',
         appliedOutdoorsWithSpray: 'Yes', windSpeed: '21', windDirection: 'W', temperature: '23',
-        ppeUsed: ['Respirator', 'Gloves', 'Coveralls', 'Eye Protection', 'Boots'],
+        ppeUsed: ['Heavy-Duty Rubber/Nitrile Gloves', 'Dust Mask / P2 Respirator', 'Eye Protection (Safety Glasses/Goggles)'],
         signagePlaced: 'Yes', occupantsNotified: 'Yes',
         reEntryPeriod: '4 hours for treated zones', withholdingPeriod: 'Not applicable', sdsAvailable: 'Yes',
       });

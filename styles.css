@@ -1098,6 +1098,29 @@ select {
 }
 .yesno-btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 
+/* Job Category — a big tappable card per option rather than a dropdown,
+   since picking one is itself the useful action (it prefills PPE and
+   equipment elsewhere in the report). */
+.choice-cards { display: flex; flex-direction: column; gap: 8px; }
+.choice-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.choice-card-label { font-weight: 700; color: var(--text); }
+.choice-card-blurb { font-size: 0.8rem; color: var(--text-dim); }
+.choice-card.active {
+  background: rgba(198,255,61,0.12);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.choice-card.active .choice-card-label { color: var(--accent); }
+
 .multiselect-list { display: flex; flex-direction: column; gap: 8px; }
 .multiselect-add-row input { flex: 1; }
 .checkbox-chip {
