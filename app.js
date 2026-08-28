@@ -81,6 +81,7 @@
   const inspectionModalTimer = document.getElementById('inspection-modal-timer');
   const inspectionZonePill = document.getElementById('inspection-zone-pill');
   const inspectionZoneInput = document.getElementById('inspection-zone-input');
+  const inspectionChecklistRow = document.getElementById('inspection-checklist-row');
   const inspectionStillBtn = document.getElementById('inspection-still-btn');
   const inspectionFinishBtn = document.getElementById('inspection-finish-btn');
   const inspectionImportBtn = document.getElementById('inspection-import-btn');
@@ -139,6 +140,32 @@
   // whether Finish is shown and whether the camera reopens on return.
   let inspectionActiveJobId = null;
   let inspectionStream = null;
+  // The typical-photos checklist for whatever job is currently open in the
+  // camera — see photo-checklists.js. inspectionChecklistDone tracks zone
+  // labels already covered by a saved capture (not counting Front Elevation,
+  // which has its own dedicated prompt), so a re-opened camera picks up
+  // where the technician left off instead of forgetting progress.
+  let inspectionChecklistItems = [];
+  let inspectionChecklistDone = new Set();
+
+  function renderInspectionChecklist() {
+    if (!inspectionChecklistItems.length) { hide(inspectionChecklistRow); return; }
+    const currentZone = inspectionZoneInput.value.trim();
+    inspectionChecklistRow.innerHTML = '';
+    for (const item of inspectionChecklistItems) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      const done = inspectionChecklistDone.has(item.label);
+      chip.className = 'inspection-checklist-chip' + (done ? ' done' : '') + (currentZone === item.label ? ' active' : '');
+      chip.textContent = (done ? '✓ ' : '') + item.label;
+      chip.addEventListener('click', () => {
+        inspectionZoneInput.value = item.label;
+        inspectionZoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      inspectionChecklistRow.appendChild(chip);
+    }
+    show(inspectionChecklistRow);
+  }
   let inspectionTimerInterval = null;
   let inspectionStartedAt = 0;
   let pendingImportFiles = [];
@@ -1302,6 +1329,15 @@
       // should not ask for the cover photo again.
       const already = await DB.getCaptures(currentJobId);
       showFrontPhotoPrompt(!already.some((c) => c.isFrontElevation));
+
+      inspectionChecklistDone = new Set(already.filter((c) => c.zone).map((c) => c.zone));
+      const jobForChecklist = await DB.getJob(currentJobId);
+      const jobCategoryForChecklist = window.ReportUI && window.ReportUI.getJobCategory
+        ? await window.ReportUI.getJobCategory(currentJobId).catch(() => null)
+        : null;
+      inspectionChecklistItems = (window.PhotoChecklists ? window.PhotoChecklists.forJob(jobForChecklist, jobCategoryForChecklist) : [])
+        .filter((item) => item.id !== 'frontElevation');
+      renderInspectionChecklist();
     } catch (err) {
       console.error('[inspection] camera preview failed to start:', err);
       inspectionVideo.srcObject = null;
@@ -1345,6 +1381,7 @@
 
   inspectionZoneInput.addEventListener('input', () => {
     inspectionZonePill.textContent = inspectionZoneInput.value.trim() || 'Untagged';
+    renderInspectionChecklist();
   });
 
   inspectionStillBtn.addEventListener('click', async () => {
@@ -1371,7 +1408,14 @@
         photoBlob: blob,
       });
 
-      if (!isFront) { toast('Photo saved'); return; }
+      if (!isFront) {
+        if (zoneAtCapture && inspectionChecklistItems.some((item) => item.label === zoneAtCapture)) {
+          inspectionChecklistDone.add(zoneAtCapture);
+          renderInspectionChecklist();
+        }
+        toast('Photo saved');
+        return;
+      }
 
       // Mark it so a later visit doesn't ask for the cover shot again, and
       // put it straight into the report's cover field rather than making the
@@ -1452,6 +1496,12 @@
       // Fire-and-forget, because the technician should reach the report
       // immediately rather than waiting on an upload — jobIdAtStart is
       // captured since they may navigate away before it resolves.
+      setStage('filing checklist photos');
+      if (window.ReportUI && window.ReportUI.attachChecklistPhotos) {
+        await window.ReportUI.attachChecklistPhotos(jobIdAtStart)
+          .catch((err) => console.warn('[inspection] could not file checklist photos:', err.message || err));
+      }
+
       setStage('reading the photos');
       let photoCount = 0;
       try {

@@ -411,6 +411,52 @@
       await DB.saveReport(report);
       if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
     },
+    // The jobCategory picked on Client & Site (pest treatment jobs only) —
+    // read by app.js at Start Inspection to pick which photo checklist to
+    // show (photo-checklists.js). Returns null for termite jobs and for any
+    // pest job where the technician hasn't picked a category yet.
+    async getJobCategory(jobId) {
+      const report = await loadOrCreateReport(jobId);
+      return (report.sections.clientDetails || {}).jobCategory || null;
+    },
+    // Copies each checklist item's captures into the report photo field it
+    // names (photo-checklists.js's schemaSection/schemaField), the same way
+    // attachCoverPhoto above copies the front-elevation shot into the cover
+    // field — called once from finishInspection so a checklist-guided photo
+    // lands where the report already expects one, instead of only living in
+    // the gallery under a zone name that happens to match.
+    async attachChecklistPhotos(jobId) {
+      if (!window.PhotoChecklists) return;
+      const job = await DB.getJob(jobId);
+      const jobCategory = job && job.jobType === 'pest_treatment'
+        ? await this.getJobCategory(jobId)
+        : null;
+      const items = window.PhotoChecklists.forJob(job, jobCategory).filter((item) => item.schemaField);
+      if (!items.length) return;
+
+      const captures = await DB.getCaptures(jobId);
+      if (!captures.length) return;
+
+      const report = await loadOrCreateReport(jobId);
+      let changed = false;
+      for (const item of items) {
+        const matches = captures.filter((c) => c.photoBlob && c.zone === item.label);
+        if (!matches.length) continue;
+        const section = { ...(report.sections[item.schemaSection] || {}) };
+        const existing = Array.isArray(section[item.schemaField]) ? section[item.schemaField] : [];
+        const existingIds = new Set(existing.map((p) => p.captureId).filter(Boolean));
+        const additions = matches
+          .filter((c) => !existingIds.has(c.id))
+          .map((c) => ({ id: DB.uid(), captureId: c.id, blob: c.photoBlob }));
+        if (!additions.length) continue;
+        section[item.schemaField] = [...existing, ...additions];
+        report.sections[item.schemaSection] = section;
+        changed = true;
+      }
+      if (!changed) return;
+      await DB.saveReport(report);
+      if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
+    },
     documentTypesFor,
     documentTypeOf,
     async openArchive() {

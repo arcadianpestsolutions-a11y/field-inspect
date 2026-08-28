@@ -1243,6 +1243,73 @@
     }
   });
 
+  test('Inspection: the photo checklist tags captures and files them into the report', async () => {
+    // Replaces the old live-video walkthrough with a per-job-type checklist
+    // (photo-checklists.js). Tapping a chip should behave exactly like typing
+    // that label into the zone box, and a checklist item naming a schema
+    // field should end up in the report once the inspection finishes.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Checklist Run Job', jobType: 'termite' });
+    await win.showJobViewById(job.id);
+    await wait(300);
+
+    function realishStream() {
+      const c = win.document.createElement('canvas');
+      c.width = 320; c.height = 240;
+      const ctx = c.getContext('2d');
+      let f = 0;
+      const t = win.setInterval(() => { ctx.fillStyle = `hsl(${f++ % 360},70%,45%)`; ctx.fillRect(0, 0, 320, 240); }, 50);
+      const s = c.captureStream(15);
+      s.__cleanup = () => win.clearInterval(t);
+      return s;
+    }
+
+    const origPerm = win.navigator.permissions.query;
+    const origGum = win.navigator.mediaDevices.getUserMedia;
+    let made = null;
+    try {
+      win.navigator.permissions.query = async () => ({ state: 'granted' });
+      win.navigator.mediaDevices.getUserMedia = async () => { made = realishStream(); return made; };
+
+      doc.getElementById('start-inspection-btn').click();
+      await wait(2200);
+
+      // Front photo first, same as every inspection.
+      doc.getElementById('inspection-still-btn').click();
+      await wait(1200);
+
+      const row = doc.getElementById('inspection-checklist-row');
+      assert(!row.classList.contains('hidden'), 'the checklist row shows for a termite job');
+      const meterBoxChip = Array.from(row.querySelectorAll('.inspection-checklist-chip'))
+        .find((c) => /Meter Box/.test(c.textContent));
+      assert(meterBoxChip, 'Meter Box is one of the termite checklist items');
+      assert(!meterBoxChip.classList.contains('done'), 'not done before any photo is taken against it');
+
+      meterBoxChip.click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Meter Box',
+        'tapping a checklist chip fills the zone box exactly like typing it');
+      doc.getElementById('inspection-still-btn').click();
+      await wait(1500);
+
+      const chipAfter = Array.from(row.querySelectorAll('.inspection-checklist-chip'))
+        .find((c) => /Meter Box/.test(c.textContent));
+      assert(chipAfter.classList.contains('done'), 'the chip marks itself done once a photo exists for it');
+
+      doc.getElementById('inspection-finish-btn').click();
+      await wait(4000);
+
+      const report = await win.DB.getReport(job.id);
+      const photos = report.sections.findings.durableNoticePhotos;
+      assert(Array.isArray(photos) && photos.length === 1,
+        'the Meter Box checklist photo is filed into findings.durableNoticePhotos');
+    } finally {
+      if (made && made.__cleanup) made.__cleanup();
+      win.navigator.permissions.query = origPerm;
+      win.navigator.mediaDevices.getUserMedia = origGum;
+    }
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';

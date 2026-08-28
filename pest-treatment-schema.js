@@ -141,8 +141,9 @@ const PEST_TREATMENT_SCHEMA = [
       { id: 'pestPhotos', label: 'Photos of Pest Activity / Evidence', type: 'photos', triggersAiFill: true },
       {
         id: 'targetPests', label: 'Target Pest(s)', type: 'multiselect', required: true, aiFillable: true,
-        options: ['Cockroaches', 'Ants', 'Spiders', 'Rodents (Rats/Mice)', 'Wasps/Bees', 'Silverfish',
-          'Fleas', 'Stored Product Pests', 'Flies', 'Bed Bugs', 'General Pest Treatment', 'Other'],
+        options: ['German Cockroaches', 'Cockroaches', 'Ants', 'Spiders', 'Rodents (Rats/Mice)', 'Wasps/Bees',
+          'Silverfish', 'Fleas', 'Stored Product Pests', 'Flies', 'Bed Bugs', 'Bird Lice / Mites',
+          'Possum', 'Birds', 'Ticks', 'General Pest Treatment', 'Other'],
       },
       { id: 'pestEvidence', label: 'Evidence Observed (droppings, nests, damage, sightings, etc.)', type: 'textarea', aiFillable: true },
       { id: 'affectedAreas', label: 'Areas Affected', type: 'textarea', aiFillable: true },

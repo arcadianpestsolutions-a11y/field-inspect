@@ -1354,6 +1354,48 @@ select {
 }
 #inspection-zone-input::placeholder { color: rgba(255,255,255,0.7); }
 
+/* The typical-photos checklist for this job type, shown over the camera
+   preview above the freeform zone input — see photo-checklists.js. A fast
+   path to the same zone input, not a replacement for it: "Other" always
+   falls through to typing a zone by hand. */
+.inspection-checklist-row {
+  position: absolute;
+  bottom: 62px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.inspection-checklist-row::-webkit-scrollbar { display: none; }
+
+.inspection-checklist-chip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #fff;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.inspection-checklist-chip.done {
+  background: rgba(198,255,61,0.18);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.inspection-checklist-chip.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
 /* ---------- Scheduler ---------- */
 .cal-nav { display: flex; justify-content: space-between; margin-bottom: 8px; }
 

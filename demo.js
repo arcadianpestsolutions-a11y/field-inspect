@@ -538,13 +538,15 @@
 
   // ---------- gallery captures ----------
   const CAPTURE_PLAN = {
+    // Zone labels match photo-checklists.js's termite checklist where the
+    // shot fits one, so the demo shows the checklist already partway ticked
+    // off — same as a real job resumed mid-inspection.
     termite: [
-      ['Exterior', 'Front elevation, north-east aspect', 205],
-      ['Subfloor', 'Eastern pier — inactive mudding', 25],
-      ['Subfloor', 'Bearer and joist, south-east corner', 25],
-      ['Roof Void', 'Truss inspection, hallway manhole', 260],
-      ['Kitchen', 'Under-sink cabinet, moisture check', 190],
-      ['Bathroom', 'Wet area, shower recess base', 190],
+      ['Front Elevation', 'Front elevation, north-east aspect', 205],
+      ['Subfloor Entry', 'Eastern pier — inactive mudding', 25],
+      ['Roof Void Entry', 'Truss inspection, hallway manhole', 260],
+      ['Kitchen / Bathroom', 'Under-sink cabinet, moisture check', 190],
+      ['Meter Box', 'Treatment sticker, meter box', 90],
     ],
     pest_treatment: [
       ['Exterior Perimeter', 'External treated band, north wall', 205],

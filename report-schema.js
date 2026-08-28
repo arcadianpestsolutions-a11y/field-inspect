@@ -210,6 +210,10 @@ const REPORT_SCHEMA = [
       { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true },
       { id: 'existingManagementSystem', label: 'Existing termite management system present, type & condition', type: 'textarea', aiFillable: true },
       { id: 'durableNoticeFound', label: 'Was a durable Notice found at the time of this inspection?', type: 'yesno', required: true, aiFillable: true },
+      // A durable notice or treatment sticker (commonly in the meter box or
+      // subfloor) is evidence, not just a checkbox — the photo is what a
+      // client or a later inspector actually needs to see.
+      { id: 'durableNoticePhotos', label: 'Durable Notice Photos', type: 'photos', showIf: { field: 'durableNoticeFound', equals: 'Yes' }, aiFillable: true },
       // AS 4349.3-2010 covers FOUR timber pest categories: subterranean
       // termites, dampwood termites, borers of seasoned timber, and wood
       // decay fungi. Termites and fungal decay had proper fields; borers
@@ -469,7 +473,10 @@ function defaultValuesForSection(section) {
 //   2 — sections renamed and reordered summary-first, both schemas
 //   3 — pest treatment: added jobCategory; equipmentUsed changed from free
 //       text to a picklist; ppeUsed options replaced with graded PPE
-const SCHEMA_VERSION = 3;
+//   4 — termite: added durableNoticePhotos; pest treatment: targetPests
+//       options expanded (German Cockroaches, Bird Lice / Mites, Possum,
+//       Birds, Ticks) — both found comparing against Formitize's real forms
+const SCHEMA_VERSION = 4;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;
