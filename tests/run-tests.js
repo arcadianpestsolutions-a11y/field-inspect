@@ -1310,6 +1310,65 @@
     }
   });
 
+  test('AI Draft: applyAiDraft merges per section instead of replacing the whole draft', async () => {
+    // The real bug this guards: attachChecklistPhotos calls applyAiDraft once
+    // per section (each analyzed against only its own photos). If a later
+    // call replaced report.aiDraft wholesale instead of merging, section two's
+    // suggestions would silently erase section one's.
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'AI Merge Job', jobType: 'termite' });
+
+    await win.ReportUI.applyAiDraft(job.id, {
+      draftFields: { findings: { durableNoticeFound: 'Yes' } },
+      fieldReasons: { findings: { durableNoticeFound: 'sticker visible in meter box photo' } },
+    });
+    await win.ReportUI.applyAiDraft(job.id, {
+      draftFields: { conducive: { siteDrainage: 'Adequate' } },
+      fieldReasons: { conducive: { siteDrainage: 'visible fall away from the slab' } },
+    });
+
+    const report = await win.DB.getReport(job.id);
+    assertEqual(report.aiDraft.draftFields.findings.durableNoticeFound, 'Yes',
+      'the first section\'s suggestion survives a later call for a different section');
+    assertEqual(report.aiDraft.draftFields.conducive.siteDrainage, 'Adequate',
+      'the second section\'s suggestion is also present');
+    assert(report.aiDraft.fieldReasons.findings.durableNoticeFound, 'reasons merge the same way as draftFields');
+  });
+
+  test('AI Draft: checklist photos trigger a section-scoped AI pass at Finish Inspection', async () => {
+    // Wires photo-checklists.js's schemaSection routing to window.AI: each
+    // section that received new checklist photos gets analyzed against just
+    // those photos, and the result lands in report.aiDraft for that section —
+    // this is "for each section, AI fills the form from the photos taken".
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'AI Checklist Job', jobType: 'termite' });
+    const blob = new win.Blob(['x'], { type: 'image/jpeg' });
+    await win.DB.addCapture({ jobId: job.id, zone: 'Meter Box', type: 'photo', photoBlob: blob });
+
+    const calls = [];
+    const stub = {
+      analyzeSectionPhotos: async (blobs, sectionId) => {
+        calls.push({ sectionId, count: blobs.length });
+        return { draftFields: { [sectionId]: { durableNoticeFound: 'Yes' } } };
+      },
+    };
+    const origAI = win.AI;
+    win.AI = stub;
+    try {
+      await win.ReportUI.attachChecklistPhotos(job.id);
+    } finally {
+      win.AI = origAI;
+    }
+
+    assertEqual(calls.length, 1, 'exactly one section (findings) had new checklist photos to analyze');
+    assertEqual(calls[0].sectionId, 'findings', 'the Meter Box photo routes to the findings section');
+    assertEqual(calls[0].count, 1, 'only the one new photo is sent, not the whole capture history');
+
+    const report = await win.DB.getReport(job.id);
+    assertEqual(report.aiDraft.draftFields.findings.durableNoticeFound, 'Yes',
+      'the stubbed AI result is persisted onto the report');
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';

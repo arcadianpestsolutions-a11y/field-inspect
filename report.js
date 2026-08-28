@@ -439,6 +439,10 @@
 
       const report = await loadOrCreateReport(jobId);
       let changed = false;
+      // Newly-filed blobs per section, so the AI pass below reads only what
+      // just came in — not every photo ever taken for that section on every
+      // re-run of Finish Inspection.
+      const newBlobsBySection = new Map();
       for (const item of items) {
         const matches = captures.filter((c) => c.photoBlob && c.zone === item.label);
         if (!matches.length) continue;
@@ -452,10 +456,29 @@
         section[item.schemaField] = [...existing, ...additions];
         report.sections[item.schemaSection] = section;
         changed = true;
+        const bucket = newBlobsBySection.get(item.schemaSection) || [];
+        bucket.push(...additions.map((a) => a.blob));
+        newBlobsBySection.set(item.schemaSection, bucket);
       }
       if (!changed) return;
       await DB.saveReport(report);
       if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
+
+      // The point of the checklist: each section gets read by the AI against
+      // just the photos taken for it, not the whole report in one pass — a
+      // kitchen shot informs treatmentDetails, not findings. Sequential, not
+      // parallel, because each call reads-modifies-saves the same report and
+      // a second read before the first save lands would silently drop it.
+      if (window.AI && window.AI.analyzeSectionPhotos) {
+        for (const [sectionId, blobs] of newBlobsBySection) {
+          try {
+            const result = await window.AI.analyzeSectionPhotos(blobs, sectionId, job && job.jobType);
+            await this.applyAiDraft(jobId, result);
+          } catch (err) {
+            console.warn(`[report] AI draft failed for section "${sectionId}":`, err.message || err);
+          }
+        }
+      }
     },
     documentTypesFor,
     documentTypeOf,
@@ -470,15 +493,29 @@
     // suggestions only apply when a section is opened (see openSectionEditor).
     async applyAiDraft(jobId, result) {
       const report = await loadOrCreateReport(jobId);
+      // Merged by section, not replaced wholesale: attachChecklistPhotos
+      // calls this once per section (each analyzed against only its own
+      // photos), and the whole-report pass from Finish Inspection or the
+      // "Generate AI Draft" button calls it once across every section. Either
+      // one running after the other must add to what's there, not erase it.
+      const prev = report.aiDraft || { draftFields: {}, fieldReasons: {}, frameNotes: [] };
+      const draftFields = { ...prev.draftFields };
+      for (const [sectionId, fields] of Object.entries(result.draftFields || {})) {
+        draftFields[sectionId] = { ...(draftFields[sectionId] || {}), ...fields };
+      }
+      const fieldReasons = { ...prev.fieldReasons };
+      for (const [sectionId, reasons] of Object.entries(result.fieldReasons || {})) {
+        fieldReasons[sectionId] = { ...(fieldReasons[sectionId] || {}), ...reasons };
+      }
       report.aiDraft = {
         generatedAt: Date.now(),
-        transcript: result.transcript || '',
-        draftFields: result.draftFields || {},
+        transcript: result.transcript || prev.transcript || '',
+        draftFields,
         // Which photograph each suggestion came from. A suggested answer the
         // technician cannot trace back to an image is one they have to
         // re-derive from scratch, which costs more time than a blank field.
-        fieldReasons: result.fieldReasons || {},
-        frameNotes: result.frameNotes || [],
+        fieldReasons,
+        frameNotes: (result.frameNotes && result.frameNotes.length) ? result.frameNotes : prev.frameNotes,
       };
       await DB.saveReport(report);
       if (currentJobId === jobId) {
