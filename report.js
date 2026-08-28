@@ -411,7 +411,7 @@
       await DB.saveReport(report);
       if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
     },
-    // The jobCategory picked on Client & Site (pest treatment jobs only) —
+    // The jobCategory picked on Client Details (pest treatment jobs only) —
     // read by app.js at Start Inspection to pick which photo checklist to
     // show (photo-checklists.js). Returns null for termite jobs and for any
     // pest job where the technician hasn't picked a category yet.
@@ -827,7 +827,7 @@
     toast(`Filled ${names} from the address — check before finalising.`);
   }
 
-  // Picking a Job Category on Client & Site prefills PPE (safety section)
+  // Picking a Job Category on Client Details prefills PPE (safety section)
   // and Application Equipment (treatment section) with what that kind of
   // job typically needs. Same rule as everywhere else in this app: it only
   // ever lands on a field nobody has answered yet, and it's a starting
@@ -2449,7 +2449,7 @@
     }
     wrap.appendChild(Object.assign(document.createElement('p'), {
       className: 'empty-hint',
-      textContent: 'This summary updates automatically from your answers in What We Found, Access & Restrictions and Conditions Favouring Attack — tap any row to jump there.',
+      textContent: 'This summary updates automatically from your answers in Findings & Observations, Areas We Were Unable to Inspect and Conducive Conditions — tap any row to jump there.',
     }));
     sectionFieldsEl.appendChild(wrap);
   }
@@ -2492,7 +2492,7 @@
     }
     wrap.appendChild(Object.assign(document.createElement('p'), {
       className: 'empty-hint',
-      textContent: 'This summary updates automatically from your answers in Client & Site, Target Pests & Evidence, Work Carried Out, Products Applied and Advice & Next Steps — tap any row to jump there.',
+      textContent: 'This summary updates automatically from your answers in Client Details, Pest Identification, Treatment Details, Chemicals / Products Used and Recommendations & Follow-Up — tap any row to jump there.',
     }));
     sectionFieldsEl.appendChild(wrap);
   }
@@ -2629,8 +2629,8 @@
 
       if (section.id === 'summary') {
         html += isPestTreatment
-          ? `<p>See Target Pests & Evidence, Work Carried Out, Products Applied and Advice & Next Steps sections for full detail.</p>`
-          : `<p>See What We Found, Access & Restrictions and Conditions Favouring Attack sections for full detail.</p>`;
+          ? `<p>See Pest Identification, Treatment Details, Chemicals / Products Used and Recommendations & Follow-Up sections for full detail.</p>`
+          : `<p>See Findings & Observations, Areas We Were Unable to Inspect and Conducive Conditions sections for full detail.</p>`;
       } else if (section.id === 'terms') {
         html += isPestTreatment ? FIXED_TERMS_HTML_PEST : FIXED_TERMS_HTML;
       } else if (section.fixed) {

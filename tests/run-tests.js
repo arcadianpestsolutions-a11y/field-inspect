@@ -462,7 +462,7 @@
       li.click();
     };
 
-    openSection('Products Applied');
+    openSection('Chemicals / Products Used');
     await wait(200);
     const input = doc.querySelector('.product-card input');
     assert(input, 'product name input should render');
@@ -1422,7 +1422,7 @@
     await wait(200);
     // The report is only persisted once something is saved, so save a section.
     const doc = frame.contentDocument;
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1441,7 +1441,7 @@
     await win.ReportUI.openReview(job.id);
     await wait(200);
 
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     const input = doc.querySelector('#report-section-fields input[type="text"]');
     assert(input, 'a text input should render');
@@ -1468,13 +1468,13 @@
     await win.ReportUI.openReview(job.id);
     await wait(200);
 
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
     const first = (await win.DB.getReport(job.id)).auditLog.length;
 
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1489,7 +1489,7 @@
     const job = await win.DB.addJob({ name: 'Audit Refuse Job' });
     await win.ReportUI.openReview(job.id);
     await wait(200);
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1502,7 +1502,7 @@
 
     await win.ReportUI.openReview(job.id);
     await wait(250);
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     const input = doc.querySelector('#report-section-fields input[type="text"]');
     setTextInput(win, input, 'SNEAKY EDIT');
@@ -1528,7 +1528,7 @@
     const job = await win.DB.addJob({ name: 'Audit Amend Job' });
     await win.ReportUI.openReview(job.id);
     await wait(200);
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     doc.getElementById('section-save-btn').click();
     await wait(300);
@@ -1539,7 +1539,7 @@
 
     await win.ReportUI.openReview(job.id);
     await wait(250);
-    openReportSection(doc, 'Client & Site');
+    openReportSection(doc, 'Client Details');
     await wait(200);
     const input = doc.querySelector('#report-section-fields input[type="text"]');
     setTextInput(win, input, 'Corrected Name');
@@ -1573,7 +1573,7 @@
     await wait(200);
 
     const doc = frame.contentDocument;
-    openReportSection(doc, 'Site Plan');
+    openReportSection(doc, 'Site Sketch (Mud Map)');
     await wait(400);
     doc.getElementById('section-save-btn').click();
     await wait(400);

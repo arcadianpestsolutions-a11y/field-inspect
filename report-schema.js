@@ -23,8 +23,8 @@ const REPORT_SCHEMA = [
   {
     id: 'summary',
     number: 1,
-    title: 'At a Glance',
-    subtitle: 'Written for you from the answers below. Read together with the full report.',
+    title: 'Inspection Summary',
+    subtitle: 'Auto-generated from your answers below — read together with the full report.',
     icon: '📋',
     color: '#0f9e8e',
     computed: true,
@@ -33,8 +33,8 @@ const REPORT_SCHEMA = [
   {
     id: 'clientDetails',
     number: 2,
-    title: 'Client & Site',
-    subtitle: 'Who the inspection is for, and the property it covers.',
+    title: 'Client Details',
+    subtitle: 'The Client is the person or entity for whom the inspection is being undertaken.',
     icon: '👤',
     color: '#1f7a4d',
     fields: [
@@ -63,8 +63,8 @@ const REPORT_SCHEMA = [
   {
     id: 'agreement',
     number: 3,
-    title: 'Scope & Limitations',
-    subtitle: 'What this inspection covers and what it cannot — agreed with the client before it begins.',
+    title: 'About Our Agreement',
+    subtitle: 'Purpose, scope and limitations — agreed with the client BEFORE the inspection begins.',
     icon: 'ℹ️',
     color: '#1f7a4d',
     softRequired: true,
@@ -95,8 +95,8 @@ const REPORT_SCHEMA = [
   {
     id: 'property',
     number: 4,
-    title: 'The Building',
-    subtitle: 'How the property is built and how it sits on the block.',
+    title: 'About the Property Inspected',
+    subtitle: 'Primary details describing and identifying the Property that is to be inspected.',
     icon: '🏠',
     color: '#1c8fc4',
     fields: [
@@ -153,7 +153,7 @@ const REPORT_SCHEMA = [
   {
     id: 'siteSketch',
     number: 5,
-    title: 'Site Plan',
+    title: 'Site Sketch (Mud Map)',
     subtitle: 'A simple hand-drawn plan of the property — sketch the outline as you walk and drop labels for rooms, moisture readings, damage, or anything worth marking on the map.',
     icon: '🗺️',
     color: '#0d9488',
@@ -164,7 +164,7 @@ const REPORT_SCHEMA = [
   {
     id: 'access',
     number: 6,
-    title: 'Access & Restrictions',
+    title: 'Areas We Were Unable to Inspect',
     subtitle: 'Details outlining the limitations and hindrances related to the Inspection, and why.',
     icon: '⊘',
     color: '#2662c9',
@@ -187,7 +187,7 @@ const REPORT_SCHEMA = [
   {
     id: 'findings',
     number: 7,
-    title: 'What We Found',
+    title: 'Findings & Observations',
     subtitle: 'Report on the location and details of termite activity detected at the time of the Inspection.',
     icon: '🔍',
     color: '#154a8a',
@@ -251,7 +251,7 @@ const REPORT_SCHEMA = [
   {
     id: 'conducive',
     number: 8,
-    title: 'Conditions Favouring Attack',
+    title: 'Conducive Conditions',
     subtitle: 'Conditions identified that are conducive to Termite activity.',
     icon: '⚠️',
     color: '#123a66',
@@ -275,7 +275,7 @@ const REPORT_SCHEMA = [
   {
     id: 'terms',
     number: 9,
-    title: 'Terms of Engagement',
+    title: 'Terms & Conditions',
     subtitle: 'Terms and condition details related to the Inspection undertaken and Report provided.',
     icon: '📖',
     color: '#3d3d8f',
@@ -285,7 +285,7 @@ const REPORT_SCHEMA = [
   {
     id: 'inspector',
     number: 10,
-    title: 'Inspector & Licence',
+    title: 'Inspector Details',
     subtitle: 'Contact details of the Inspection Provider and the Inspector that undertook the Inspection.',
     icon: '🧑‍🔧',
     color: '#6a3d9e',
@@ -302,7 +302,7 @@ const REPORT_SCHEMA = [
   {
     id: 'acknowledgement',
     number: 11,
-    title: 'Sign-Off',
+    title: 'Client Acknowledgement',
     subtitle: 'Acknowledgement and acceptance of the Report to be completed by the Client.',
     icon: '✅',
     color: '#a12a72',

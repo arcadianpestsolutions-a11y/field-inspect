@@ -616,7 +616,7 @@
     const log = [
       { ...base, at: start, event: 'created' },
       { ...base, at: start + 22 * 60000, event: 'field-changed', sectionId: 'clientDetails',
-        sectionTitle: 'Client & Site', fieldId: 'weather', label: 'Weather Conditions at time of inspection',
+        sectionTitle: 'Client Details', fieldId: 'weather', label: 'Weather Conditions at time of inspection',
         from: '(blank)', to: 'Partly cloudy, 19°C, wind 11 km/h NE', reason: '' },
     ];
     if (!finalizedAt) return log;
