@@ -118,7 +118,7 @@
       </div>
       <div class="row gap wrap">
         <button id="start-inspection-btn" class="btn btn-primary flex1">▶ Start Inspection</button>
-        <button id="finish-inspection-btn" class="btn btn-danger flex1 hidden">■ Finish Inspection</button>
+        <button id="finish-inspection-btn" class="btn btn-primary flex1 hidden">✨ Generate Form</button>
         <button id="import-footage-btn" class="btn btn-secondary flex1">⤒ Import Footage</button>
       </div>
       <button id="view-report-btn" class="btn btn-outline full hidden">📄 Open Report</button>
@@ -177,7 +177,7 @@
   </div>
 </section>
 
-<!-- ============ INSPECTION RECORDING (live preview) ============ -->
+<!-- ============ INSPECTION PHOTO CAPTURE (live camera preview) ============ -->
 <section id="inspection-modal" class="modal hidden">
   <div class="camera-wrap">
     <video id="inspection-video" playsinline autoplay muted></video>
@@ -185,20 +185,15 @@
       <span class="inspection-prompt-title">Photograph the front of the property</span>
       <span class="inspection-prompt-sub">This becomes the report cover, and fills in most of the property details for you.</span>
     </div>
-    <div class="inspection-rec-pill">
-      <span class="session-dot"></span>
-      <span class="inspection-rec-label">On site</span>
-      <span id="inspection-modal-timer">0:00</span>
-    </div>
     <div class="camera-zone-pill" id="inspection-zone-pill"></div>
     <div id="inspection-checklist-row" class="inspection-checklist-row hidden"></div>
     <input id="inspection-zone-input" list="zone-suggestions" type="text" placeholder="Zone / area you're in now…" autocomplete="off" />
   </div>
   <div class="camera-controls">
     <button id="inspection-still-btn" class="icon-btn light" aria-label="Take still photo">📷</button>
-    <button id="inspection-finish-btn" class="stop-btn" aria-label="Finish inspection"></button>
     <button id="inspection-import-btn" class="icon-btn light" aria-label="Import footage">⤒</button>
   </div>
+  <button id="inspection-finish-btn" class="btn btn-primary generate-form-btn" aria-label="Generate form from these photos">✨ Generate Form</button>
 </section>
 
 <!-- ============ CAMERA MODAL ============ -->

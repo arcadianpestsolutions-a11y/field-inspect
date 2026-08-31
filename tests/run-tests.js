@@ -1335,38 +1335,33 @@
     assert(report.aiDraft.fieldReasons.findings.durableNoticeFound, 'reasons merge the same way as draftFields');
   });
 
-  test('AI Draft: checklist photos trigger a section-scoped AI pass at Finish Inspection', async () => {
-    // Wires photo-checklists.js's schemaSection routing to window.AI: each
-    // section that received new checklist photos gets analyzed against just
-    // those photos, and the result lands in report.aiDraft for that section —
-    // this is "for each section, AI fills the form from the photos taken".
+  test('AI Draft: attachChecklistPhotos files photos without calling AI (whole-report Generate Form does that)', async () => {
+    // Photo organization and AI drafting are deliberately separate now:
+    // attachChecklistPhotos only routes a checklist item's photos into the
+    // report field it names (photo-checklists.js's schemaSection/schemaField).
+    // Drafting the report from photos is a single whole-report pass, wired to
+    // the "Generate Form" button (finishInspection in app.js) via
+    // window.AI.analyzeInspectionPhotos + applyAiDraft — not called from here.
     const win = frame.contentWindow;
-    const job = await win.DB.addJob({ name: 'AI Checklist Job', jobType: 'termite' });
+    const job = await win.DB.addJob({ name: 'Checklist Filing Job', jobType: 'termite' });
     const blob = new win.Blob(['x'], { type: 'image/jpeg' });
     await win.DB.addCapture({ jobId: job.id, zone: 'Meter Box', type: 'photo', photoBlob: blob });
 
-    const calls = [];
-    const stub = {
-      analyzeSectionPhotos: async (blobs, sectionId) => {
-        calls.push({ sectionId, count: blobs.length });
-        return { draftFields: { [sectionId]: { durableNoticeFound: 'Yes' } } };
-      },
-    };
+    let sectionAiCalled = false;
     const origAI = win.AI;
-    win.AI = stub;
+    win.AI = { analyzeSectionPhotos: async () => { sectionAiCalled = true; return {}; } };
     try {
       await win.ReportUI.attachChecklistPhotos(job.id);
     } finally {
       win.AI = origAI;
     }
 
-    assertEqual(calls.length, 1, 'exactly one section (findings) had new checklist photos to analyze');
-    assertEqual(calls[0].sectionId, 'findings', 'the Meter Box photo routes to the findings section');
-    assertEqual(calls[0].count, 1, 'only the one new photo is sent, not the whole capture history');
-
+    assert(!sectionAiCalled, 'attachChecklistPhotos must not call analyzeSectionPhotos any more');
     const report = await win.DB.getReport(job.id);
-    assertEqual(report.aiDraft.draftFields.findings.durableNoticeFound, 'Yes',
-      'the stubbed AI result is persisted onto the report');
+    const photos = report.sections.findings.durableNoticePhotos;
+    assert(Array.isArray(photos) && photos.length === 1,
+      'the Meter Box photo is still filed into findings.durableNoticePhotos');
+    assert(!report.aiDraft, 'no AI draft is produced by filing alone');
   });
 
   // ---------- rendering ----------

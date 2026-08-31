@@ -736,8 +736,9 @@ input:focus, textarea:focus {
 .camera-controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 20px 32px calc(24px + var(--safe-bottom));
+  justify-content: center;
+  gap: 48px;
+  padding: 20px 32px 12px;
   background: #000;
 }
 
@@ -1308,38 +1309,24 @@ select {
   word-break: break-all;
 }
 
-/* ---------- Inspection live-preview recording ---------- */
+/* ---------- Inspection photo capture ---------- */
 #inspection-video {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.inspection-rec-pill {
-  position: absolute;
-  top: calc(14px + var(--safe-top));
-  right: 16px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(0,0,0,0.55);
-  color: #fff;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-}
+/* The old live-preview pill (a green dot + running timer over the camera)
+   read as "you are being recorded" no matter how it was worded — removed
+   outright rather than reworded again. Start/finish time still gets
+   captured (inspectionStartedAt in app.js); it's just not displayed as a
+   recording-style overlay any more. */
 
-/* Marks a live inspection session. Deliberately NOT the pulsing red dot this
-   replaced: nothing is being recorded any more, and a recording indicator over
-   a camera that is only taking stills tells the technician something untrue.
-   The timer beside it is still real and still needed — the NSW pesticide
-   record requires both a start and a finish time. */
-.session-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--accent);
+/* Primary action once photos are taken: read every photo and draft the
+   whole report. Sits below the shutter/import row, not styled like the
+   "stop recording" button it replaced. */
+.generate-form-btn {
+  margin: 0 16px calc(16px + var(--safe-bottom));
 }
 
 #inspection-zone-input {
@@ -1857,4 +1844,3 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 @media (prefers-reduced-motion: reduce) {
   #inspection-still-btn.prompting { animation: none; box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.55); }
 }
-.inspection-rec-label { opacity: 0.85; }

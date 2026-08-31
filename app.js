@@ -78,7 +78,6 @@
 
   const inspectionModal = document.getElementById('inspection-modal');
   const inspectionVideo = document.getElementById('inspection-video');
-  const inspectionModalTimer = document.getElementById('inspection-modal-timer');
   const inspectionZonePill = document.getElementById('inspection-zone-pill');
   const inspectionZoneInput = document.getElementById('inspection-zone-input');
   const inspectionChecklistRow = document.getElementById('inspection-checklist-row');
@@ -422,7 +421,7 @@
       hide(startInspectionBtn);
       show(finishInspectionBtn);
       show(inspectionTimerEl);
-      finishInspectionBtn.textContent = '■ Finish Inspection';
+      finishInspectionBtn.textContent = '✨ Generate Form';
     } else if (job.status === 'new') {
       show(startInspectionBtn);
       hide(finishInspectionBtn);
@@ -437,7 +436,7 @@
       hide(startInspectionBtn);
       show(finishInspectionBtn);
       hide(inspectionTimerEl);
-      finishInspectionBtn.textContent = '⚠ Recover / Finish Inspection';
+      finishInspectionBtn.textContent = '⚠ Recover / Generate Form';
     } else {
       hide(startInspectionBtn);
       hide(finishInspectionBtn);
@@ -1348,21 +1347,20 @@
       return;
     }
 
-    // Recording is live. renderInspectionControls hides this button below, but
-    // the same element is reused for the next job, so its label has to go back.
+    // The camera is open. renderInspectionControls hides this button below,
+    // but the same element is reused for the next job, so its label has to
+    // go back.
     resetButton();
     inspectionStartedAt = Date.now();
     inspectionTimerInterval = setInterval(() => {
-      const t = fmtTimer(Date.now() - inspectionStartedAt);
-      inspectionTimerEl.textContent = t;
-      inspectionModalTimer.textContent = t;
+      inspectionTimerEl.textContent = fmtTimer(Date.now() - inspectionStartedAt);
     }, 500);
 
     const jobIdForStart = currentJobId;
     await DB.updateJob(jobIdForStart, { status: 'in_progress', inspectionStartedAt });
     const job = await DB.getJob(jobIdForStart);
     renderInspectionControls(job);
-    toast('Inspection started — photograph each area, tagging the zone as you go.');
+    toast('Photograph each area, tagging the zone as you go — tap Generate Form when you\'re done.');
 
     // Both are best-effort, fire-and-forget: neither should delay the
     // camera preview opening, and both only fill an empty field (never
@@ -1461,13 +1459,13 @@
     const setStage = (s) => { finishStage = s; };
 
     const progressTimer = setInterval(() => {
-      if (!watchdogFired) toast('Finishing up — ' + finishStage + '…');
+      if (!watchdogFired) toast('Generating your form — ' + finishStage + '…');
     }, 4000);
 
     const watchdog = setTimeout(() => {
       watchdogFired = true;
       console.warn('[inspection] finishInspection watchdog fired after 45s while ' + finishStage);
-      toast('Still stuck while ' + finishStage + '. Your photos are saved on this device — reopen the job and try Finish again.');
+      toast('Still stuck while ' + finishStage + '. Your photos are saved on this device — reopen the job and try Generate Form again.');
       finishInspectionInProgress = false;
       finishInspectionBtn.disabled = false;
       inspectionFinishBtn.disabled = false;
@@ -1492,16 +1490,21 @@
         return;
       }
 
-      // Draft the report from the photographs taken during the walkthrough.
-      // Fire-and-forget, because the technician should reach the report
-      // immediately rather than waiting on an upload — jobIdAtStart is
-      // captured since they may navigate away before it resolves.
+      // Files each checklist photo into the report field it belongs to
+      // (photo-checklists.js's schemaSection/schemaField) — organizing, not
+      // AI. The AI pass below reads across every section in one go, so it
+      // isn't duplicated here per section.
       setStage('filing checklist photos');
       if (window.ReportUI && window.ReportUI.attachChecklistPhotos) {
         await window.ReportUI.attachChecklistPhotos(jobIdAtStart)
           .catch((err) => console.warn('[inspection] could not file checklist photos:', err.message || err));
       }
 
+      // This is the whole point of "Generate Form": read every photo taken
+      // and draft the whole report from what's in them. Fire-and-forget
+      // because the technician should reach the report immediately rather
+      // than waiting on it — jobIdAtStart is captured since they may
+      // navigate away before it resolves.
       setStage('reading the photos');
       let photoCount = 0;
       try {
@@ -1513,12 +1516,12 @@
           const jobForAi = await DB.getJob(jobIdAtStart);
           window.AI.analyzeInspectionPhotos(photos, jobForAi && jobForAi.jobType)
             .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
-            .then(() => toast('AI draft ready — review the suggested answers in the report'))
+            .then(() => toast('Form generated — review the AI-suggested answers in the report'))
             .catch((err) => {
               // Only logging this would make a failure indistinguishable from
-              // "the AI draft does nothing", which is how it once looked.
+              // "Generate Form does nothing", which is how it once looked.
               console.warn('[ai draft] photo analysis failed:', err.message || err);
-              toast('AI draft failed to generate — retry from the report’s "Generate AI Draft" button.');
+              toast('Could not generate the form from your photos — retry from the report’s "Generate AI Draft" button.');
             });
         }
       } catch (err) {
@@ -1526,14 +1529,14 @@
       }
 
       toast(photoCount
-        ? `Inspection finished — ${photoCount} photo${photoCount === 1 ? '' : 's'} captured. Opening report.`
-        : 'Inspection finished — no photos were taken, so there is nothing to draft from.');
+        ? `Generating your form from ${photoCount} photo${photoCount === 1 ? '' : 's'} — opening report.`
+        : 'No photos were taken, so there is nothing to generate a form from.');
 
       try {
         await ReportUI.openReview(jobIdAtStart);
       } catch (err) {
         console.error('[inspection] openReview failed:', err);
-        if (!watchdogFired) toast('Inspection finished, but the report view failed to open — open it from the job screen instead.');
+        if (!watchdogFired) toast('Photos saved, but the report view failed to open — open it from the job screen instead.');
       }
     } finally {
       clearInterval(progressTimer);

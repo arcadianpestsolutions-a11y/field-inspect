@@ -439,10 +439,6 @@
 
       const report = await loadOrCreateReport(jobId);
       let changed = false;
-      // Newly-filed blobs per section, so the AI pass below reads only what
-      // just came in — not every photo ever taken for that section on every
-      // re-run of Finish Inspection.
-      const newBlobsBySection = new Map();
       for (const item of items) {
         const matches = captures.filter((c) => c.photoBlob && c.zone === item.label);
         if (!matches.length) continue;
@@ -456,29 +452,13 @@
         section[item.schemaField] = [...existing, ...additions];
         report.sections[item.schemaSection] = section;
         changed = true;
-        const bucket = newBlobsBySection.get(item.schemaSection) || [];
-        bucket.push(...additions.map((a) => a.blob));
-        newBlobsBySection.set(item.schemaSection, bucket);
       }
       if (!changed) return;
       await DB.saveReport(report);
       if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
-
-      // The point of the checklist: each section gets read by the AI against
-      // just the photos taken for it, not the whole report in one pass — a
-      // kitchen shot informs treatmentDetails, not findings. Sequential, not
-      // parallel, because each call reads-modifies-saves the same report and
-      // a second read before the first save lands would silently drop it.
-      if (window.AI && window.AI.analyzeSectionPhotos) {
-        for (const [sectionId, blobs] of newBlobsBySection) {
-          try {
-            const result = await window.AI.analyzeSectionPhotos(blobs, sectionId, job && job.jobType);
-            await this.applyAiDraft(jobId, result);
-          } catch (err) {
-            console.warn(`[report] AI draft failed for section "${sectionId}":`, err.message || err);
-          }
-        }
-      }
+      // AI drafting is a single whole-report pass ("Generate Form" — see
+      // finishInspection in app.js), not one call per section here. This
+      // only organizes photos into the report fields the checklist names.
     },
     documentTypesFor,
     documentTypeOf,
