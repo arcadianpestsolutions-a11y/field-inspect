@@ -183,6 +183,69 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
 }
 
+// 'identify-pest': reads one or more close-up photographs of a pest or
+// insect and identifies it — common name, scientific name where the photo
+// supports it, confidence, and which of the technician's own picklist
+// categories it best matches. This is a narrower, harder question than
+// 'draft-report' asks anywhere (species-level identification, not "does
+// this photo bear on this yes/no field"), so it gets its own focused prompt
+// rather than being folded into the general drafting pass.
+//
+// Same rule as everything else here: this is a suggestion a licensed
+// technician reviews and applies deliberately (see identify-pest-btn in
+// report.js) — it is never written into the report on its own.
+async function handleIdentifyPest(body: any) {
+  const images = Array.isArray(body.images) ? body.images : [];
+  if (!images.length) return json({ error: 'identify-pest requires images[]' }, 400);
+
+  const targetPestOptions: string[] = Array.isArray(body.targetPestOptions) ? body.targetPestOptions : [];
+
+  const systemPrompt = `You are helping a licensed Australian pest control technician identify a pest or insect from a close-up inspection photograph.
+
+You are given ${images.length === 1 ? 'one photograph' : `${images.length} photographs`} taken during a pest inspection or treatment job. Identify every DISTINCT pest or insect you can actually see — most photos show just one, but identify each separately if more than one is visible.
+
+For each one give:
+- "commonName": the common name (e.g. "German Cockroach"). Use the most specific name the photo actually supports — if you can only tell it's "a cockroach" and not the species, say that plainly rather than guessing a species.
+- "scientificName": the binomial name, ONLY if the photo shows enough detail to support that specific a call. Empty string if not.
+- "confidence": "high", "medium", or "low" — be honest. A blurry, distant, or partially-obscured shot is low confidence no matter how common the pest looks.
+- "reasoning": one sentence naming the specific visible features that led to this identification (body shape, colouring, size relative to a visible reference, wing pattern, antennae, etc.) — the technician needs to be able to check your reading, not just trust it.
+${targetPestOptions.length ? `- "matchedCategory": whichever of these categories this identification best fits — choose the single closest match, exactly as written: ${JSON.stringify(targetPestOptions)}. If genuinely none fit, use "Other".` : ''}
+
+WHAT YOU MUST NOT DO. Never state species-level certainty a photograph cannot support. If the photo is too blurry, too distant, or too obscured to identify anything useful, say so in "reasoning" and use "low" confidence rather than inventing a specific answer. If you cannot identify anything at all in the photo(s) — no pest visible — return an empty identifications array rather than guessing at something.
+
+Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
+{
+  "identifications": [
+    { "commonName": "...", "scientificName": "...", "confidence": "high" | "medium" | "low", "reasoning": "...", "matchedCategory": "..." }
+  ]
+}`;
+
+  const userContent: unknown[] = [];
+  images.forEach((img: any, i: number) => {
+    userContent.push({ type: 'text', text: `Photo ${i + 1}` });
+    userContent.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.base64 },
+    });
+  });
+  userContent.push({ type: 'text', text: 'Identify every distinct pest or insect actually visible in these photographs.' });
+
+  const raw = await callClaude(systemPrompt, userContent);
+  const parsed = extractJson(raw);
+
+  const identifications = (Array.isArray(parsed.identifications) ? parsed.identifications : [])
+    .filter((id: any) => id && typeof id.commonName === 'string' && id.commonName)
+    .map((id: any) => ({
+      commonName: id.commonName,
+      scientificName: typeof id.scientificName === 'string' ? id.scientificName : '',
+      confidence: ['high', 'medium', 'low'].includes(id.confidence) ? id.confidence : 'low',
+      reasoning: typeof id.reasoning === 'string' ? id.reasoning : '',
+      matchedCategory: typeof id.matchedCategory === 'string' ? id.matchedCategory : '',
+    }));
+
+  return json({ identifications });
+}
+
 // 'trace-building': reads a building's exterior perimeter out of aerial
 // photos of the property, so the mud-map sketch starts from the real shape of
 // the house instead of a blank grid.
@@ -302,8 +365,9 @@ Deno.serve(async (req) => {
     const body = await req.json();
     if (body.action === 'draft-report') return await handleDraftReport(body);
     if (body.action === 'trace-building') return await handleTraceBuilding(body);
+    if (body.action === 'identify-pest') return await handleIdentifyPest(body);
 
-    return json({ error: 'Unknown action — expected "draft-report" or "trace-building"' }, 400);
+    return json({ error: 'Unknown action — expected "draft-report", "trace-building", or "identify-pest"' }, 400);
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);

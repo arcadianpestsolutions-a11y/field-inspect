@@ -225,7 +225,26 @@
     return invoke({ action: 'draft-report', reportType: jobType || 'termite', frames, fieldSchema });
   }
 
+  // Identifies the pest/insect in one or more close-up photos — species-level
+  // where the photo supports it, with confidence and reasoning the
+  // technician can check. `targetPestOptions` lets the Edge Function map its
+  // answer onto whichever picklist category (targetPests) fits best, so the
+  // caller can offer a one-tap "apply" rather than making the technician
+  // retype what the model already said. Returns { identifications: [...] } —
+  // never applied to the report on its own; see identify-pest-btn in
+  // report.js.
+  async function identifyPest(photoBlobs, targetPestOptions) {
+    const usable = (photoBlobs || []).filter(Boolean);
+    if (!usable.length) throw new Error('No photo to identify.');
+    const images = await Promise.all(usable.map(async (blob) => {
+      const dataUrl = await blobToDataUrl(blob);
+      const match = /^data:(image\/\w+);base64,(.+)$/.exec(dataUrl);
+      return { mediaType: match ? match[1] : 'image/jpeg', base64: match ? match[2] : '' };
+    }));
+    return invoke({ action: 'identify-pest', images, targetPestOptions: targetPestOptions || [] });
+  }
+
   window.AI = {
-    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline,
+    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline, identifyPest,
   };
 })();

@@ -138,7 +138,10 @@ const PEST_TREATMENT_SCHEMA = [
     icon: '🐜',
     color: '#92400e',
     fields: [
-      { id: 'pestPhotos', label: 'Photos of Pest Activity / Evidence', type: 'photos', triggersAiFill: true },
+      // identifiesInsects triggers the "🔍 Identify Pest" button in
+      // renderPhotosField (report.js) — a focused species-level ID, separate
+      // from triggersAiFill's whole-section drafting.
+      { id: 'pestPhotos', label: 'Photos of Pest Activity / Evidence', type: 'photos', triggersAiFill: true, identifiesInsects: true },
       {
         id: 'targetPests', label: 'Target Pest(s)', type: 'multiselect', required: true, aiFillable: true,
         options: ['German Cockroaches', 'Cockroaches', 'Ants', 'Spiders', 'Rodents (Rats/Mice)', 'Wasps/Bees',

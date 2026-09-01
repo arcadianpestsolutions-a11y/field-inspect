@@ -1840,6 +1840,82 @@
     wrap.appendChild(grid);
     wrap.appendChild(addBtn);
     wrap.appendChild(fileInput);
+
+    // A focused species-level read of one field's photos, separate from
+    // triggersAiFill's whole-section drafting above — see identifiesInsects
+    // in pest-treatment-schema.js and handleIdentifyPest in the Edge
+    // Function. Suggestion only: applying a match is a deliberate tap, never
+    // automatic.
+    if (field.identifiesInsects) {
+      const identifyBtn = document.createElement('button');
+      identifyBtn.type = 'button';
+      identifyBtn.className = 'btn btn-outline';
+      identifyBtn.textContent = '🔍 Identify Pest';
+
+      const resultsEl = document.createElement('div');
+      resultsEl.className = 'identify-pest-results hidden';
+
+      function renderResults(identifications, options) {
+        resultsEl.innerHTML = '';
+        if (!identifications.length) {
+          const empty = document.createElement('p');
+          empty.className = 'identify-pest-empty';
+          empty.textContent = 'Nothing identifiable in these photos — try a closer, clearer shot.';
+          resultsEl.appendChild(empty);
+          resultsEl.classList.remove('hidden');
+          return;
+        }
+        for (const id of identifications) {
+          const card = document.createElement('div');
+          card.className = 'identify-pest-card';
+          card.innerHTML = `
+            <div class="identify-pest-name">${escapeHtml(id.commonName)}${id.scientificName ? ` <span class="identify-pest-sci">(${escapeHtml(id.scientificName)})</span>` : ''}</div>
+            <div class="identify-pest-confidence identify-pest-confidence-${escapeHtml(id.confidence)}">${escapeHtml(id.confidence)} confidence</div>
+            <div class="identify-pest-reasoning">${escapeHtml(id.reasoning)}</div>
+          `;
+          if (id.matchedCategory && options.includes(id.matchedCategory)) {
+            const applyBtn = document.createElement('button');
+            applyBtn.type = 'button';
+            applyBtn.className = 'btn btn-secondary identify-pest-apply';
+            applyBtn.textContent = `+ Apply "${id.matchedCategory}" to Target Pest(s)`;
+            applyBtn.addEventListener('click', () => {
+              const current = new Set(pendingSectionValues.targetPests || []);
+              current.add(id.matchedCategory);
+              pendingSectionValues.targetPests = Array.from(current);
+              renderCurrentSectionFields();
+              toast(`Added "${id.matchedCategory}" to Target Pest(s)`);
+            });
+            card.appendChild(applyBtn);
+          }
+          resultsEl.appendChild(card);
+        }
+        resultsEl.classList.remove('hidden');
+      }
+
+      identifyBtn.addEventListener('click', async () => {
+        if (!photos.length) { toast('Add a photo first.'); return; }
+        if (!window.AI || !window.AI.identifyPest) { toast('AI identification is not available.'); return; }
+        identifyBtn.disabled = true;
+        identifyBtn.textContent = '🔍 Identifying…';
+        try {
+          const section = findSection(currentSectionId);
+          const targetField = section && (section.fields || []).find((f) => f.id === 'targetPests');
+          const options = (targetField && targetField.options) || [];
+          const result = await window.AI.identifyPest(photos.map((p) => p.blob), options);
+          renderResults(result.identifications || [], options);
+        } catch (err) {
+          console.warn('[report] pest identification failed:', err.message || err);
+          toast('Could not identify the pest: ' + (err.message || err));
+        } finally {
+          identifyBtn.disabled = false;
+          identifyBtn.textContent = '🔍 Identify Pest';
+        }
+      });
+
+      wrap.appendChild(identifyBtn);
+      wrap.appendChild(resultsEl);
+    }
+
     return wrap;
   }
 

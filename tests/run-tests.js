@@ -1364,6 +1364,64 @@
     assert(!report.aiDraft, 'no AI draft is produced by filing alone');
   });
 
+  test('AI Draft: Identify Pest button reads photos and offers to apply a matched category', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Identify Pest Job', jobType: 'pest_treatment' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    openReportSection(doc, 'Pest Identification');
+    await wait(200);
+
+    const fileInput = doc.querySelector('.photo-field input[type="file"]');
+    assert(fileInput, 'photo field file input should render');
+    const file = new win.File(['x'], 'bug.jpg', { type: 'image/jpeg' });
+    const dt = new win.DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+    fileInput.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await wait(200);
+
+    let calledWith = null;
+    const origAI = win.AI;
+    win.AI = {
+      identifyPest: async (blobs, options) => {
+        calledWith = { count: blobs.length, options };
+        return {
+          identifications: [{
+            commonName: 'German Cockroach', scientificName: 'Blattella germanica',
+            confidence: 'high', reasoning: 'test', matchedCategory: 'German Cockroaches',
+          }],
+        };
+      },
+    };
+    try {
+      const identifyBtn = Array.from(doc.querySelectorAll('button')).find((b) => b.textContent.includes('Identify Pest'));
+      assert(identifyBtn, 'Identify Pest button should render for pestPhotos');
+      identifyBtn.click();
+      await wait(200);
+
+      assert(calledWith, 'window.AI.identifyPest was called');
+      assertEqual(calledWith.count, 1, 'the one added photo is sent');
+      assert(calledWith.options.includes('German Cockroaches'), 'targetPests options are passed through');
+
+      const card = doc.querySelector('.identify-pest-card');
+      assert(card && card.textContent.includes('German Cockroach'), 'the identification renders');
+
+      const applyBtn = doc.querySelector('.identify-pest-apply');
+      assert(applyBtn, 'an apply button renders for the matched category');
+      applyBtn.click();
+      await wait(200);
+
+      const checked = Array.from(doc.querySelectorAll('.checkbox-chip'))
+        .find((chip) => chip.textContent.includes('German Cockroaches'))
+        .querySelector('input[type="checkbox"]');
+      assert(checked && checked.checked, 'German Cockroaches is ticked in Target Pest(s) after applying');
+    } finally {
+      win.AI = origAI;
+    }
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';
