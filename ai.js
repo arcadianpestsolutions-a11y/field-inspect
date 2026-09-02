@@ -244,7 +244,23 @@
     return invoke({ action: 'identify-pest', images, targetPestOptions: targetPestOptions || [] });
   }
 
+  // Identifies a tree/stump's species and termite susceptibility from one or
+  // more photos — feeds the Conducive Conditions section, since a dead or
+  // susceptible tree near the building is exactly the kind of condition that
+  // section records. Returns { trees: [...] }; never applied on its own, see
+  // the tree-photos field in report-schema.js's conducive section.
+  async function identifyTree(photoBlobs) {
+    const usable = (photoBlobs || []).filter(Boolean);
+    if (!usable.length) throw new Error('No photo to identify.');
+    const images = await Promise.all(usable.map(async (blob) => {
+      const dataUrl = await blobToDataUrl(blob);
+      const match = /^data:(image\/\w+);base64,(.+)$/.exec(dataUrl);
+      return { mediaType: match ? match[1] : 'image/jpeg', base64: match ? match[2] : '' };
+    }));
+    return invoke({ action: 'identify-tree', images });
+  }
+
   window.AI = {
-    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline, identifyPest,
+    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline, identifyPest, identifyTree,
   };
 })();

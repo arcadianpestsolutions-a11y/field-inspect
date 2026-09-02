@@ -469,8 +469,14 @@
     const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
     setter.call(input, 'DISCARD ME');
     input.dispatchEvent(new win.Event('input', { bubbles: true }));
-    doc.getElementById('section-back-btn').click(); // discard
-    await wait(200);
+    const origConfirm = win.confirm;
+    win.confirm = () => true; // confirm the discard — see the back-button confirmation test below
+    try {
+      doc.getElementById('section-back-btn').click(); // discard
+      await wait(200);
+    } finally {
+      win.confirm = origConfirm;
+    }
 
     openSection('Safety');
     await wait(200);
@@ -479,6 +485,88 @@
 
     const saved = await win.DB.getReport(job.id);
     assertEqual(saved.sections.chemicals.products[0].productName, 'KEEP ME', 'discarded edit must not persist');
+  });
+
+  test('UI: the header back arrow confirms before discarding unsaved photos/changes', async () => {
+    // Real report: a technician took photos in a section, tapped the header
+    // ← (the single most habitual "go back" tap there is), and lost them
+    // with no warning at all. The arrow must not discard silently any more.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Back Arrow Confirm Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    const openSection = (label) => {
+      const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((el) => el.textContent.includes(label));
+      assert(li, `section not found: ${label}`);
+      li.click();
+    };
+
+    openSection('About the Property Inspected');
+    await wait(200);
+    const fileInput = doc.querySelector('.photo-field input[type="file"]');
+    const file = new win.File(['x'], 'front.jpg', { type: 'image/jpeg' });
+    const dt = new win.DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+    fileInput.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await wait(200);
+
+    const origConfirm = win.confirm;
+    let confirmShown = false;
+    let confirmMessage = '';
+    win.confirm = (msg) => { confirmShown = true; confirmMessage = msg; return false; }; // Cancel
+    try {
+      doc.getElementById('section-back-btn').click();
+      await wait(150);
+      assert(confirmShown, 'a confirmation is shown before discarding an unsaved photo');
+      assert(/discard/i.test(confirmMessage), 'the confirmation says what will happen');
+      assert(!doc.getElementById('view-report-section').classList.contains('hidden'),
+        'cancelling the confirmation keeps the editor open, not discarding the photo');
+      assertEqual(doc.querySelector('.photo-field-grid').children.length, 1,
+        'the photo is still there after cancelling');
+
+      confirmShown = false;
+      win.confirm = (msg) => { confirmShown = true; confirmMessage = msg; return true; }; // now actually confirm the discard
+      doc.getElementById('section-back-btn').click();
+      await wait(150);
+      assert(confirmShown, 'confirming again still asks (not a one-time skip)');
+      assert(doc.getElementById('view-report-section').classList.contains('hidden'), 'confirming discards and goes back');
+    } finally {
+      win.confirm = origConfirm;
+    }
+
+    // No section was ever saved in this test (only opened, then confirmed
+    // away) — the report may not even exist in the DB yet. Either way, the
+    // discarded photo must not be in it.
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved ? (saved.sections.property || {}).propertyPhotos : undefined, undefined,
+      'the discarded photo never reached the saved report');
+  });
+
+  test('UI: the header back arrow does not prompt when there is nothing unsaved', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Back Arrow No-op Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => el.textContent.includes('About the Property Inspected'));
+    li.click();
+    await wait(200);
+
+    const origConfirm = win.confirm;
+    let confirmCalled = false;
+    win.confirm = () => { confirmCalled = true; return true; };
+    try {
+      doc.getElementById('section-back-btn').click();
+      await wait(150);
+      assert(!confirmCalled, 'no confirmation when nothing changed in the section');
+      assert(doc.getElementById('view-report-section').classList.contains('hidden'), 'back still works with no changes');
+    } finally {
+      win.confirm = origConfirm;
+    }
   });
 
   test('UI: finalize is not blocked by unsigned softRequired sections', async () => {
@@ -1417,6 +1505,67 @@
         .find((chip) => chip.textContent.includes('German Cockroaches'))
         .querySelector('input[type="checkbox"]');
       assert(checked && checked.checked, 'German Cockroaches is ticked in Target Pest(s) after applying');
+    } finally {
+      win.AI = origAI;
+    }
+  });
+
+  test('AI Draft: Identify Tree button reads tree photos and adds findings to the notes field', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Identify Tree Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => el.textContent.includes('Conducive Conditions'));
+    assert(li, 'Conducive Conditions section should be in the list');
+    li.click();
+    await wait(200);
+
+    const fileInputs = doc.querySelectorAll('.photo-field input[type="file"]');
+    const treeFileInput = fileInputs[1]; // conducivePhotos is first, treePhotos second
+    assert(treeFileInput, 'tree photo field should render');
+    const file = new win.File(['x'], 'tree.jpg', { type: 'image/jpeg' });
+    const dt = new win.DataTransfer();
+    dt.items.add(file);
+    treeFileInput.files = dt.files;
+    treeFileInput.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await wait(200);
+
+    let calledCount = null;
+    const origAI = win.AI;
+    win.AI = {
+      identifyTree: async (blobs) => {
+        calledCount = blobs.length;
+        return {
+          trees: [{
+            species: 'Sydney Blue Gum (Eucalyptus saligna)', susceptibility: 'high',
+            confidence: 'medium', reasoning: 'Visible trunk hollowing and dead limbs.', recommendDrilling: true,
+          }],
+        };
+      },
+    };
+    try {
+      const identifyBtn = Array.from(doc.querySelectorAll('button')).find((b) => b.textContent.includes('Identify Tree'));
+      assert(identifyBtn, 'Identify Tree button should render for treePhotos');
+      identifyBtn.click();
+      await wait(400);
+
+      assertEqual(calledCount, 1, 'the one added tree photo is sent');
+      const card = doc.querySelector('.identify-pest-card');
+      assert(card, 'the tree identification card renders');
+      assert(card && card.textContent.includes('Sydney Blue Gum'), 'the tree identification renders');
+      assert(card && card.textContent.includes('drilling'), 'the drilling recommendation shows when flagged');
+
+      const applyBtn = doc.querySelector('.identify-pest-apply');
+      applyBtn.click();
+      await wait(300);
+
+      const notesTextarea = Array.from(doc.querySelectorAll('textarea'))
+        .find((ta) => (ta.closest('.field-row') || {}).textContent?.includes('Tree Species'));
+      assert(notesTextarea, 'the tree assessment notes field should render');
+      assert(notesTextarea.value.includes('Sydney Blue Gum'), 'the finding is added to the notes field');
+      assert(notesTextarea.value.includes('high termite susceptibility'), 'the susceptibility is recorded in the notes');
     } finally {
       win.AI = origAI;
     }

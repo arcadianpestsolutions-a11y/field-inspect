@@ -1916,6 +1916,77 @@
       wrap.appendChild(resultsEl);
     }
 
+    // Species + termite susceptibility per tree photographed — feeds
+    // treeAssessmentNotes in the same section (Conducive Conditions), one
+    // tap at a time. See identifiesTrees in report-schema.js and
+    // handleIdentifyTree in the Edge Function.
+    if (field.identifiesTrees) {
+      const identifyTreeBtn = document.createElement('button');
+      identifyTreeBtn.type = 'button';
+      identifyTreeBtn.className = 'btn btn-outline';
+      identifyTreeBtn.textContent = '🌳 Identify Tree';
+
+      const treeResultsEl = document.createElement('div');
+      treeResultsEl.className = 'identify-pest-results hidden';
+
+      function renderTreeResults(trees) {
+        treeResultsEl.innerHTML = '';
+        if (!trees.length) {
+          const empty = document.createElement('p');
+          empty.className = 'identify-pest-empty';
+          empty.textContent = 'No tree clearly identifiable in these photos — try a closer, clearer shot.';
+          treeResultsEl.appendChild(empty);
+          treeResultsEl.classList.remove('hidden');
+          return;
+        }
+        for (const tree of trees) {
+          const card = document.createElement('div');
+          card.className = 'identify-pest-card';
+          card.innerHTML = `
+            <div class="identify-pest-name">${escapeHtml(tree.species)}</div>
+            <div class="identify-pest-confidence identify-pest-confidence-${escapeHtml(tree.susceptibility)}">${escapeHtml(tree.susceptibility)} termite susceptibility</div>
+            <div class="identify-pest-reasoning">${escapeHtml(tree.reasoning)}</div>
+            ${tree.recommendDrilling ? '<div class="identify-pest-flag">⚠ Worth drilling / further inspection</div>' : ''}
+          `;
+          const applyBtn = document.createElement('button');
+          applyBtn.type = 'button';
+          applyBtn.className = 'btn btn-secondary identify-pest-apply';
+          applyBtn.textContent = '+ Add to Tree Notes';
+          applyBtn.addEventListener('click', () => {
+            const line = `${tree.species} — ${tree.susceptibility} termite susceptibility. ${tree.reasoning}`
+              + (tree.recommendDrilling ? ' Recommend drilling/further inspection.' : '');
+            const existing = pendingSectionValues.treeAssessmentNotes || '';
+            pendingSectionValues.treeAssessmentNotes = existing ? `${existing}\n${line}` : line;
+            renderCurrentSectionFields();
+            toast('Added to Tree Species & Termite Susceptibility notes');
+          });
+          card.appendChild(applyBtn);
+          treeResultsEl.appendChild(card);
+        }
+        treeResultsEl.classList.remove('hidden');
+      }
+
+      identifyTreeBtn.addEventListener('click', async () => {
+        if (!photos.length) { toast('Add a photo first.'); return; }
+        if (!window.AI || !window.AI.identifyTree) { toast('AI identification is not available.'); return; }
+        identifyTreeBtn.disabled = true;
+        identifyTreeBtn.textContent = '🌳 Identifying…';
+        try {
+          const result = await window.AI.identifyTree(photos.map((p) => p.blob));
+          renderTreeResults(result.trees || []);
+        } catch (err) {
+          console.warn('[report] tree identification failed:', err.message || err);
+          toast('Could not identify the tree: ' + (err.message || err));
+        } finally {
+          identifyTreeBtn.disabled = false;
+          identifyTreeBtn.textContent = '🌳 Identify Tree';
+        }
+      });
+
+      wrap.appendChild(identifyTreeBtn);
+      wrap.appendChild(treeResultsEl);
+    }
+
     return wrap;
   }
 
@@ -2624,7 +2695,22 @@
     if (reason) toast(`Amendment recorded (${changes.length} field${changes.length === 1 ? '' : 's'}).`);
   });
 
+  // The header arrow is the most instinctive "go back" affordance there is —
+  // and until this, tapping it silently threw away anything typed or
+  // photographed in the section, with no warning at all. A technician who
+  // just took photos and tapped ← (a completely natural thing to do) lost
+  // them with no sign anything had gone wrong. Now it only discards after
+  // confirming there's actually something to lose, and lets them cancel
+  // back into the editor rather than lose work to a habitual tap.
   sectionBackBtn.addEventListener('click', () => {
+    const section = findSection(currentSectionId);
+    const changes = diffSection(section, currentReport.sections[currentSectionId], pendingSectionValues);
+    if (changes.length && !window.confirm(
+      `Discard ${changes.length} unsaved change${changes.length === 1 ? '' : 's'} to this section? `
+      + 'Tap Cancel to go back and use "Save & Back to Report" instead.'
+    )) {
+      return;
+    }
     hide(viewReportSection);
     show(viewReport);
   });

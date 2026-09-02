@@ -1169,6 +1169,15 @@ select {
 .identify-pest-confidence-low { background: rgba(255,255,255,0.08); color: var(--text-dim); }
 .identify-pest-reasoning { font-size: 0.85rem; color: var(--text-dim); }
 .identify-pest-apply { align-self: flex-start; }
+.identify-pest-flag {
+  align-self: flex-start;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #f5b301;
+  background: rgba(255,193,7,0.12);
+  padding: 4px 10px;
+  border-radius: 8px;
+}
 .photo-field-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .photo-field-tile { position: relative; width: 84px; height: 84px; border-radius: 10px; overflow: hidden; }
 .photo-field-tile img { width: 100%; height: 100%; object-fit: cover; }

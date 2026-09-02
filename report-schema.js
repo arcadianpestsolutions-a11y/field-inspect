@@ -257,6 +257,12 @@ const REPORT_SCHEMA = [
     color: '#123a66',
     fields: [
       { id: 'conducivePhotos', label: 'Conducive Conditions Photos', type: 'photos', triggersAiFill: true },
+      // identifiesTrees triggers the "🌳 Identify Tree" button in
+      // renderPhotosField (report.js) — species + termite susceptibility per
+      // tree, same pattern as pestPhotos' identifiesInsects. Results are
+      // added to treeAssessmentNotes with one tap, not written automatically.
+      { id: 'treePhotos', label: 'Trees Near the Property', type: 'photos', identifiesTrees: true },
+      { id: 'treeAssessmentNotes', label: 'Tree Species & Termite Susceptibility', type: 'textarea', aiFillable: true },
       { id: 'waterLeaksFound', label: 'Were water leaks found at the time of inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'waterTankPresent', label: 'Was a water tank(s) located at the time of inspection?', type: 'yesno', aiFillable: true },
       { id: 'tankDrainageWorkNeeded', label: 'Is there a need for work to rectify overflow drainage?', type: 'yesno', showIf: { field: 'waterTankPresent', equals: 'Yes' }, aiFillable: true },
@@ -476,7 +482,9 @@ function defaultValuesForSection(section) {
 //   4 — termite: added durableNoticePhotos; pest treatment: targetPests
 //       options expanded (German Cockroaches, Bird Lice / Mites, Possum,
 //       Birds, Ticks) — both found comparing against Formitize's real forms
-const SCHEMA_VERSION = 4;
+//   5 — termite: added treePhotos and treeAssessmentNotes to Conducive
+//       Conditions, for the AI tree-species/termite-susceptibility identifier
+const SCHEMA_VERSION = 5;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;

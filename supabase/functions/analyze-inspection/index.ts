@@ -246,6 +246,64 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   return json({ identifications });
 }
 
+// 'identify-tree': reads a photograph of a tree (or stump) near the property
+// and identifies its species and termite susceptibility — feeding directly
+// into the Conducive Conditions section, since a susceptible or dead tree
+// close to the building is exactly the kind of conducive condition that
+// section exists to record, and a technician looking at a tree on site has
+// no fast way to know which species are actually a termite risk.
+async function handleIdentifyTree(body: any) {
+  const images = Array.isArray(body.images) ? body.images : [];
+  if (!images.length) return json({ error: 'identify-tree requires images[]' }, 400);
+
+  const systemPrompt = `You are helping a licensed Australian pest/timber pest technician assess a tree or stump photographed near a property, for termite conducive-conditions reporting.
+
+You are given ${images.length === 1 ? 'one photograph' : `${images.length} photographs`} of a tree (or stump) taken during a timber pest inspection. Identify EVERY distinct tree visible if more than one — most photos show just one.
+
+For each tree give:
+- "species": the common name, as specific as the photo genuinely supports (e.g. "Sydney Blue Gum (Eucalyptus saligna)" if you can tell, "a eucalypt species" if you can only place the genus, "unable to identify species" if the photo doesn't support even that). Never state species-level certainty the photo can't support.
+- "susceptibility": "high", "moderate", or "low" — the tree's termite susceptibility/risk, based on BOTH:
+  (a) known termite susceptibility of the species/genus where confidently identified (e.g. many eucalypts and other susceptible hardwoods carry real risk, especially in heartwood; pines and other resinous conifers are comparatively more resistant but not immune), and
+  (b) what the photo actually shows: dead or dying wood, hollow or damaged trunk, visible fungal fruiting bodies (conks/brackets), existing termite mud tubes or galleries, and stumps or deadwood are all HIGH risk regardless of species, because dead timber is exactly what termites use — a species-level "low" risk tree that is visibly dead or hollow is still high risk in this assessment.
+- "confidence": "high", "medium", or "low" for the identification itself.
+- "reasoning": one or two sentences citing the SPECIFIC visible features driving both the species call and the susceptibility call (bark texture and colour, leaf shape, trunk condition, canopy health, visible hollowing/decay/fungal growth, proximity to the building if visible in frame).
+- "recommendDrilling": true if this tree or stump is a genuine candidate for a technician to physically inspect further (e.g. drill-test) given what's visible — typically true for anything dead, hollowed, showing decay/fungal growth, or a known highly susceptible species close to the structure. false for a visibly healthy, low-risk tree with nothing to investigate.
+
+WHAT YOU MUST NOT DO. Do not invent a confident species identification a photograph cannot support — say so plainly and mark confidence low instead. Do not claim to see termite activity, damage, or fungal growth that is not actually visible in the photograph.
+
+Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
+{
+  "trees": [
+    { "species": "...", "susceptibility": "high" | "moderate" | "low", "confidence": "high" | "medium" | "low", "reasoning": "...", "recommendDrilling": true | false }
+  ]
+}`;
+
+  const userContent: unknown[] = [];
+  images.forEach((img: any, i: number) => {
+    userContent.push({ type: 'text', text: `Photo ${i + 1}` });
+    userContent.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.base64 },
+    });
+  });
+  userContent.push({ type: 'text', text: 'Identify every distinct tree or stump actually visible and assess its termite susceptibility.' });
+
+  const raw = await callClaude(systemPrompt, userContent);
+  const parsed = extractJson(raw);
+
+  const trees = (Array.isArray(parsed.trees) ? parsed.trees : [])
+    .filter((t: any) => t && typeof t.species === 'string' && t.species)
+    .map((t: any) => ({
+      species: t.species,
+      susceptibility: ['high', 'moderate', 'low'].includes(t.susceptibility) ? t.susceptibility : 'moderate',
+      confidence: ['high', 'medium', 'low'].includes(t.confidence) ? t.confidence : 'low',
+      reasoning: typeof t.reasoning === 'string' ? t.reasoning : '',
+      recommendDrilling: !!t.recommendDrilling,
+    }));
+
+  return json({ trees });
+}
+
 // 'trace-building': reads a building's exterior perimeter out of aerial
 // photos of the property, so the mud-map sketch starts from the real shape of
 // the house instead of a blank grid.
@@ -366,8 +424,9 @@ Deno.serve(async (req) => {
     if (body.action === 'draft-report') return await handleDraftReport(body);
     if (body.action === 'trace-building') return await handleTraceBuilding(body);
     if (body.action === 'identify-pest') return await handleIdentifyPest(body);
+    if (body.action === 'identify-tree') return await handleIdentifyTree(body);
 
-    return json({ error: 'Unknown action — expected "draft-report", "trace-building", or "identify-pest"' }, 400);
+    return json({ error: 'Unknown action — expected "draft-report", "trace-building", "identify-pest", or "identify-tree"' }, 400);
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);
