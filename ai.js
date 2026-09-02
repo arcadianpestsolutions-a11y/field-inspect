@@ -111,10 +111,51 @@
     });
   }
 
+  // Turns whatever came back from the Edge Function into something a
+  // technician standing at a property can act on. The raw strings are
+  // written for whoever is debugging the function — "Unknown action —
+  // expected draft-report, trace-building, ..." is accurate and useless to
+  // the person holding the phone. Each case below says what went wrong AND
+  // what to do about it. Anything unrecognised keeps its original text
+  // rather than being swallowed: a mystery message still beats no message.
+  function humanError(err) {
+    const raw = String((err && err.message) || err || '');
+
+    // Client is newer than the deployed function: the feature shipped but
+    // the server side hasn't been deployed yet.
+    if (/unknown action/i.test(raw)) {
+      return 'This AI feature is not switched on yet — the app has it, the server still needs updating. Nothing you did wrong.';
+    }
+    if (/not authenticated|jwt|\b401\b/i.test(raw)) {
+      return 'You have been signed out. Log out and back in, then try again.';
+    }
+    if (/failed to fetch|networkerror|load failed|offline/i.test(raw)
+        || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      return 'No connection. Your photos are saved on this device — try again once you have signal.';
+    }
+    if (/\b404\b|not found/i.test(raw)) {
+      return 'The AI service could not be reached. It may not be deployed yet.';
+    }
+    if (/timeout|timed out|\b504\b|deadline/i.test(raw)) {
+      return 'The AI took too long to answer. Try again, or with fewer photos at once.';
+    }
+    if (/rate limit|\b429\b|quota|overloaded/i.test(raw)) {
+      return 'The AI service is busy right now. Wait a moment and try again.';
+    }
+    return raw;
+  }
+
   async function invoke(body) {
-    const { data, error } = await supabaseClient.functions.invoke('analyze-inspection', { body });
-    if (error) throw error;
-    if (data && data.error) throw new Error(data.error);
+    let data;
+    let error;
+    try {
+      ({ data, error } = await supabaseClient.functions.invoke('analyze-inspection', { body }));
+    } catch (err) {
+      // supabase-js throws rather than returning on transport failure.
+      throw new Error(humanError(err));
+    }
+    if (error) throw new Error(humanError(error));
+    if (data && data.error) throw new Error(humanError(new Error(data.error)));
     return data;
   }
 
@@ -282,5 +323,8 @@
   window.AI = {
     analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline,
     identifyPest, identifyTree, sortGeneralPhotos,
+    // Exported so report.js formats its own catch blocks the same way,
+    // rather than keeping a second copy of this logic in sync.
+    humanError,
   };
 })();

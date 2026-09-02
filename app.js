@@ -1530,8 +1530,12 @@
             .catch((err) => {
               // Only logging this would make a failure indistinguishable from
               // "Generate Form does nothing", which is how it once looked.
+              // The reason matters too: "retry" is wrong advice when the
+              // cause is a server that hasn't been deployed, and the
+              // technician would sit there retrying forever.
               console.warn('[ai draft] photo analysis failed:', err.message || err);
-              toast('Could not generate the form from your photos — retry from the report’s "Generate AI Draft" button.');
+              const why = (window.AI && window.AI.humanError) ? window.AI.humanError(err) : (err.message || err);
+              toast('Could not generate the form: ' + why);
             });
         }
       } catch (err) {

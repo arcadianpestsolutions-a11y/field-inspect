@@ -545,6 +545,48 @@
       'the discarded photo never reached the saved report');
   });
 
+  test('AI errors: raw Edge Function strings never reach the technician', async () => {
+    // The deployed function answers an un-deployed action with "Unknown
+    // action — expected draft-report, trace-building, ...". That is written
+    // for whoever is debugging the server, and it was being shown verbatim
+    // to a technician standing at a property. Every failure path must say
+    // what went wrong and what to do instead.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'AI Error Copy Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(300);
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => el.textContent.includes('Conducive Conditions'));
+    li.click();
+    await wait(300);
+
+    const treeInput = doc.querySelectorAll('.photo-field input[type="file"]')[1];
+    const dt = new win.DataTransfer();
+    dt.items.add(new win.File(['x'], 't.jpg', { type: 'image/jpeg' }));
+    treeInput.files = dt.files;
+    treeInput.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await wait(250);
+
+    const origAI = win.AI;
+    win.AI = {
+      identifyTree: async () => {
+        throw new Error('Unknown action — expected "draft-report", "trace-building", "identify-pest", "identify-tree", or "sort-photos"');
+      },
+    };
+    try {
+      Array.from(doc.querySelectorAll('button')).find((b) => b.textContent.includes('Identify Tree')).click();
+      await wait(400);
+      const toastEl = doc.querySelector('.toast, #toast');
+      const shown = toastEl ? toastEl.textContent : '';
+      assert(shown, 'a failure must say something, not fail silently');
+      assert(!/unknown action|draft-report|trace-building/i.test(shown),
+        `raw server wording leaked to the technician: "${shown}"`);
+    } finally {
+      win.AI = origAI;
+    }
+  });
+
   test('UI: the header back arrow does not prompt when there is nothing unsaved', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

@@ -1,6 +1,20 @@
 (() => {
   'use strict';
 
+  // Every AI failure shown to a technician goes through here. The real
+  // translation lives in ai.js (window.AI.humanError) so there is only one
+  // copy; this falls back to a plain message when ai.js isn't loaded at all,
+  // so a raw server string can't leak through that gap either.
+  function aiErrorText(err) {
+    if (window.AI && typeof window.AI.humanError === 'function') {
+      return window.AI.humanError(err);
+    }
+    const raw = String((err && err.message) || err || '');
+    return /unknown action|draft-report|trace-building/i.test(raw)
+      ? 'This AI feature is not switched on yet — the app has it, the server still needs updating.'
+      : raw;
+  }
+
   const { isFieldVisible, computeSectionStatus, defaultValuesForSection } = window.ReportSchemaUtils;
 
   // Two report types share this file: the termite inspection report
@@ -645,7 +659,7 @@
       toast('AI draft ready — suggested values will appear when you open each section');
     } catch (err) {
       console.error('[ai draft]', err);
-      toast('AI draft failed: ' + (err.message || err));
+      toast('AI draft failed: ' + aiErrorText(err));
     } finally {
       aiDraftInProgress = false;
       updateAiDraftButton();
@@ -1878,7 +1892,7 @@
         await applySectionPhotoAiResults(sectionIdAtStart, (result.draftFields && result.draftFields[sectionIdAtStart]) || {});
       } catch (err) {
         console.warn('[report] photo-driven AI fill failed:', err.message || err);
-        toast('Could not analyze those photos: ' + (err.message || err));
+        toast('Could not analyze those photos: ' + aiErrorText(err));
       } finally {
         aiAnalysisInFlight = false;
         if (aiStatusEl) aiStatusEl.classList.add('hidden');
@@ -1963,7 +1977,7 @@
 
       identifyBtn.addEventListener('click', async () => {
         if (!photos.length) { toast('Add a photo first.'); return; }
-        if (!window.AI || !window.AI.identifyPest) { toast('AI identification is not available.'); return; }
+        if (!window.AI || !window.AI.identifyPest) { toast('AI features need you signed in and online — they are off in demo mode. Your photos are still saved.'); return; }
         identifyBtn.disabled = true;
         identifyBtn.textContent = '🔍 Identifying…';
         try {
@@ -1974,7 +1988,7 @@
           renderResults(result.identifications || [], options);
         } catch (err) {
           console.warn('[report] pest identification failed:', err.message || err);
-          toast('Could not identify the pest: ' + (err.message || err));
+          toast('Could not identify the pest: ' + aiErrorText(err));
         } finally {
           identifyBtn.disabled = false;
           identifyBtn.textContent = '🔍 Identify Pest';
@@ -2037,7 +2051,7 @@
 
       identifyTreeBtn.addEventListener('click', async () => {
         if (!photos.length) { toast('Add a photo first.'); return; }
-        if (!window.AI || !window.AI.identifyTree) { toast('AI identification is not available.'); return; }
+        if (!window.AI || !window.AI.identifyTree) { toast('AI features need you signed in and online — they are off in demo mode. Your photos are still saved.'); return; }
         identifyTreeBtn.disabled = true;
         identifyTreeBtn.textContent = '🌳 Identifying…';
         try {
@@ -2045,7 +2059,7 @@
           renderTreeResults(result.trees || []);
         } catch (err) {
           console.warn('[report] tree identification failed:', err.message || err);
-          toast('Could not identify the tree: ' + (err.message || err));
+          toast('Could not identify the tree: ' + aiErrorText(err));
         } finally {
           identifyTreeBtn.disabled = false;
           identifyTreeBtn.textContent = '🌳 Identify Tree';
@@ -2068,7 +2082,7 @@
       sortBtn.textContent = '🤖 Sort These Photos Now';
       sortBtn.addEventListener('click', async () => {
         if (!photos.length) { toast('Add a photo first.'); return; }
-        if (!window.ReportUI || !window.ReportUI.sortGeneralPhotos) { toast('AI sorting is not available.'); return; }
+        if (!window.ReportUI || !window.ReportUI.sortGeneralPhotos) { toast('AI features need you signed in and online — they are off in demo mode. Your photos are still saved.'); return; }
         sortBtn.disabled = true;
         sortBtn.textContent = '🤖 Sorting…';
         try {
@@ -2078,7 +2092,7 @@
           renderCurrentSectionFields();
         } catch (err) {
           console.warn('[report] could not sort general photos:', err.message || err);
-          toast('Could not sort those photos: ' + (err.message || err));
+          toast('Could not sort those photos: ' + aiErrorText(err));
         } finally {
           sortBtn.disabled = false;
           sortBtn.textContent = '🤖 Sort These Photos Now';
