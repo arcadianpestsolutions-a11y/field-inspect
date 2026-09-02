@@ -1500,6 +1500,16 @@
           .catch((err) => console.warn('[inspection] could not file checklist photos:', err.message || err));
       }
 
+      // Anything photographed without a checklist match — an "Other" shot,
+      // or something added straight into the report editor — gets sorted
+      // into the right field automatically, same as the checklist photos
+      // just filed above.
+      setStage('sorting general photos');
+      if (window.ReportUI && window.ReportUI.sortGeneralPhotos) {
+        await window.ReportUI.sortGeneralPhotos(jobIdAtStart)
+          .catch((err) => console.warn('[inspection] could not sort general photos:', err.message || err));
+      }
+
       // This is the whole point of "Generate Form": read every photo taken
       // and draft the whole report from what's in them. Fire-and-forget
       // because the technician should reach the report immediately rather

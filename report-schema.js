@@ -38,6 +38,18 @@ const REPORT_SCHEMA = [
     icon: '👤',
     color: '#1f7a4d',
     fields: [
+      // A catch-all bucket for anything photographed that doesn't map to a
+      // specific checklist item — obstructions, general evidence, whatever
+      // else normally has a photo in an inspection report. AI sorts these
+      // into the right section/field automatically when the report is
+      // generated (sortGeneralPhotos in report.js); the technician never has
+      // to know in advance which field a given photo belongs in.
+      {
+        id: 'generalPhotos',
+        label: 'General Site Photos (obstructions, evidence — AI sorts these into the right sections)',
+        type: 'photos',
+        autoSorts: true,
+      },
       { id: 'clientName', label: 'Client Name', type: 'text', required: true },
       { id: 'clientAddress', label: 'Client Address', type: 'text' },
       { id: 'clientPhone', label: 'Client Phone', type: 'text' },
@@ -484,7 +496,9 @@ function defaultValuesForSection(section) {
 //       Birds, Ticks) — both found comparing against Formitize's real forms
 //   5 — termite: added treePhotos and treeAssessmentNotes to Conducive
 //       Conditions, for the AI tree-species/termite-susceptibility identifier
-const SCHEMA_VERSION = 5;
+//   6 — termite: added generalPhotos to Client Details, a catch-all AI
+//       sorts into the right section/field on Generate Form
+const SCHEMA_VERSION = 6;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;

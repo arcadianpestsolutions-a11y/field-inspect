@@ -1571,6 +1571,59 @@
     }
   });
 
+  test('AI Draft: sortGeneralPhotos routes generalPhotos and unmatched captures into the right fields', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Sort General Photos Job', jobType: 'termite' });
+
+    // One photo added straight to the report's generalPhotos bucket...
+    const generalBlob = new win.Blob(['g'], { type: 'image/jpeg' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: { clientDetails: { generalPhotos: [{ id: 'gp1', blob: generalBlob }] } },
+      finalizedAt: null,
+    });
+    // ...and one capture taken live with a zone that matches no checklist
+    // item (an "Other" shot), which should be swept in too.
+    const captureBlob = new win.Blob(['c'], { type: 'image/jpeg' });
+    await win.DB.addCapture({ jobId: job.id, zone: 'Something Unplanned', type: 'photo', photoBlob: captureBlob });
+    // A capture whose zone DOES match a checklist item must be left out of
+    // the pool — that one is already handled by attachChecklistPhotos.
+    const checklistBlob = new win.Blob(['k'], { type: 'image/jpeg' });
+    await win.DB.addCapture({ jobId: job.id, zone: 'Meter Box', type: 'photo', photoBlob: checklistBlob });
+
+    let sentCount = null;
+    let sentTargets = null;
+    const origAI = win.AI;
+    win.AI = {
+      sortGeneralPhotos: async (blobs, targets) => {
+        sentCount = blobs.length;
+        sentTargets = targets;
+        // Assign photo 1 (generalPhotos) to obstructionPhotos, photo 2 (the
+        // unmatched capture) to conducivePhotos.
+        return {
+          assignments: [
+            { photoIndex: 1, sectionId: 'access', fieldId: 'obstructionPhotos', reasoning: 'test' },
+            { photoIndex: 2, sectionId: 'conducive', fieldId: 'conducivePhotos', reasoning: 'test' },
+          ],
+        };
+      },
+    };
+    try {
+      await win.ReportUI.sortGeneralPhotos(job.id);
+    } finally {
+      win.AI = origAI;
+    }
+
+    assertEqual(sentCount, 2, 'only the generalPhotos entry and the unmatched capture are sent — not the checklist-matched one');
+    assert(!sentTargets.some((t) => t.fieldId === 'propertyPhotos' || t.fieldId === 'coverPhoto'),
+      'the cover/property photo fields are excluded as sort targets');
+    assert(!sentTargets.some((t) => t.fieldId === 'treePhotos'), 'the specialized tree field is excluded as a sort target');
+
+    const report = await win.DB.getReport(job.id);
+    assertEqual((report.sections.access.obstructionPhotos || []).length, 1, 'the general-bucket photo lands in obstructionPhotos');
+    assertEqual((report.sections.conducive.conducivePhotos || []).length, 1, 'the unmatched capture lands in conducivePhotos');
+  });
+
   // ---------- rendering ----------
   function renderResults() {
     resultsList.innerHTML = '';

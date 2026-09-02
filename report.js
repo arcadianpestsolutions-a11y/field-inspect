@@ -460,6 +460,75 @@
       // finishInspection in app.js), not one call per section here. This
       // only organizes photos into the report fields the checklist names.
     },
+    // Sorts every "general" photo into whichever specific field it's
+    // actually evidence for — obstructions, findings, conducive conditions,
+    // whatever fits. "General" means two things, both fed in together:
+    // (1) report-schema.js's generalPhotos catch-all field, for anything
+    // added straight into the report editor, and (2) captures taken live
+    // during Start Inspection whose zone didn't match a checklist item —
+    // the "Other" shots a technician takes of whatever's in front of them
+    // without knowing which field it belongs in. Called from Generate Form
+    // (finishInspection in app.js) alongside attachChecklistPhotos, so
+    // sorting is automatic either way. A photo AI can't confidently place
+    // stays exactly where it was — that's a normal outcome, not a failure.
+    async sortGeneralPhotos(jobId) {
+      if (!window.AI || !window.AI.sortGeneralPhotos) return;
+      const job = await DB.getJob(jobId);
+      const report = await loadOrCreateReport(jobId);
+
+      const generalPhotos = ((report.sections.clientDetails || {}).generalPhotos || [])
+        .map((p) => ({ sourceId: p.id, blob: p.blob }));
+
+      const jobCategory = job && job.jobType === 'pest_treatment' ? await this.getJobCategory(jobId) : null;
+      const checklistLabels = new Set(
+        (window.PhotoChecklists ? window.PhotoChecklists.forJob(job, jobCategory) : []).map((item) => item.label)
+      );
+      const captures = await DB.getCaptures(jobId);
+      const unmatchedCaptures = captures
+        .filter((c) => c.photoBlob && c.zone && !c.isFrontElevation && !checklistLabels.has(c.zone))
+        .map((c) => ({ sourceId: c.id, blob: c.photoBlob }));
+
+      const pool = [...generalPhotos, ...unmatchedCaptures];
+      if (!pool.length) return;
+
+      const schema = schemaFor(job && job.jobType, report);
+      const EXCLUDED_FIELD_IDS = new Set(['coverPhoto', 'propertyPhotos', 'generalPhotos', 'treePhotos']);
+      const targets = [];
+      for (const section of schema) {
+        for (const field of section.fields || []) {
+          if (field.type !== 'photos' || EXCLUDED_FIELD_IDS.has(field.id)) continue;
+          targets.push({ sectionId: section.id, fieldId: field.id, label: field.label });
+        }
+      }
+      if (!targets.length) return;
+
+      let result;
+      try {
+        result = await window.AI.sortGeneralPhotos(pool.map((p) => p.blob), targets);
+      } catch (err) {
+        console.warn('[report] could not sort general photos:', err.message || err);
+        return;
+      }
+      const assignments = (result && result.assignments) || [];
+      if (!assignments.length) return;
+
+      let changed = false;
+      for (const a of assignments) {
+        const photo = pool[a.photoIndex - 1];
+        if (!photo) continue;
+        const section = { ...(report.sections[a.sectionId] || {}) };
+        const existing = Array.isArray(section[a.fieldId]) ? section[a.fieldId] : [];
+        const existingIds = new Set(existing.map((p) => p.sourceId).filter(Boolean));
+        if (existingIds.has(photo.sourceId)) continue;
+        section[a.fieldId] = [...existing, { id: DB.uid(), sourceId: photo.sourceId, blob: photo.blob }];
+        report.sections[a.sectionId] = section;
+        changed = true;
+      }
+      if (!changed) return;
+      await DB.saveReport(report);
+      if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
+      toast(`AI sorted ${assignments.length} photo${assignments.length === 1 ? '' : 's'} into the right section${assignments.length === 1 ? '' : 's'}.`);
+    },
     documentTypesFor,
     documentTypeOf,
     async openArchive() {
@@ -1985,6 +2054,37 @@
 
       wrap.appendChild(identifyTreeBtn);
       wrap.appendChild(treeResultsEl);
+    }
+
+    // General Site Photos sorts itself automatically on Generate Form (see
+    // sortGeneralPhotos in report.js), but a technician working the report
+    // straight from the editor — no live inspection involved — needs a way
+    // to trigger it without leaving the section. Saves the section first, so
+    // a photo just added here is actually there to sort.
+    if (field.autoSorts) {
+      const sortBtn = document.createElement('button');
+      sortBtn.type = 'button';
+      sortBtn.className = 'btn btn-outline';
+      sortBtn.textContent = '🤖 Sort These Photos Now';
+      sortBtn.addEventListener('click', async () => {
+        if (!photos.length) { toast('Add a photo first.'); return; }
+        if (!window.ReportUI || !window.ReportUI.sortGeneralPhotos) { toast('AI sorting is not available.'); return; }
+        sortBtn.disabled = true;
+        sortBtn.textContent = '🤖 Sorting…';
+        try {
+          currentReport.sections[currentSectionId] = pendingSectionValues;
+          await DB.saveReport(currentReport);
+          await window.ReportUI.sortGeneralPhotos(currentJobId);
+          renderCurrentSectionFields();
+        } catch (err) {
+          console.warn('[report] could not sort general photos:', err.message || err);
+          toast('Could not sort those photos: ' + (err.message || err));
+        } finally {
+          sortBtn.disabled = false;
+          sortBtn.textContent = '🤖 Sort These Photos Now';
+        }
+      });
+      wrap.appendChild(sortBtn);
     }
 
     return wrap;

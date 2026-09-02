@@ -304,6 +304,69 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   return json({ trees });
 }
 
+// 'sort-photos': looks at a bucket of general/untagged photos (things a
+// technician photographed without knowing in advance which report field
+// they belong in — obstructions, general evidence, whatever else normally
+// gets a photo) and decides which specific photo field each one is
+// actually evidence for. This is what lets a "General Site Photos" bucket
+// (report-schema.js's generalPhotos) exist at all: the technician just
+// photographs what's in front of them, and the report sorts it out.
+//
+// Deliberately conservative: a photo that doesn't clearly belong anywhere
+// specific is left unassigned rather than forced into the nearest guess —
+// it stays visible in the general bucket, which is a better outcome than a
+// photo silently misfiled into the wrong section of a compliance document.
+async function handleSortPhotos(body: any) {
+  const images = Array.isArray(body.images) ? body.images : [];
+  const targets = Array.isArray(body.targets) ? body.targets : [];
+  if (!images.length) return json({ error: 'sort-photos requires images[]' }, 400);
+  if (!targets.length) return json({ error: 'sort-photos requires targets[]' }, 400);
+
+  const systemPrompt = `You are sorting general inspection photographs into the specific report field each one is evidence for.
+
+You are given ${images.length} photograph${images.length === 1 ? '' : 's'}, numbered in order, taken during a property inspection without being tagged to a specific field at the time. You are also given the list of specific photo fields this report can file evidence into:
+${JSON.stringify(targets, null, 2)}
+
+For each photograph, decide whether it is clearly evidence for ONE of those specific fields (e.g. a photo of a blocked subfloor entry is obstruction evidence; a photo of visible termite mudding is findings evidence; a photo of a downpipe or drainage issue is conducive-conditions evidence). Only assign a photo to a field when it genuinely, specifically matches — a general shot of a room, a wide exterior shot, or anything that doesn't clearly match one of these specific purposes should be LEFT OUT of your answer entirely rather than forced into the closest-sounding field. An unassigned photo is a normal, expected outcome, not a failure.
+
+For each photo you DO assign, give a one-sentence reason naming what's visible that makes it evidence for that specific field.
+
+Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
+{
+  "assignments": [
+    { "photoIndex": 1, "sectionId": "...", "fieldId": "...", "reasoning": "..." }
+  ]
+}`;
+
+  const userContent: unknown[] = [];
+  images.forEach((img: any, i: number) => {
+    userContent.push({ type: 'text', text: `Photo ${i + 1}` });
+    userContent.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.base64 },
+    });
+  });
+  userContent.push({ type: 'text', text: 'Sort each photo into a specific field only where it clearly, specifically belongs. Leave the rest unassigned.' });
+
+  const raw = await callClaude(systemPrompt, userContent);
+  const parsed = extractJson(raw);
+
+  const targetKeys = new Set(targets.map((t: any) => `${t.sectionId}::${t.fieldId}`));
+  const assignments = (Array.isArray(parsed.assignments) ? parsed.assignments : [])
+    .filter((a: any) => a
+      && Number.isInteger(a.photoIndex) && a.photoIndex >= 1 && a.photoIndex <= images.length
+      && typeof a.sectionId === 'string' && typeof a.fieldId === 'string'
+      && targetKeys.has(`${a.sectionId}::${a.fieldId}`))
+    .map((a: any) => ({
+      photoIndex: a.photoIndex,
+      sectionId: a.sectionId,
+      fieldId: a.fieldId,
+      reasoning: typeof a.reasoning === 'string' ? a.reasoning : '',
+    }));
+
+  return json({ assignments });
+}
+
 // 'trace-building': reads a building's exterior perimeter out of aerial
 // photos of the property, so the mud-map sketch starts from the real shape of
 // the house instead of a blank grid.
@@ -425,8 +488,9 @@ Deno.serve(async (req) => {
     if (body.action === 'trace-building') return await handleTraceBuilding(body);
     if (body.action === 'identify-pest') return await handleIdentifyPest(body);
     if (body.action === 'identify-tree') return await handleIdentifyTree(body);
+    if (body.action === 'sort-photos') return await handleSortPhotos(body);
 
-    return json({ error: 'Unknown action — expected "draft-report", "trace-building", "identify-pest", or "identify-tree"' }, 400);
+    return json({ error: 'Unknown action — expected "draft-report", "trace-building", "identify-pest", "identify-tree", or "sort-photos"' }, 400);
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);

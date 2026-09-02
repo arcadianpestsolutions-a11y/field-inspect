@@ -260,7 +260,27 @@
     return invoke({ action: 'identify-tree', images });
   }
 
+  // Sorts a bucket of untagged/general photos into whichever specific photo
+  // field each is actually evidence for. `targets` is the list of candidate
+  // fields — [{sectionId, fieldId, label}] — built by the caller from the
+  // report schema (see sortGeneralPhotos in report.js). Returns
+  // { assignments: [{ photoIndex, sectionId, fieldId, reasoning }] };
+  // `photoIndex` is 1-based, matching photoBlobs' order. A photo with no
+  // matching entry is left unassigned — that's an expected, normal result,
+  // not a failure.
+  async function sortGeneralPhotos(photoBlobs, targets) {
+    const usable = (photoBlobs || []).filter(Boolean);
+    if (!usable.length) return { assignments: [] };
+    const images = await Promise.all(usable.map(async (blob) => {
+      const dataUrl = await blobToDataUrl(blob);
+      const match = /^data:(image\/\w+);base64,(.+)$/.exec(dataUrl);
+      return { mediaType: match ? match[1] : 'image/jpeg', base64: match ? match[2] : '' };
+    }));
+    return invoke({ action: 'sort-photos', images, targets: targets || [] });
+  }
+
   window.AI = {
-    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline, identifyPest, identifyTree,
+    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline,
+    identifyPest, identifyTree, sortGeneralPhotos,
   };
 })();
