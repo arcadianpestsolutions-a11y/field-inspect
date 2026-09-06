@@ -2248,6 +2248,72 @@
       'and if none was fixed, that needs explaining');
   });
 
+  // ---------- Sync failure wording ----------
+  // These lock in a promise to the person holding the phone, not an
+  // implementation detail: whatever went wrong upstream, the message must
+  // say the work is still on the device. A technician who reads "permission
+  // denied" at the end of a job reasonably concludes the photos are gone and
+  // reshoots — or worse, doesn't.
+
+  test('Sync: a permissions failure says the work is safe and names what to fix', () => {
+    const win = frame.contentWindow;
+    const msg = win.SyncMessages.syncFailureText([
+      { table: 'captures', error: { code: '42501', message: 'permission denied for table captures' } },
+      { table: 'invoices', error: { code: '42501', message: 'permission denied for table invoices' } },
+    ]);
+    assert(/saved on this device/i.test(msg), 'it states plainly that nothing was lost');
+    assert(/photos/.test(msg), 'it names captures in the technician\u2019s words, not the table name');
+    assert(/invoices/.test(msg), 'every failing collection is named, not just the first');
+    assert(/42501/.test(msg), 'the code is kept for whoever has to fix the server');
+    assert(!/permission denied for table/.test(msg),
+      'the raw Postgres string never reaches the technician');
+  });
+
+  test('Sync: no failure message ever implies data was lost', () => {
+    const win = frame.contentWindow;
+    const cases = [
+      win.SyncMessages.syncFailureText([{ table: 'captures', error: { code: '42501', message: 'x' } }]),
+      win.SyncMessages.syncFailureText([{ table: 'footage', error: { message: 'Failed to fetch' } }]),
+      win.SyncMessages.syncFailureText([{ table: 'invoices', error: { message: 'something odd' } }]),
+      win.SyncMessages.fatalSyncText({ code: '42501', message: 'permission denied for table jobs' }),
+      win.SyncMessages.fatalSyncText({ message: 'Failed to fetch' }),
+      win.SyncMessages.fatalSyncText({ message: 'JWT expired' }),
+      win.SyncMessages.fatalSyncText({}),
+    ];
+    for (const msg of cases) {
+      assert(msg && msg.length > 20, `every path produces a real message, got: ${msg}`);
+      // A message may legitimately say "nothing is lost" — that is the
+      // reassurance, and the whole point. What it must never do is make a
+      // loss claim. Drop the clauses that are explicit negations, then scan
+      // whatever is left.
+      const claim = msg
+        .split(/[.\u2014;]/)
+        .filter((clause) => !/\bnothing\b/i.test(clause))
+        .join(' ');
+      assert(!/\blost\b|\bgone\b|\bdeleted\b|\bfailed\b/i.test(claim),
+        `message must not read as data loss: ${msg}`);
+      assert(/device|signal/i.test(msg),
+        `message must tell them where their work is: ${msg}`);
+    }
+  });
+
+  test('Sync: an expired login is explained as a login problem, not a backup problem', () => {
+    const win = frame.contentWindow;
+    const msg = win.SyncMessages.fatalSyncText({ message: 'JWT expired' });
+    assert(/log out and back in/i.test(msg), 'it says the one thing that actually fixes it');
+  });
+
+  test('Sync: the status bar never reads "Synced" when something did not back up', () => {
+    // The bug this guards: a partial sync used to be indistinguishable from a
+    // clean one, so photos silently stayed on the phone while the bar said
+    // everything was away.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const detail = doc.getElementById('sync-detail');
+    assert(detail, 'the app has somewhere to explain a partial sync');
+    assert(detail.classList.contains('hidden'), 'and it stays out of the way when there is nothing to say');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

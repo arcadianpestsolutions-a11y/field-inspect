@@ -1,12 +1,82 @@
-// Cloud sync layer — talks to Supabase so job details and report data are
-// available from any signed-in device. Photos and video stay local-only
-// (IndexedDB), by design — only job/report fields sync.
+// Cloud sync layer — talks to Supabase so job details, report data, photos
+// and invoices are available from any signed-in device.
+//
+// The header used to say "photos and video stay local-only, by design". That
+// stopped being true at migration 004, which added the captures and footage
+// tables and the inspection-media storage bucket: metadata rows go to
+// Postgres and the bytes go to storage. Left uncorrected, that one stale
+// sentence is the difference between believing your photos are backed up and
+// knowing they are.
 //
 // Every push is best-effort: if it fails (offline, etc.) it's silently
 // skipped and reconciled by the next pullAll(), which does a full two-way
-// sync using "most recently updated wins".
+// sync using "most recently updated wins". A collection that cannot sync at
+// all no longer aborts the ones after it — see fullSync.
 (() => {
   'use strict';
+
+  // ---------- What the technician reads when sync goes wrong ----------
+  // Deliberately above the test/demo and configuration guards below:
+  // these are pure text, they depend on nothing, and the suite has to be
+  // able to assert on the exact wording without a live Supabase session.
+  // The whole-sync failure case: jobs or reports themselves would not load.
+  // Those two are the spine — a capture references a job, a report belongs to
+  // one — so unlike the collections below, there is no sensible way to carry
+  // on without them.
+  function fatalSyncText(err) {
+    const msg = (err && (err.message || err.details)) || String(err || '');
+    if (err && err.code === '42501') {
+      return 'Signed in, but this account cannot reach the cloud records yet. '
+        + 'Everything you do is saved on this device in the meantime. '
+        + `This needs fixing on the server (${msg}).`;
+    }
+    if (/fetch|network|Failed to fetch|NetworkError/i.test(msg)) {
+      return 'Could not reach the server. Your work is saved on this device '
+        + 'and will back up on its own once you have signal.';
+    }
+    if (/JWT|token|session|expired/i.test(msg)) {
+      return 'Your login has expired. Log out and back in to start backing up '
+        + 'again — nothing on this device is lost in the meantime.';
+    }
+    return 'Backup did not run this time. Your work is saved on this device '
+      + 'and the app will try again shortly.';
+  }
+
+  // What a technician sees when a table refuses to sync. The raw Postgres
+  // string ("permission denied for table captures") tells them nothing they
+  // can act on, and worse, it reads like the photos are gone — the one thing
+  // that is never true here, because every capture is already written to
+  // IndexedDB on the device before sync is even attempted.
+  // Plural throughout: the sentence is always "Your X are saved on this
+  // device", and "your video are saved" is the kind of thing a client would
+  // notice if it ever made it onto a report.
+  const TABLE_NAMES = { captures: 'photos', footage: 'videos', invoices: 'invoices' };
+
+  function syncFailureText(failed) {
+    const names = failed.map((f) => TABLE_NAMES[f.table] || f.table);
+    const what = names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+    // 42501 is Postgres for "no privilege on this table". It is a setup
+    // problem on the server, not something a retry or a reinstall fixes, so
+    // say so plainly and name the tables for whoever has to fix it.
+    const denied = failed.filter((f) => f.error && f.error.code === '42501');
+    if (denied.length === failed.length) {
+      return `Your ${what} are saved on this device but aren't backing up yet — `
+        + `the cloud account doesn't have permission to store them. Nothing is lost. `
+        + `This needs fixing on the server (${denied.map((f) => f.table).join(', ')}: 42501).`;
+    }
+    const offline = failed.some((f) => /fetch|network|Failed to fetch/i.test(
+      (f.error && (f.error.message || f.error.details)) || ''));
+    if (offline) {
+      return `Your ${what} are saved on this device. The server couldn't be reached, `
+        + `so they'll upload next time you have signal.`;
+    }
+    return `Your ${what} are saved on this device but didn't back up this time. `
+      + `The app will try again automatically.`;
+  }
+
+  window.SyncMessages = { syncFailureText, fatalSyncText };
 
   // Test and demo modes never touch the cloud. Syncing from a browser that
   // holds a real session would pull production records into the sandbox and
@@ -594,39 +664,62 @@
         }
       }
 
-      await syncCollection({
-        table: 'captures',
-        localAll: await DB.getAllCaptures(),
-        toLocal: remoteCaptureToLocal,
-        putRaw: (rec) => DB.putCaptureRaw(rec),
-        push: pushCapture,
-      });
+      // Each collection is reconciled independently. Before, one failing
+      // table threw straight out of fullSync, so a permission problem on
+      // captures also silently skipped footage, invoices and the media
+      // backup below it — the sync looked like one broken thing when four
+      // were being missed. A failure here is recorded and the rest continues.
+      const failed = [];
+      const collections = [
+        {
+          table: 'captures',
+          localAll: () => DB.getAllCaptures(),
+          toLocal: remoteCaptureToLocal,
+          putRaw: (rec) => DB.putCaptureRaw(rec),
+          push: pushCapture,
+        },
+        {
+          table: 'footage',
+          localAll: () => DB.getAllFootage(),
+          toLocal: remoteFootageToLocal,
+          putRaw: (rec) => DB.putFootageRaw(rec),
+          push: pushFootage,
+        },
+        {
+          table: 'invoices',
+          localAll: () => DB.getAllInvoices(),
+          toLocal: remoteInvoiceToLocal,
+          putRaw: (rec) => DB.putInvoiceRaw(rec),
+          push: pushInvoice,
+        },
+      ];
 
-      await syncCollection({
-        table: 'footage',
-        localAll: await DB.getAllFootage(),
-        toLocal: remoteFootageToLocal,
-        putRaw: (rec) => DB.putFootageRaw(rec),
-        push: pushFootage,
-      });
-
-      await syncCollection({
-        table: 'invoices',
-        localAll: await DB.getAllInvoices(),
-        toLocal: remoteInvoiceToLocal,
-        putRaw: (rec) => DB.putInvoiceRaw(rec),
-        push: pushInvoice,
-      });
+      for (const c of collections) {
+        try {
+          await syncCollection({ ...c, localAll: await c.localAll() });
+        } catch (e) {
+          console.warn(`[sync] ${c.table} did not sync:`, e.message || e);
+          failed.push({ table: c.table, error: e });
+        }
+      }
 
       // Records are cheap and now consistent; bytes are expensive, so they're
       // fetched last and failures here don't fail the sync.
       await pullMissingMedia();
 
+      if (failed.length) {
+        setStatus({ state: 'partial', lastSyncedAt: Date.now(), error: syncFailureText(failed) });
+        return { ok: false, partial: true, failed: failed.map((f) => f.table) };
+      }
+
       setStatus({ state: 'synced', lastSyncedAt: Date.now(), error: null });
       return { ok: true };
     } catch (e) {
       console.warn('[sync] full sync failed:', e.message || e);
-      setStatus({ state: 'error', error: e.message || String(e) });
+      // The raw message stays in the console for whoever is debugging; the
+      // technician gets something that answers the only question they have,
+      // which is whether their work is safe.
+      setStatus({ state: 'error', error: fatalSyncText(e) });
       return { ok: false, error: e };
     } finally {
       pulling = false;
@@ -674,5 +767,9 @@
     currentUserId,
     isOnline,
     getStatus: () => syncStatus,
+    // Exposed so the suite can assert on the wording a technician actually
+    // reads, rather than on the Postgres codes behind it.
+    syncFailureText,
+    fatalSyncText,
   };
 })();

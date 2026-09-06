@@ -47,6 +47,11 @@
     </span>
   </div>
 
+  <!-- Only shown when something did not back up. The one-line status above
+       ellipsises, and "Some items not backed up" on its own tells a
+       technician nothing about whether their photos are safe. -->
+  <div id="sync-detail" class="sync-detail hidden"></div>
+
   <main class="content">
     <div class="joblist-toolbar">
       <input id="job-search-input" type="search" class="job-search-input" placeholder="Search jobs by name or address…" autocomplete="off" />

@@ -13,6 +13,7 @@
 
   const syncBar = document.getElementById('sync-bar');
   const syncStatusText = document.getElementById('sync-status-text');
+  const syncDetailEl = document.getElementById('sync-detail');
   const syncNowBtn = document.getElementById('sync-now-btn');
   const logoutBtn = document.getElementById('logout-btn');
 
@@ -299,9 +300,22 @@
     else if (status.state === 'syncing') statusPart = 'Syncing…';
     else if (status.state === 'synced' && status.lastSyncedAt) {
       statusPart = 'Synced ' + new Date(status.lastSyncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } else if (status.state === 'partial') {
+      // A partial sync has genuinely saved some things and not others.
+      // Reading 'Synced' here would be a lie a technician acts on, so the
+      // bar says which half failed and the detail line explains it.
+      statusPart = 'Some items not backed up';
     } else if (status.state === 'error') statusPart = 'Sync error — will retry';
     else statusPart = 'Not synced yet';
     syncStatusText.textContent = (loggedInEmail ? 'Signed in as ' + loggedInEmail : '') + (statusPart ? ' · ' + statusPart : '');
+
+    // Null-guarded on purpose: a stale cached index.html served alongside
+    // fresh JS would otherwise take the whole sync bar down with it.
+    if (syncDetailEl) {
+      const detail = (status.state === 'partial' || status.state === 'error') ? (status.error || '') : '';
+      syncDetailEl.textContent = detail;
+      syncDetailEl.classList.toggle('hidden', !detail);
+    }
   }
 
   loginBtn.addEventListener('click', async () => {
@@ -332,10 +346,15 @@
 
   syncNowBtn.addEventListener('click', async () => {
     if (!window.Sync) return;
-    await Sync.pullAll();
+    const result = await Sync.pullAll();
     await renderJobList();
     if (currentJobId) await renderGallery();
-    toast('Sync complete');
+    // Reporting success on a sync that did not upload is how a technician
+    // ends up believing a job is backed up when it is not. The detail bar
+    // carries the explanation; the toast just stops short of claiming a win.
+    if (result && result.ok) toast('Sync complete');
+    else if (result && result.partial) toast('Synced, but some items stayed on this device');
+    else toast('Could not back up — your work is safe on this device');
   });
 
   window.addEventListener('online', updateSyncBarText);

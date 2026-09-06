@@ -1896,3 +1896,15 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   color: var(--accent-ink);
   border-color: var(--accent);
 }
+
+/* Sync trouble, explained in words rather than a Postgres error code. Amber
+   not red: the work is safe on the device, so this is a "needs attention"
+   not a "you have lost something". */
+.sync-detail {
+  padding: 8px 16px;
+  background: rgba(191, 132, 22, 0.14);
+  border-bottom: 1px solid rgba(191, 132, 22, 0.35);
+  color: #e8c07a;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
