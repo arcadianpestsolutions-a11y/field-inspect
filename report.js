@@ -1396,6 +1396,10 @@
   }
 
   function renderField(field) {
+    // A pure data slot (the sketch's marker JSON): no label, no control, no
+    // row at all — it exists only so the value round-trips through save.
+    if (field.type === 'sketchData') return;
+
     const row = fieldRowWrapper(field);
 
     if (field.type === 'static') {
@@ -2199,7 +2203,13 @@
       for (let y = 0; y <= canvas.height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
     }
 
-    function saveSnapshot() { pendingSectionValues[field.id] = canvas.toDataURL('image/png'); }
+    // Two things are saved every redraw: the flattened image the report and
+    // PDF already use, and the markers as data so a later edit gets real
+    // markers back instead of a picture of them.
+    function saveSnapshot() {
+      pendingSectionValues[field.id] = canvas.toDataURL('image/png');
+      pendingSectionValues.sketchData = markers.length ? JSON.stringify({ markers }) : '';
+    }
 
     // ---------- Aerial backdrop ----------
     // Three things can sit underneath the technician's own drawing, and they
@@ -2215,7 +2225,16 @@
     let buildingPolygon = null;
     let backdropImage = null;
     let hasFreehandWork = false;
-    let mode = 'draw'; // 'draw' | 'label' | 'corners'
+    let mode = 'draw'; // 'draw' | 'label' | 'corners' | 'stamp'
+
+    // Placed pest-control markers, kept as structured data (not just baked
+    // pixels) so they survive a later edit — see sketchData in
+    // report-schema.js. Each is { id, kind, x, y, n, note } with x/y as
+    // 0-1 fractions of the canvas, so they stay put at any size.
+    let markers = [];
+    let stampKind = 'drill';
+    let gpsCorners = [];
+    const stampBtns = {};
 
     // Declared up here, not with the rest of the UI at the bottom, because
     // the backdrop loader below reports what it found by rewriting it — and
@@ -2271,6 +2290,8 @@
         drawPolygon(buildingPolygon, { stroke: '#2c7a4b', fill: 'rgba(44,122,75,0.10)', width: 2.5, dash: null });
       }
       ctx.drawImage(ink, 0, 0);
+      drawMarkers();
+      drawLegend();
       if (mode === 'corners') drawCornerHandles();
     }
 
@@ -2514,6 +2535,9 @@
       }
       mode = next;
       drawBtn.classList.toggle('active', mode === 'draw');
+      if (mode !== 'stamp') {
+        Object.keys(stampBtns).forEach((k) => stampBtns[k].classList.remove('active'));
+      }
       labelBtn.classList.toggle('active', mode === 'label');
       cornersBtn.classList.toggle('active', mode === 'corners');
       redrawBase();
@@ -2652,6 +2676,392 @@
     wrap.appendChild(shapeRow);
 
     wrap.appendChild(hint);
+
+    // ================= Pest markers, GPS corners, auto-legend =================
+    // Written for a technician on a ladder with one hand free. Every control
+    // says what it does in plain words, the app does the tidying (numbering,
+    // squaring, the legend) so the client-facing result looks the same no
+    // matter who drew it, and anything that cannot work says why.
+
+    const STAMPS = {
+      drill: { label: 'Drill point', short: 'Drill / rod point', shape: 'circle', colour: '#c0392b', numbered: true },
+      bait: { label: 'Bait station', short: 'Bait station', shape: 'square', colour: '#8e44ad', numbered: true },
+      pier: { label: 'Pier', short: 'Pier', shape: 'triangle', colour: '#7f8c8d', numbered: false },
+      tree: { label: 'Tree', short: 'Tree', shape: 'tree', colour: '#2c7a4b', numbered: false },
+      water: { label: 'Water', short: 'Tap / water source', shape: 'drop', colour: '#2980b9', numbered: false },
+      meter: { label: 'Meter box', short: 'Electric / gas meter', shape: 'meter', colour: '#b26a00', numbered: false },
+      // The moisture sources. All four are conducive conditions in their own
+      // right — a leaking HWS relief valve or an air-con condensate line
+      // discharging against the slab is a textbook termite attractant — so
+      // marking where they sit on the plan is doing double duty.
+      hws: { label: 'Hot water', short: 'Hot water system', shape: 'cylinder', colour: '#c0392b', numbered: false },
+      tank: { label: 'Water tank', short: 'Water tank', shape: 'tank', colour: '#2980b9', numbered: false },
+      aircon: { label: 'Air con', short: 'Air conditioner', shape: 'aircon', colour: '#16a085', numbered: false },
+      downpipe: { label: 'Downpipe', short: 'Downpipe / drain', shape: 'pipe', colour: '#34495e', numbered: false },
+    };
+
+    const markerDataField = 'sketchData';
+
+    function nextNumber(kind) {
+      const used = markers.filter((m) => m.kind === kind).map((m) => m.n).filter((n) => typeof n === 'number');
+      return used.length ? Math.max.apply(null, used) + 1 : 1;
+    }
+
+    function drawMarkers() {
+      for (const m of markers) {
+        const spec = STAMPS[m.kind];
+        if (!spec) continue;
+        const x = m.x * canvas.width;
+        const y = m.y * canvas.height;
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = spec.colour;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        if (spec.shape === 'circle') {
+          ctx.arc(x, y, 9, 0, Math.PI * 2);
+        } else if (spec.shape === 'square') {
+          ctx.rect(x - 8, y - 8, 16, 16);
+        } else if (spec.shape === 'triangle') {
+          ctx.moveTo(x, y - 9); ctx.lineTo(x + 8, y + 7); ctx.lineTo(x - 8, y + 7); ctx.closePath();
+        } else if (spec.shape === 'drop') {
+          ctx.moveTo(x, y - 10);
+          ctx.quadraticCurveTo(x + 9, y + 2, x, y + 9);
+          ctx.quadraticCurveTo(x - 9, y + 2, x, y - 10);
+          ctx.closePath();
+        } else if (spec.shape === 'meter') {
+          ctx.rect(x - 8, y - 6, 16, 12);
+        } else if (spec.shape === 'cylinder') {
+          // tall upright cylinder — reads as a hot water unit
+          ctx.rect(x - 5, y - 10, 10, 20);
+        } else if (spec.shape === 'tank') {
+          // squat wide cylinder — reads as a rainwater tank
+          ctx.rect(x - 9, y - 6, 18, 13);
+        } else if (spec.shape === 'aircon') {
+          ctx.rect(x - 9, y - 6, 18, 12);
+        } else if (spec.shape === 'pipe') {
+          ctx.rect(x - 3, y - 10, 6, 20);
+        } else {
+          ctx.arc(x, y - 3, 8, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
+        if (spec.shape === 'tree') {
+          ctx.beginPath(); ctx.moveTo(x, y + 5); ctx.lineTo(x, y + 10); ctx.stroke();
+        }
+        // Fins, so an air conditioner is not just another rectangle next to
+        // the meter box at a glance.
+        if (spec.shape === 'aircon') {
+          ctx.beginPath();
+          for (let fx = -5; fx <= 5; fx += 5) { ctx.moveTo(x + fx, y - 3); ctx.lineTo(x + fx, y + 3); }
+          ctx.stroke();
+        }
+        if (spec.shape === 'tank' || spec.shape === 'cylinder') {
+          ctx.beginPath();
+          ctx.moveTo(x - (spec.shape === 'tank' ? 9 : 5), y - (spec.shape === 'tank' ? 2 : 5));
+          ctx.lineTo(x + (spec.shape === 'tank' ? 9 : 5), y - (spec.shape === 'tank' ? 2 : 5));
+          ctx.stroke();
+        }
+        if (spec.numbered && typeof m.n === 'number') {
+          ctx.fillStyle = spec.colour;
+          ctx.font = 'bold 10px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(m.n), x, y + 0.5);
+        }
+        ctx.restore();
+      }
+    }
+
+    // The biggest difference between a sketch that reads as a professional's
+    // and one that reads as a doodle is whether the client can tell what the
+    // symbols mean. So the legend is not something the technician has to
+    // remember — it draws itself from whatever was actually placed, and it
+    // disappears when there is nothing to explain.
+    function drawLegend() {
+      const kinds = [];
+      for (const m of markers) if (STAMPS[m.kind] && kinds.indexOf(m.kind) === -1) kinds.push(m.kind);
+      if (!kinds.length) return;
+      // Two columns once the list gets long: a legend that eats half the plan
+      // defeats the point of drawing one.
+      const rowH = 14;
+      const cols = kinds.length > 5 ? 2 : 1;
+      const perCol = Math.ceil(kinds.length / cols);
+      const colW = 122;
+      const boxH = perCol * rowH + 11;
+      const boxW = cols * colW + 4;
+      const x0 = 6;
+      const y0 = canvas.height - boxH - 6;
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,255,255,0.93)';
+      ctx.strokeStyle = '#c9cfd8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.rect(x0, y0, boxW, boxH);
+      ctx.fill();
+      ctx.stroke();
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      kinds.forEach((k, i) => {
+        const spec = STAMPS[k];
+        const col = Math.floor(i / perCol);
+        const cx = x0 + col * colW;
+        const cy = y0 + 9 + (i % perCol) * rowH;
+        let count = 0;
+        for (const m of markers) if (m.kind === k) count++;
+        ctx.strokeStyle = spec.colour;
+        ctx.fillStyle = '#fff';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        const boxy = ['square', 'meter', 'aircon', 'tank', 'cylinder', 'pipe'];
+        if (boxy.indexOf(spec.shape) !== -1) ctx.rect(cx + 8, cy - 4, 8, 8);
+        else ctx.arc(cx + 12, cy, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#333';
+        ctx.fillText(spec.short + (count > 1 ? ' (' + count + ')' : ''), cx + 24, cy);
+      });
+      ctx.restore();
+    }
+
+    function markerAt(p) {
+      for (let i = markers.length - 1; i >= 0; i--) {
+        const m = markers[i];
+        const dx = m.x * canvas.width - p.x;
+        const dy = m.y * canvas.height - p.y;
+        if (Math.hypot(dx, dy) <= 14) return i;
+      }
+      return -1;
+    }
+
+    // ---------- GPS corner marking ----------
+    // Deliberately NOT watchPosition streaming. A phone fix is 3-5 m at best
+    // and worse hard against a wall, so continuously tracing a walk produces
+    // a wobbly blob several metres off the building — useless as a mud map.
+    // Standing still at each corner and averaging the fixes removes most of
+    // the random error, and four deliberate points beat four hundred noisy
+    // ones. The result is squared up afterwards regardless.
+    const GPS_MAX_ACCURACY_M = 10;
+    const GPS_SAMPLE_MS = 6000;
+    let wakeLock = null;
+
+    async function holdScreenAwake(on) {
+      try {
+        if (on && !wakeLock && navigator.wakeLock) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        } else if (!on && wakeLock) {
+          await wakeLock.release();
+          wakeLock = null;
+        }
+      } catch (err) {
+        // A screen that sleeps is survivable. A crash mid-walk is not.
+      }
+    }
+
+    function sampleCorner(onProgress) {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error('This device cannot do GPS.'));
+          return;
+        }
+        const fixes = [];
+        const id = navigator.geolocation.watchPosition(
+          (p) => {
+            fixes.push({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy });
+            onProgress(p.coords.accuracy, fixes.length);
+          },
+          (err) => {
+            navigator.geolocation.clearWatch(id);
+            reject(new Error(err && err.code === 1
+              ? 'Location is turned off for this site. Switch it on in your browser settings, then try again.'
+              : 'Could not get a location. Step out from under the eaves and try again.'));
+          },
+          { enableHighAccuracy: true, maximumAge: 0, timeout: GPS_SAMPLE_MS }
+        );
+        setTimeout(() => {
+          navigator.geolocation.clearWatch(id);
+          const good = fixes.filter((f) => f.acc <= GPS_MAX_ACCURACY_M);
+          if (!good.length) {
+            let best = null;
+            for (const f of fixes) if (best === null || f.acc < best) best = f.acc;
+            reject(new Error(best !== null
+              ? 'Signal only reached ' + Math.round(best) + ' m accuracy — too rough to place a corner. Step away from the wall and try again.'
+              : 'No GPS signal here. Step into the open and try again.'));
+            return;
+          }
+          let sLat = 0, sLng = 0, sAcc = 0;
+          for (const f of good) { sLat += f.lat; sLng += f.lng; sAcc += f.acc; }
+          resolve({
+            lat: sLat / good.length,
+            lng: sLng / good.length,
+            acc: Math.round(sAcc / good.length),
+          });
+        }, GPS_SAMPLE_MS);
+      });
+    }
+
+    // Corners arrive as lat/lng. Convert to metres on a local flat plane
+    // (accurate enough across one house), then fit that shape into the canvas
+    // with a margin, preserving the real aspect ratio so the plan is to scale.
+    function cornersToPolygon(corners) {
+      if (!corners || corners.length < 3) return null;
+      let latSum = 0;
+      for (const c of corners) latSum += c.lat;
+      const lat0 = latSum / corners.length;
+      const mPerLat = 111320;
+      const mPerLng = 111320 * Math.cos(lat0 * Math.PI / 180);
+      const pts = corners.map((c) => [c.lng * mPerLng, -c.lat * mPerLat]);
+      const xs = pts.map((p) => p[0]);
+      const ys = pts.map((p) => p[1]);
+      const minX = Math.min.apply(null, xs);
+      const maxX = Math.max.apply(null, xs);
+      const minY = Math.min.apply(null, ys);
+      const maxY = Math.max.apply(null, ys);
+      const wM = Math.max(maxX - minX, 0.001);
+      const hM = Math.max(maxY - minY, 0.001);
+      const pad = 0.14;
+      const scale = Math.min((1 - pad * 2) * canvas.width / wM, (1 - pad * 2) * canvas.height / hM);
+      const offX = (canvas.width - wM * scale) / 2;
+      const offY = (canvas.height - hM * scale) / 2;
+      return {
+        polygon: pts.map((pt) => [
+          (offX + (pt[0] - minX) * scale) / canvas.width,
+          (offY + (pt[1] - minY) * scale) / canvas.height,
+        ]),
+        widthM: wM,
+        heightM: hM,
+      };
+    }
+
+    // ---------- controls ----------
+    const gpsRow = document.createElement('div');
+    gpsRow.className = 'row gap sketch-controls';
+    const gpsBtn = document.createElement('button');
+    gpsBtn.type = 'button';
+    gpsBtn.className = 'btn btn-secondary flex1';
+    const gpsDoneBtn = document.createElement('button');
+    gpsDoneBtn.type = 'button';
+    gpsDoneBtn.className = 'btn btn-primary flex1 hidden';
+    gpsRow.appendChild(gpsBtn);
+    gpsRow.appendChild(gpsDoneBtn);
+
+    function updateGpsUi() {
+      const n = gpsCorners.length;
+      gpsBtn.textContent = n ? 'Mark Corner ' + (n + 1) : 'Walk the Corners';
+      gpsDoneBtn.classList.toggle('hidden', n < 3);
+      gpsDoneBtn.textContent = 'Draw the Outline (' + n + ')';
+    }
+
+    gpsBtn.addEventListener('click', async () => {
+      if (!gpsCorners.length) {
+        hint.textContent = 'Stand at one corner of the house, hold still, and tap again. Then walk to the next corner and do the same, all the way around.';
+      }
+      gpsBtn.disabled = true;
+      const original = gpsBtn.textContent;
+      await holdScreenAwake(true);
+      try {
+        const fix = await sampleCorner((acc, count) => {
+          gpsBtn.textContent = 'Hold still... ' + Math.round(acc) + ' m (' + count + ')';
+        });
+        gpsCorners.push(fix);
+        toast('Corner ' + gpsCorners.length + ' marked, give or take ' + fix.acc + ' m.');
+        hint.textContent = gpsCorners.length < 3
+          ? gpsCorners.length + ' of at least 3 corners done. Walk to the next corner.'
+          : gpsCorners.length + ' corners done. Keep going, or tap Draw the Outline once you have been all the way around.';
+      } catch (err) {
+        gpsBtn.textContent = original;
+        toast(err.message);
+        hint.textContent = err.message;
+      } finally {
+        gpsBtn.disabled = false;
+        updateGpsUi();
+      }
+    });
+
+    gpsDoneBtn.addEventListener('click', () => {
+      const fitted = cornersToPolygon(gpsCorners);
+      if (!fitted) { toast('Mark at least 3 corners first.'); return; }
+      buildingPolygon = squareUp(fitted.polygon);
+      gpsCorners = [];
+      updateGpsUi();
+      holdScreenAwake(false);
+      commit();
+      hint.textContent = 'Outline drawn from your walk, about '
+        + Math.round(fitted.widthM) + ' m by ' + Math.round(fitted.heightM)
+        + ' m, and squared to right angles. Check it against the house — use Adjust Corners to drag anything that looks wrong.';
+      toast('Outline drawn. Check it before you finish.');
+    });
+
+    const stampRow = document.createElement('div');
+    stampRow.className = 'row gap wrap sketch-controls';
+    Object.keys(STAMPS).forEach((kind) => {
+      const spec = STAMPS[kind];
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-secondary sketch-stamp-btn';
+      b.textContent = spec.label;
+      b.addEventListener('click', () => {
+        stampKind = kind;
+        setMode('stamp');
+        Object.keys(stampBtns).forEach((k) => stampBtns[k].classList.remove('active'));
+        b.classList.add('active');
+        hint.textContent = 'Tap the plan wherever a ' + spec.short.toLowerCase()
+          + ' goes. Numbering happens by itself. Tap one again to add a note or remove it.';
+      });
+      stampBtns[kind] = b;
+      stampRow.appendChild(b);
+    });
+
+    // ---------- placing and editing markers ----------
+    canvas.addEventListener('click', (e) => {
+      if (mode !== 'stamp') return;
+      const p = pos(e);
+      const hit = markerAt(p);
+      if (hit >= 0) {
+        const m = markers[hit];
+        const spec = STAMPS[m.kind];
+        const answer = window.prompt(
+          spec.short + (typeof m.n === 'number' ? ' ' + m.n : '')
+          + '\n\nType a note for this one, or type DELETE to remove it.',
+          m.note || ''
+        );
+        if (answer === null) return;
+        if (answer.trim().toUpperCase() === 'DELETE') markers.splice(hit, 1);
+        else m.note = answer.trim();
+        commit();
+        return;
+      }
+      const spec = STAMPS[stampKind];
+      markers.push({
+        id: DB.uid(),
+        kind: stampKind,
+        x: p.x / canvas.width,
+        y: p.y / canvas.height,
+        n: spec.numbered ? nextNumber(stampKind) : null,
+        note: '',
+      });
+      commit();
+    });
+
+    // Markers restore as data, so coming back to this section gives back
+    // markers you can move and edit rather than a picture of them. The
+    // flattened PNG still goes to sketchImage, so the report and the PDF are
+    // unchanged.
+    try {
+      const savedData = pendingSectionValues[markerDataField];
+      if (savedData) {
+        const parsed = JSON.parse(savedData);
+        if (parsed && Array.isArray(parsed.markers)) markers = parsed.markers;
+      }
+    } catch (err) {
+      // A corrupt blob must never stop the sketch pad from opening.
+    }
+
+    wrap.appendChild(gpsRow);
+    wrap.appendChild(stampRow);
+    updateGpsUi();
+    if (markers.length) commit();
     return wrap;
   }
 
@@ -2899,6 +3309,7 @@
         for (const field of section.fields) {
           if (!isFieldVisible(field, values)) continue;
           const val = values[field.id];
+          if (field.type === 'sketchData') continue; // marker data, not printable
           if (field.type === 'photos') {
             const photos = val || [];
             if (!photos.length) continue;

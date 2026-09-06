@@ -1881,3 +1881,18 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 @media (prefers-reduced-motion: reduce) {
   #inspection-still-btn.prompting { animation: none; box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.55); }
 }
+
+/* Pest stamp palette on the sketch pad. Small, wrapping, and touch-sized —
+   six of these have to fit on a phone without pushing the canvas off screen. */
+.sketch-stamp-row { flex-wrap: wrap; }
+.sketch-stamp-btn {
+  flex: 1 1 30%;
+  min-height: 44px;
+  padding: 8px 6px;
+  font-size: 0.8rem;
+}
+.sketch-stamp-btn.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}

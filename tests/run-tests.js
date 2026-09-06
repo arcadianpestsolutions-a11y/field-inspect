@@ -24,6 +24,18 @@
   // another's hour totals. Day-of-month is fixed per test (and kept <= 28 so
   // it is valid in February) rather than offset from today, which would make
   // which tests collide depend on the date the suite happens to run.
+  // The rebook test books its follow-up on the source job's due date, which
+  // is "yesterday" — so any test that asserts on an exact day cell must avoid
+  // both today and yesterday, or it fails once a month. Picks the first quiet
+  // day in the 20s that no other test and no relative-date logic can reach.
+  function quietDay() {
+    const today = new Date().getDate();
+    for (const d of [20, 21, 22, 23, 24, 25]) {
+      if (d !== today && d !== today - 1) return d;
+    }
+    return 25;
+  }
+
   function dayThisMonth(n, hour = 9) {
     const d = new Date();
     d.setDate(n);
@@ -902,7 +914,8 @@
   test('Scheduler: the month grid shows how many jobs and hours are in a day', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
-    const d = dayThisMonth(5, 11);
+    const gridDay = quietDay();
+    const d = dayThisMonth(gridDay, 11);
     // Two jobs totalling 3 hours, so the cell has to report both numbers.
     await win.DB.addJob({ name: 'Grid Load A', scheduledAt: d.getTime(), scheduledDurationMins: 120 });
     const d2 = new Date(d);
@@ -912,8 +925,8 @@
     await win.Scheduler.open();
     await wait(400);
     const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
-      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(5).getDate()));
-    assert(cell, 'the 15th should be in the grid');
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(gridDay));
+    assert(cell, 'the chosen day should be in the grid');
     const load = cell.querySelector('.cal-load');
     assert(load, 'a booked day should show its load');
     assertEqual(load.textContent, '2·3h', 'two jobs totalling three hours');
@@ -1611,6 +1624,106 @@
     } finally {
       win.AI = origAI;
     }
+  });
+
+  test('Site sketch: pest stamps number themselves and survive a save/reopen as data', async () => {
+    // The markers are the part a client actually reads, so two things have to
+    // hold: numbering is automatic (a technician must never have to think
+    // about it), and reopening the section gives back live markers to move,
+    // not a flat picture of them.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Sketch Stamp Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(300);
+    const openSketch = () => {
+      const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((el) => el.textContent.includes('Site Sketch'));
+      assert(li, 'Site Sketch section should be listed');
+      li.click();
+    };
+    openSketch();
+    await wait(700);
+
+    assert(doc.querySelector('.sketch-canvas'), 'sketch canvas should render');
+    const stampBtn = (text) => Array.from(doc.querySelectorAll('button'))
+      .find((b) => b.textContent.trim() === text);
+    // Re-queried every tap: reopening the section builds a brand new canvas,
+    // and a captured reference would be clicking a detached node.
+    const tap = (fx, fy) => {
+      const canvas = doc.querySelector('.sketch-canvas');
+      const r = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(new win.MouseEvent('click', {
+        bubbles: true,
+        clientX: r.left + r.width * fx,
+        clientY: r.top + r.height * fy,
+      }));
+    };
+
+    assert(stampBtn('Drill point'), 'the drill point stamp is offered');
+    assert(stampBtn('Hot water'), 'the hot water system stamp is offered');
+    assert(stampBtn('Air con'), 'the air conditioner stamp is offered');
+
+    stampBtn('Drill point').click();
+    await wait(80);
+    tap(0.2, 0.2); await wait(60);
+    tap(0.5, 0.2); await wait(60);
+    tap(0.8, 0.2); await wait(120);
+    stampBtn('Bait station').click();
+    await wait(80);
+    tap(0.2, 0.5); await wait(60);
+    tap(0.5, 0.5); await wait(150);
+
+    doc.getElementById('section-save-btn').click();
+    await wait(600);
+
+    const saved = await win.DB.getReport(job.id);
+    const raw = saved.sections.siteSketch.sketchData;
+    assert(raw, 'marker data is saved alongside the flattened image');
+    const parsed = JSON.parse(raw);
+    assertEqual(parsed.markers.length, 5, 'all five markers persisted');
+    assertEqual(
+      parsed.markers.filter((m) => m.kind === 'drill').map((m) => m.n).join(','),
+      '1,2,3',
+      'drill points number themselves 1,2,3 without the technician doing anything'
+    );
+    assertEqual(
+      parsed.markers.filter((m) => m.kind === 'bait').map((m) => m.n).join(','),
+      '1,2',
+      'bait stations number independently of drill points'
+    );
+    assert(String(saved.sections.siteSketch.sketchImage || '').startsWith('data:image/png'),
+      'the flattened image the PDF prints is still saved');
+
+    // Reopen: markers must come back as data, proven by tapping one and
+    // getting the edit prompt rather than nothing.
+    openSketch();
+    await wait(1000);
+    stampBtn('Drill point').click();
+    await wait(80);
+    const origPrompt = win.prompt;
+    let promptedWith = null;
+    win.prompt = (msg) => { promptedWith = msg; return null; };
+    try {
+      tap(0.2, 0.2);
+      await wait(200);
+    } finally {
+      win.prompt = origPrompt;
+    }
+    assert(promptedWith && /Drill \/ rod point 1/.test(promptedWith),
+      `reopened markers must be live and editable, got: ${promptedWith}`);
+  });
+
+  test('Site sketch: marker data never reaches the printed report', async () => {
+    // sketchData is a JSON blob living in a report section. It must stay out
+    // of the PDF — printing it would drop a wall of raw JSON into a client's
+    // compliance document.
+    const win = frame.contentWindow;
+    const sketchSection = win.REPORT_SCHEMA.find((s) => s.id === 'siteSketch');
+    const dataField = sketchSection.fields.find((f) => f.id === 'sketchData');
+    assert(dataField, 'sketchData field exists on the sketch section');
+    assertEqual(dataField.type, 'sketchData', 'it uses its own type so renderers can skip it');
+    assert(!dataField.required, 'it is never required — it is machine data, not an answer');
   });
 
   test('AI Draft: sortGeneralPhotos routes generalPhotos and unmatched captures into the right fields', async () => {

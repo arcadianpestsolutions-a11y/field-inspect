@@ -171,6 +171,10 @@ const REPORT_SCHEMA = [
     color: '#0d9488',
     fields: [
       { id: 'sketchImage', label: 'Site Sketch', type: 'sketch' },
+      // Invisible companion to sketchImage: the markers as data, so a
+      // later edit restores real markers instead of a flat picture. Renders
+      // nothing, prints nothing — sketchImage is still what the PDF shows.
+      { id: 'sketchData', label: 'Sketch marker data', type: 'sketchData' },
     ],
   },
   {
