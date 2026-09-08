@@ -2029,9 +2029,16 @@
         for (const tree of trees) {
           const card = document.createElement('div');
           card.className = 'identify-pest-card';
+          // Proximity is often the whole decision — a susceptible tree ten
+          // metres away matters far less than a moderate one against the
+          // slab — so it goes on the card, not buried in the reasoning.
+          const prox = tree.proximityToStructure && tree.proximityToStructure !== 'not visible in frame'
+            ? `<div class="identify-pest-meta">${escapeHtml(tree.proximityToStructure)} the structure${tree.rootRisk ? ' · roots may lift paving or slab edges' : ''}</div>`
+            : '';
           card.innerHTML = `
             <div class="identify-pest-name">${escapeHtml(tree.species)}</div>
             <div class="identify-pest-confidence identify-pest-confidence-${escapeHtml(tree.susceptibility)}">${escapeHtml(tree.susceptibility)} termite susceptibility</div>
+            ${prox}
             <div class="identify-pest-reasoning">${escapeHtml(tree.reasoning)}</div>
             ${tree.recommendDrilling ? '<div class="identify-pest-flag">⚠ Worth drilling / further inspection</div>' : ''}
           `;
@@ -2040,8 +2047,13 @@
           applyBtn.className = 'btn btn-secondary identify-pest-apply';
           applyBtn.textContent = '+ Add to Tree Notes';
           applyBtn.addEventListener('click', () => {
-            const line = `${tree.species} — ${tree.susceptibility} termite susceptibility. ${tree.reasoning}`
-              + (tree.recommendDrilling ? ' Recommend drilling/further inspection.' : '');
+            // reportNote is written for the client to read. reasoning is the
+            // AI explaining itself to the technician — bark texture, why it
+            // called the species — which has no business in a client's
+            // report. Older responses have no reportNote, so fall back.
+            const line = tree.reportNote
+              || `${tree.species} — ${tree.susceptibility} termite susceptibility. ${tree.reasoning}`
+                 + (tree.recommendDrilling ? ' Recommend drilling/further inspection.' : '');
             const existing = pendingSectionValues.treeAssessmentNotes || '';
             pendingSectionValues.treeAssessmentNotes = existing ? `${existing}\n${line}` : line;
             renderCurrentSectionFields();

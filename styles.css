@@ -1908,3 +1908,12 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   font-size: 0.74rem;
   line-height: 1.45;
 }
+
+/* Where the tree sits relative to the house — the fact that usually decides
+   whether it gets drilled, so it reads at a glance rather than sitting in
+   the middle of a paragraph. */
+.identify-pest-meta {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}

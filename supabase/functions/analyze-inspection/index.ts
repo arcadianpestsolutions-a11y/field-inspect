@@ -4,6 +4,12 @@
 //     narration) and returns draft values for aiFillable report fields.
 //   - 'trace-building': reads a building's exterior perimeter out of aerial
 //     photography, returning a polygon that seeds the mud-map sketch.
+//   - 'identify-pest': names the insect in a photo and rates confidence, so a
+//     technician is not identifying from memory at the tailgate.
+//   - 'identify-tree': names the tree and reports its termite susceptibility,
+//     which is what decides whether it is worth drilling.
+//   - 'sort-photos': files loose photos into the report section each belongs
+//     to, so the general photo bucket does not have to be sorted by hand.
 //
 // Both API keys (Anthropic, OpenAI) are Edge Function secrets, set via:
 //   supabase secrets set ANTHROPIC_API_KEY=... OPENAI_API_KEY=...
@@ -258,26 +264,32 @@ async function handleIdentifyTree(body: any) {
 
   const systemPrompt = `You are helping a licensed Australian pest/timber pest technician assess a tree or stump photographed near a property, for termite conducive-conditions reporting.
 
-You are given ${images.length === 1 ? 'one photograph' : `${images.length} photographs`} of a tree (or stump) taken during a timber pest inspection. Identify EVERY distinct tree visible if more than one — most photos show just one.
+You are given ${images.length === 1 ? 'one photograph' : `${images.length} photographs`} of a tree (or stump) taken during a timber pest inspection.
+
+WHICH TREE. A real inspection photo usually catches neighbouring trees, hedges and garden plants at the edges of frame. List the SUBJECT tree first — the one the photograph was actually taken of, normally the largest and most central. Only list a second or third tree if it is genuinely close to the structure and worth reporting; ignore incidental background greenery and ornamental shrubs. A technician reading a list of six plants will not find the one that matters.
 
 For each tree give:
-- "species": the common name, as specific as the photo genuinely supports (e.g. "Sydney Blue Gum (Eucalyptus saligna)" if you can tell, "a eucalypt species" if you can only place the genus, "unable to identify species" if the photo doesn't support even that). Never state species-level certainty the photo can't support.
+- "isSubject": true for the tree the photo was taken of, false for any additional tree you list.
+- "species": the common name, as specific as the photo genuinely supports (e.g. "Sydney Blue Gum (Eucalyptus saligna)" if you can tell, "a fig (Ficus sp.)" or "a eucalypt species" if you can only place the genus, "unable to identify species" if the photo doesn't support even that). Never state species-level certainty the photo can't support. Common in Australian suburban inspections: eucalypts, figs (Ficus), camphor laurel, liquidambar, jacaranda, melaleuca, callistemon, cypress and pines.
 - "susceptibility": "high", "moderate", or "low" — the tree's termite susceptibility/risk, based on BOTH:
   (a) known termite susceptibility of the species/genus where confidently identified (e.g. many eucalypts and other susceptible hardwoods carry real risk, especially in heartwood; pines and other resinous conifers are comparatively more resistant but not immune), and
   (b) what the photo actually shows: dead or dying wood, hollow or damaged trunk, visible fungal fruiting bodies (conks/brackets), existing termite mud tubes or galleries, and stumps or deadwood are all HIGH risk regardless of species, because dead timber is exactly what termites use — a species-level "low" risk tree that is visibly dead or hollow is still high risk in this assessment.
+- "proximityToStructure": how close the tree is to the building, judged from the photo: "overhanging" (canopy or limbs above the roof), "adjacent" (roughly within 1-3 m of the wall or slab), "nearby" (roughly 3-10 m), "distant" (beyond that), or "not visible in frame" if the building does not appear. This is often the single most decision-relevant fact in the photo — a highly susceptible tree ten metres away matters far less than a moderate one against the slab — so judge it from what is actually shown and say "not visible in frame" rather than guessing.
+- "rootRisk": true if this species and size would be expected to lift or crack nearby paving, paths or slab edges (figs, camphor laurel, liquidambar and large eucalypts commonly do). Root heave is a conducive condition in its own right: it cracks slabs and disturbs treated zones, giving concealed entry.
 - "confidence": "high", "medium", or "low" for the identification itself.
 - "reasoning": one or two sentences citing the SPECIFIC visible features driving both the species call and the susceptibility call (bark texture and colour, leaf shape, trunk condition, canopy health, visible hollowing/decay/fungal growth, proximity to the building if visible in frame).
+- "reportNote": one sentence, written for the client to read in the conducive-conditions section of a timber pest report. Plain, factual, no jargon and no alarm — describe what is there and why it matters, e.g. "A large fig with canopy overhanging the roof is situated adjacent to the dwelling; trees of this size and proximity are a known termite harbourage and their roots can disturb paving and slab edges." This sentence goes to the client, so it must read as professional English a technician would be happy to put their name to.
 - "recommendDrilling": true if this tree or stump is a genuine candidate for a technician to physically inspect further (e.g. drill-test) given what's visible — typically true for anything dead, hollowed, showing decay/fungal growth, or a known highly susceptible species close to the structure. false for a visibly healthy, low-risk tree with nothing to investigate.
 
-WHAT YOU MUST NOT DO. Do not invent a confident species identification a photograph cannot support — say so plainly and mark confidence low instead. Do not claim to see termite activity, damage, or fungal growth that is not actually visible in the photograph.
+WHAT YOU MUST NOT DO. Do not invent a confident species identification a photograph cannot support — say so plainly and mark confidence low instead. Do not claim to see termite activity, damage, or fungal growth that is not actually visible in the photograph. Do not describe the tree as touching or overhanging the building unless the photograph actually shows that.
 
 Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
 {
   "trees": [
-    { "species": "...", "susceptibility": "high" | "moderate" | "low", "confidence": "high" | "medium" | "low", "reasoning": "...", "recommendDrilling": true | false }
+
+    { "isSubject": true, "species": "...", "susceptibility": "high" | "moderate" | "low", "proximityToStructure": "overhanging" | "adjacent" | "nearby" | "distant" | "not visible in frame", "rootRisk": true | false, "confidence": "high" | "medium" | "low", "reasoning": "...", "reportNote": "...", "recommendDrilling": true | false }
   ]
 }`;
-
   const userContent: unknown[] = [];
   images.forEach((img: any, i: number) => {
     userContent.push({ type: 'text', text: `Photo ${i + 1}` });
