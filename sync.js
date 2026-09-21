@@ -146,6 +146,8 @@
       inspection_started_at: job.inspectionStartedAt || null,
       inspection_ended_at: job.inspectionEndedAt || null,
       next_due_at: job.nextDueAt || null,
+      reinspection_interval_months: job.reinspectionIntervalMonths || null,
+      reminder_sent_for_due_at: job.reminderSentForDueAt || null,
       scheduled_at: job.scheduledAt || null,
       scheduled_duration_mins: job.scheduledDurationMins || null,
       recurring_from_id: job.recurringFromId || null,
@@ -173,6 +175,12 @@
       inspectionStartedAt: rj.inspection_started_at || null,
       inspectionEndedAt: rj.inspection_ended_at || null,
       nextDueAt: rj.next_due_at || null,
+      reinspectionIntervalMonths: rj.reinspection_interval_months || null,
+      // Only ever written server-side, by send-due-reminders — the app
+      // itself never sets this locally, it only reads it back to decide
+      // whether an overdue job in the backlog has already had its email
+      // and should now read as "needs a call" rather than plain overdue.
+      reminderSentForDueAt: rj.reminder_sent_for_due_at || null,
       scheduledAt: rj.scheduled_at || null,
       scheduledDurationMins: rj.scheduled_duration_mins || 60,
       recurringFromId: rj.recurring_from_id || null,

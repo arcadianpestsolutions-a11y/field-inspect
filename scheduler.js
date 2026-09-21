@@ -365,9 +365,22 @@
       meta.className = 'agenda-meta';
       if (job.nextDueAt) {
         const days = Math.round((job.nextDueAt - now) / 86400000);
-        meta.textContent = days < 0 ? `Overdue by ${Math.abs(days)} days`
-          : days === 0 ? 'Due today' : `Due in ${days} days`;
-        if (days <= 0) meta.classList.add('backlog-overdue');
+        // A 12-month termite job that already got its 9-month reminder
+        // email and is now past its due date anyway has had the automatic
+        // path exhausted — this is the point send-due-reminders' own
+        // comments call "flag for a phone call": the email didn't get it
+        // rebooked, so it stops being a due-date line and becomes a task
+        // for a human to chase directly, which reads differently to a
+        // technician than "just" overdue.
+        const emailedForThisDueDate = job.reminderSentForDueAt === job.nextDueAt;
+        if (days <= 0 && emailedForThisDueDate) {
+          meta.textContent = `📞 Overdue by ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} — call to rebook`;
+          meta.classList.add('backlog-overdue', 'backlog-needs-call');
+        } else {
+          meta.textContent = days < 0 ? `Overdue by ${Math.abs(days)} days`
+            : days === 0 ? 'Due today' : `Due in ${days} days`;
+          if (days <= 0) meta.classList.add('backlog-overdue');
+        }
       } else {
         meta.textContent = job.address || 'Not booked yet';
       }

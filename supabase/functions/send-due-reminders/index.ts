@@ -1,6 +1,26 @@
-// Sends a "your next inspection is coming up" email to clients whose job
-// has a next_due_at date approaching, and marks it sent so the same due
-// date is never emailed twice.
+// Two-stage recurring-inspection follow-up, for a standard 12-month termite
+// cycle specifically (see WHY below) — NOT a generic "repeat this job"
+// scheduler. Nothing here fires on its own; it only ever acts on a due date
+// a technician already set by choosing a re-inspection interval when they
+// finalized the PREVIOUS report.
+//
+//   Stage 1, at 9 months (3 months before the 12-month due date): email the
+//   client that their re-inspection is coming up. Marks reminder_sent_for_
+//   due_at so the same due date is never emailed twice.
+//
+//   Stage 2, once the due date itself has passed with no rebooking: nothing
+//   is emailed again. These jobs are reported back under `needsCall` so a
+//   human decides whether and how to chase — the actual flag a technician
+//   sees lives in the scheduler's own backlog (see scheduler.js), which
+//   already shows overdue jobs and now marks the ones that already got the
+//   email and still weren't rebooked distinctly from ones that are simply
+//   overdue and haven't been reminded yet.
+//
+// WHY 12-MONTH ONLY. A 3- or 6-month interval exists because a technician
+// judged a specific property higher-risk — a fixed 9-month/12-month rule
+// makes no sense grafted onto a 3-month cycle. reinspection_interval_months
+// (migration 012) is what makes telling these apart possible; a bare
+// next_due_at timestamp alone cannot.
 //
 // NOT WIRED TO RUN AUTOMATICALLY. This function exists and works, but no
 // schedule calls it yet — see the deploy note at the bottom of this file.
@@ -52,11 +72,22 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// A re-inspection due in the next 14 days gets one reminder. Two weeks is
-// enough notice for a client to book without the email arriving so early
-// it's forgotten by the time it matters.
-const REMINDER_WINDOW_DAYS = 14;
+// How many months before the 12-month due date the email goes out — 3
+// months = the "at 9 months" rule, phrased as a countdown from the due date
+// rather than a count-up from the inspection, since the due date is what's
+// actually stored (next_due_at) and what everything else is computed from.
+const EMAIL_MONTHS_BEFORE_DUE = 3;
 const EMAIL_SUBJECT = 'Your termite inspection is coming up — Arcadian Pest Solutions';
+
+// Real month arithmetic (setMonth), not a fixed day count — consistent with
+// how report.js's computeNextDueAt derives the due date itself. A fixed
+// "90 days before" would drift against a due date computed in calendar
+// months once months of different lengths are involved.
+function monthsBefore(epochMs: number, months: number): number {
+  const d = new Date(epochMs);
+  d.setMonth(d.getMonth() - months);
+  return d.getTime();
+}
 
 function emailHtml(clientName: string, dueDate: string) {
   return `
@@ -88,30 +119,43 @@ Deno.serve(async (req) => {
     const dryRun = body.dryRun !== false; // default TRUE — see the note at the top of this file
 
     const now = Date.now();
-    const windowEnd = now + REMINDER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
     // jobs has no separate client_name column — job.name is what a
     // technician actually types for who/what the job is (see db.js's
     // addJob), so it's what stands in for a greeting name here.
+    // reinspection_interval_months = 12 is the actual gate this whole
+    // policy is scoped to — see the WHY note at the top of this file.
     const { data: jobs, error: jobsError } = await admin
       .from('jobs')
-      .select('id, name, client_email, next_due_at, reminder_sent_for_due_at')
+      .select('id, name, client_email, next_due_at, reminder_sent_for_due_at, reinspection_interval_months')
+      .eq('reinspection_interval_months', 12)
       .not('next_due_at', 'is', null)
-      .not('client_email', 'is', null)
-      .lte('next_due_at', windowEnd);
+      .not('client_email', 'is', null);
 
     if (jobsError) {
       console.error(jobsError);
       return json({ error: 'Could not read jobs.' }, 500);
     }
 
-    const candidates = (jobs || []).filter((j) => {
+    const allJobs = jobs || [];
+
+    // Stage 1: due date is within the 3-month email window and hasn't
+    // already been reminded for this exact due date.
+    const candidates = allJobs.filter((j) => {
       if (!j.client_email || !j.client_email.trim()) return false;
-      // Already reminded for this exact due date — do not send again just
-      // because the function runs daily.
       if (j.reminder_sent_for_due_at === j.next_due_at) return false;
-      return true;
+      return now >= monthsBefore(j.next_due_at as number, EMAIL_MONTHS_BEFORE_DUE);
     });
+
+    // Stage 2: already reminded for this due date, and the due date itself
+    // has now passed with no rebooking (rebooking clears next_due_at — see
+    // rebookJob in app.js — so a job that's been rebooked simply drops out
+    // of this query entirely on the next run). Nothing is sent here; this
+    // is reporting only, for visibility into who the scheduler's backlog
+    // should be flagging.
+    const needsCall = allJobs.filter((j) => (
+      j.reminder_sent_for_due_at === j.next_due_at && now >= (j.next_due_at as number)
+    ));
 
     const results: unknown[] = [];
 
@@ -154,7 +198,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json({ dryRun, checked: jobs ? jobs.length : 0, candidates: candidates.length, results });
+    return json({
+      dryRun,
+      checked: allJobs.length,
+      candidates: candidates.length,
+      results,
+      needsCall: needsCall.map((j) => ({ jobId: j.id, name: j.name, dueDate: j.next_due_at })),
+    });
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);

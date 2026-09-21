@@ -1071,9 +1071,11 @@
     appendAudit(currentReport, { event: 'finalized' });
     currentReport.finalizedAt = Date.now();
     await DB.saveReport(currentReport);
+    const { dueAt, intervalMonths } = computeNextDueAt(currentJob, currentReport);
     await DB.updateJob(currentJobId, {
       status: 'completed',
-      nextDueAt: computeNextDueAt(currentJob, currentReport),
+      nextDueAt: dueAt,
+      reinspectionIntervalMonths: intervalMonths,
     });
     toast('Report finalized');
     renderSectionList();
@@ -1084,27 +1086,33 @@
   // When is this property next due? Termite reports carry a recommended
   // re-inspection interval (AS 3660.2 recommends no more than 12 months, and
   // shorter on high-risk sites); pest treatments carry an explicit follow-up
-  // date. Returns epoch ms, or null when the report gives us nothing to go on
-  // — better to show no due date than to invent one.
+  // date. Returns { dueAt, intervalMonths }, both null when the report gives
+  // us nothing to go on — better to show no due date than to invent one.
+  //
+  // intervalMonths is kept alongside the date, not just derived from it,
+  // because send-due-reminders needs to know WHICH cycle produced this due
+  // date — the 9-month email / 12-month phone-call escalation only applies
+  // to a standard 12-month termite cycle, not a 3- or 6-month one flagged
+  // for a higher-risk property, and not a pest-treatment follow-up at all.
   function computeNextDueAt(job, report) {
     const sections = (report && report.sections) || {};
     if (job && job.jobType === 'pest_treatment') {
       const recs = sections.recommendations || {};
-      if (recs.followUpRequired !== 'Yes' || !recs.followUpDate) return null;
+      if (recs.followUpRequired !== 'Yes' || !recs.followUpDate) return { dueAt: null, intervalMonths: null };
       const due = Date.parse(recs.followUpDate + 'T09:00:00');
-      return Number.isFinite(due) ? due : null;
+      return { dueAt: Number.isFinite(due) ? due : null, intervalMonths: null };
     }
 
     const months = { '3 months': 3, '6 months': 6, '12 months': 12 }[(sections.findings || {}).reinspectionInterval];
-    if (!months) return null;
+    if (!months) return { dueAt: null, intervalMonths: null };
     // Count forward from the inspection date rather than today, so finalizing
     // a report late doesn't quietly push the whole schedule out.
     const client = sections.clientDetails || {};
     const base = client.inspectionDate ? new Date(client.inspectionDate + 'T09:00:00') : new Date();
-    if (!Number.isFinite(base.getTime())) return null;
+    if (!Number.isFinite(base.getTime())) return { dueAt: null, intervalMonths: null };
     const due = new Date(base);
     due.setMonth(due.getMonth() + months);
-    return due.getTime();
+    return { dueAt: due.getTime(), intervalMonths: months };
   }
 
   // The technician decides when to actually send, via the "Send Report"

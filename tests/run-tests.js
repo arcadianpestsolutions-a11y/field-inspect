@@ -704,6 +704,11 @@
     // Inspected 12 months ago + 12 month interval => due about now.
     const daysOut = Math.abs((after.nextDueAt - Date.now()) / 86400000);
     assert(daysOut < 3, `due date should land near today, was ${Math.round(daysOut)} days out`);
+    // Which interval produced this date has to survive alongside it — the
+    // 9-month reminder / 12-month call-flag rule only applies to a genuine
+    // 12-month cycle, and there is no other way to tell a 12-month due date
+    // apart from a 6-month one two cycles in once all you have is the date.
+    assertEqual(after.reinspectionIntervalMonths, 12, 'the interval that produced this due date is kept alongside it');
   });
 
   test('Recurring: no interval means no invented due date', async () => {
@@ -726,6 +731,7 @@
     }
     const after = await win.DB.getJob(job.id);
     assert(!after.nextDueAt, 'should not invent a due date with no interval given');
+    assert(!after.reinspectionIntervalMonths, 'no interval to record either, for the same reason');
   });
 
   test('Recurring: rebooking carries the client across and clears the old due date', async () => {
@@ -1034,6 +1040,48 @@
     const inBacklog = Array.from(doc.querySelectorAll('#scheduler-backlog .backlog-row'))
       .some((r) => r.textContent.includes('Already Booked'));
     assert(!inBacklog, 'a job with a booking is not waiting to be booked');
+  });
+
+  test('Scheduler: an overdue job the reminder email did not fix reads as "call to rebook"', async () => {
+    // The two-stage policy: an email goes out automatically, but the moment
+    // it demonstrably didn't work (the due date has now passed anyway),
+    // this becomes a human's job to chase, not the software's.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const dueAt = Date.now() - 5 * 86400000; // 5 days overdue
+    // addJob's parameter list is an explicit whitelist that doesn't include
+    // nextDueAt/reminderSentForDueAt (real jobs only ever get these via
+    // updateJob, from finalizing a report or send-due-reminders) — set them
+    // the same way here rather than relying on addJob silently accepting them.
+    const job = await win.DB.addJob({ name: 'Needs A Call Job' });
+    await win.DB.updateJob(job.id, { nextDueAt: dueAt, reminderSentForDueAt: dueAt });
+
+    await win.Scheduler.open();
+    await wait(400);
+    const row = Array.from(doc.querySelectorAll('#scheduler-backlog .backlog-row'))
+      .find((r) => r.textContent.includes('Needs A Call Job'));
+    assert(row, 'an overdue, unrebooked job still belongs in the backlog');
+    assert(/call to rebook/i.test(row.textContent), 'the email having already gone out and failed must read differently to plain overdue');
+    assert(row.querySelector('.backlog-needs-call'), 'and get the stronger visual treatment, not just different words');
+  });
+
+  test('Scheduler: overdue with no reminder sent yet still reads as plain overdue', async () => {
+    // Guards the other side of the same rule: a job must not read as
+    // "call to rebook" just because it's overdue — only once the email
+    // path has actually been tried and failed.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const dueAt = Date.now() - 5 * 86400000;
+    const job = await win.DB.addJob({ name: 'Plain Overdue Job' });
+    await win.DB.updateJob(job.id, { nextDueAt: dueAt });
+
+    await win.Scheduler.open();
+    await wait(400);
+    const row = Array.from(doc.querySelectorAll('#scheduler-backlog .backlog-row'))
+      .find((r) => r.textContent.includes('Plain Overdue Job'));
+    assert(row, 'sanity check: it is in the backlog at all');
+    assert(!/call to rebook/i.test(row.textContent), 'no reminder was ever sent for this due date, so nothing has "failed" yet');
+    assert(!row.querySelector('.backlog-needs-call'), 'and it must not get the escalated styling either');
   });
 
   // =====================================================================
