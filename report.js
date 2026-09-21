@@ -1307,10 +1307,94 @@
     return out;
   }
 
+  // ---------- Section autosave ----------
+  // Save/discard is a deliberate model — pendingSectionValues is a scratch
+  // copy, and nothing touches the report until the technician chooses to
+  // commit it. That is the right model for "did I mean to change this
+  // answer", but it did nothing for the much more common way work actually
+  // gets lost in the field: the phone locks, a call comes in and the OS
+  // reclaims a backgrounded tab, the battery dies — none of which go through
+  // the back arrow at all, so the discard-confirm never gets a chance to
+  // fire. This autosaves the scratch copy to its own local-only store, and
+  // offers it back the next time the section is opened.
+  //
+  // Photo/image values are deliberately excluded. They're either already
+  // durable elsewhere (a capture is written to IndexedDB the instant the
+  // shutter fires, independent of this section entirely) or captured in one
+  // fast, atomic gesture (a signature, a flattened sketch) with nowhere near
+  // the multi-minute exposure a typed paragraph has — so re-writing a
+  // multi-megabyte blob or data URL into a draft every few seconds would be
+  // pure cost for a risk that barely exists.
+  function draftableValues(values) {
+    const out = {};
+    for (const [fieldId, value] of Object.entries(values || {})) {
+      if (Array.isArray(value) && value.some((v) => v && typeof v === 'object' && 'blob' in v)) continue;
+      if (typeof value === 'string' && value.startsWith('data:image/')) continue;
+      out[fieldId] = value;
+    }
+    return out;
+  }
+
+  let autosaveTimer = null;
+  const AUTOSAVE_INTERVAL_MS = 20000;
+
+  async function autosaveDraftNow() {
+    if (!currentReport || !currentSectionId) return;
+    const draft = draftableValues(pendingSectionValues);
+    if (!Object.keys(draft).length) return;
+    try {
+      await DB.saveSectionDraft(currentReport.jobId, currentSectionId, draft);
+    } catch (e) {
+      // A failed autosave must never surface as an error interrupting an
+      // inspection — it's a safety net under the real save flow, not a
+      // replacement for it. Silently trying again on the next tick is the
+      // right failure mode.
+      console.warn('[report] section autosave failed:', e.message || e);
+    }
+  }
+
+  function startAutosave() {
+    stopAutosave();
+    autosaveTimer = setInterval(autosaveDraftNow, AUTOSAVE_INTERVAL_MS);
+  }
+
+  function stopAutosave() {
+    if (autosaveTimer) { clearInterval(autosaveTimer); autosaveTimer = null; }
+  }
+
+  // Covers the case a timer never gets a chance to: the tab is backgrounded
+  // (app switched away from, phone locked) a few seconds after a technician
+  // finishes typing but before the next tick — exactly the moment a mobile
+  // OS is most likely to decide to reclaim the page.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && !viewReportSection.classList.contains('hidden')) autosaveDraftNow();
+  });
+
+  // A draft that merely repeats what's already committed isn't work to
+  // recover — it's noise from a section that was opened, looked at, and
+  // left alone. Only a real difference is worth interrupting for.
+  function draftDiffersFromCommitted(section, committed, draftValues) {
+    return diffSection(section, committed, { ...committed, ...draftValues }).length > 0;
+  }
+
   async function openSectionEditor(sectionId) {
     currentSectionId = sectionId;
     const section = findSection(sectionId);
     pendingSectionValues = cloneSectionValues(currentReport.sections[sectionId]);
+
+    const draft = await DB.getSectionDraft(currentReport.jobId, sectionId).catch(() => null);
+    if (draft && draft.values && draftDiffersFromCommitted(section, currentReport.sections[sectionId], draft.values)) {
+      const when = new Date(draft.savedAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' });
+      if (window.confirm(
+        `This section has unsaved work from ${when} that was never saved — the app closed or was interrupted before you finished. `
+        + 'Restore it and pick up where you left off?'
+      )) {
+        pendingSectionValues = { ...pendingSectionValues, ...draft.values };
+      } else {
+        await DB.deleteSectionDraft(currentReport.jobId, sectionId).catch(() => {});
+      }
+    }
+    startAutosave();
 
     if (sectionId === 'inspector') {
       const email = await getCurrentUserEmail();
@@ -3225,6 +3309,8 @@
 
     currentReport.sections[currentSectionId] = pendingSectionValues;
     await DB.saveReport(currentReport);
+    stopAutosave();
+    DB.deleteSectionDraft(currentReport.jobId, currentSectionId).catch(() => {});
     hide(viewReportSection);
     renderSectionList();
     show(viewReport);
@@ -3247,6 +3333,11 @@
     )) {
       return;
     }
+    // A confirmed discard means the technician chose to throw this away —
+    // the autosafety-net draft should go with it, not reappear as a
+    // "restore your unsaved work?" prompt the next time this section opens.
+    stopAutosave();
+    DB.deleteSectionDraft(currentReport.jobId, currentSectionId).catch(() => {});
     hide(viewReportSection);
     show(viewReport);
   });

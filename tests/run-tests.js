@@ -1820,9 +1820,18 @@
   }
 
   function setTextInput(win, input, value) {
-    const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+    const proto = input.tagName === 'TEXTAREA' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
     setter.call(input, value);
     input.dispatchEvent(new win.Event('input', { bubbles: true }));
+  }
+
+  // Fakes the tab being backgrounded/foregrounded inside the test iframe's
+  // own window — the real trigger for both autosave features below, since
+  // neither can wait for a real OS to actually lock the phone.
+  function fireVisibility(win, hidden) {
+    Object.defineProperty(win.document, 'hidden', { configurable: true, get: () => hidden });
+    win.document.dispatchEvent(new win.Event('visibilitychange'));
   }
 
   test('Audit: a new report is stamped with the schema version', async () => {
@@ -2438,6 +2447,178 @@
     saved = (await win.DB.getJobs()).find((j) => j.name === 'Long Mover Job');
     assert(saved.scheduledAt, 'accepting the clash books it anyway — this is a warning, not a hard block');
     assert(doc.getElementById('slot-picker-modal').classList.contains('hidden'), 'and the picker closes as normal');
+  });
+
+  // ---------- Section autosave ----------
+  // Save/discard is deliberate — a report answer shouldn't change until a
+  // technician chooses to commit it — but that model did nothing for the
+  // far more common way work actually gets lost: a phone lock, a call
+  // coming in, the OS reclaiming a backgrounded tab. None of those go
+  // through the back arrow, so the discard-confirm never fires and nothing
+  // was ever written anywhere. These drive the real trigger (a faked
+  // visibilitychange, since nothing here can lock a real phone) rather than
+  // reaching into the module's internals.
+
+  test('Autosave: backgrounding the tab mid-edit writes a recoverable draft', async () => {
+    // A fresh frame per test: this test deliberately leaves its autosave
+    // timer running (neither Save nor Back-discard is ever tapped, which is
+    // the whole point — it's simulating an interruption), so without a
+    // reload it keeps ticking into whichever test runs next.
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Autosave Draft Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(300);
+    Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => el.textContent.includes('Conducive Conditions')).click();
+    await wait(300);
+
+    const ta = doc.querySelectorAll('#view-report-section textarea')[0];
+    setTextInput(win, ta, 'Typed but never saved — interrupted here');
+
+    fireVisibility(win, true);
+    await wait(200);
+    fireVisibility(win, false);
+
+    const draft = await win.DB.getSectionDraft(job.id, 'conducive');
+    assert(draft, 'backgrounding the tab must persist a draft, not wait for the next timer tick');
+    assertEqual(Object.values(draft.values).find((v) => v === 'Typed but never saved — interrupted here'),
+      'Typed but never saved — interrupted here', 'the actual typed text is what gets recovered');
+
+    // A brand-new report lives purely in memory until something real is
+    // saved (see loadOrCreateReport) — so DB.getReport can genuinely still
+    // be undefined here, and that itself is part of what this proves:
+    // nothing about backgrounding the tab caused a premature commit.
+    const saved = await win.DB.getReport(job.id);
+    assert(!saved || !saved.sections.conducive || saved.sections.conducive.treeAssessmentNotes !== ta.value,
+      'critically, the draft must NOT have touched the real committed report — only Save does that');
+  });
+
+  test('Autosave: reopening a section with a newer draft offers to restore it', async () => {
+    await reloadFrame(); // this test also opens a section and never saves or backs out of it
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Autosave Restore Job', jobType: 'termite' });
+    await win.DB.saveSectionDraft(job.id, 'conducive', { treeAssessmentNotes: 'Recovered from an interruption' });
+
+    let confirmMessage = null;
+    const origConfirm = win.confirm;
+    win.confirm = (msg) => { confirmMessage = msg; return true; };
+    try {
+      await win.ReportUI.openReview(job.id);
+      await wait(300);
+      Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((el) => el.textContent.includes('Conducive Conditions')).click();
+      await wait(300);
+    } finally {
+      win.confirm = origConfirm;
+    }
+
+    assert(confirmMessage && /unsaved work/i.test(confirmMessage), 'must ask before restoring, not do it silently');
+    const ta = doc.querySelectorAll('#view-report-section textarea')[0];
+    assertEqual(ta.value, 'Recovered from an interruption', 'accepting restores the actual interrupted text into the editor');
+  });
+
+  test('Autosave: declining the restore discards the draft for good', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Autosave Decline Job', jobType: 'termite' });
+    await win.DB.saveSectionDraft(job.id, 'conducive', { treeAssessmentNotes: 'Should be thrown away' });
+
+    const origConfirm = win.confirm;
+    win.confirm = () => false;
+    try {
+      await win.ReportUI.openReview(job.id);
+      await wait(300);
+      Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((el) => el.textContent.includes('Conducive Conditions')).click();
+      await wait(300);
+    } finally {
+      win.confirm = origConfirm;
+    }
+
+    const ta = doc.querySelectorAll('#view-report-section textarea')[0];
+    assertEqual(ta.value, '', 'declining must not leave the discarded draft visible');
+    assert(!(await win.DB.getSectionDraft(job.id, 'conducive')), 'and the draft itself must actually be gone, not just hidden');
+  });
+
+  test('Autosave: saving the section for real clears the draft behind it', async () => {
+    // Otherwise the next person to open this section gets asked to "restore"
+    // work that was already saved minutes ago.
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Autosave Clear On Save Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(300);
+    Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => el.textContent.includes('Conducive Conditions')).click();
+    await wait(300);
+
+    setTextInput(win, doc.querySelectorAll('#view-report-section textarea')[0], 'Finished and saved properly');
+    fireVisibility(win, true);
+    await wait(200);
+    fireVisibility(win, false);
+    assert(await win.DB.getSectionDraft(job.id, 'conducive'), 'sanity check: the draft exists before saving');
+
+    doc.getElementById('section-save-btn').click();
+    await wait(400);
+
+    assert(!(await win.DB.getSectionDraft(job.id, 'conducive')), 'a real save must clear the safety-net draft behind it');
+  });
+
+  test('Autosave: a draft that matches what is already saved is not offered back', async () => {
+    // Opening a section, looking at it, and leaving without touching
+    // anything is not "unsaved work" — nagging about it every time trains
+    // technicians to reflexively tap through the real warning too.
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Autosave No Noise Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await wait(300);
+    Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => el.textContent.includes('Conducive Conditions')).click();
+    await wait(300);
+    fireVisibility(win, true);
+    await wait(200);
+    fireVisibility(win, false);
+
+    let confirmCalled = false;
+    const origConfirm = win.confirm;
+    win.confirm = () => { confirmCalled = true; return true; };
+    try {
+      Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((el) => el.textContent.includes('Conducive Conditions')).click();
+      await wait(300);
+    } finally {
+      win.confirm = origConfirm;
+    }
+    assert(!confirmCalled, 'a draft identical to the committed data must not prompt anything');
+  });
+
+  test('Invoicing: backgrounding the tab mid-edit autosaves the invoice itself', async () => {
+    // Unlike a report section, an invoice is already a real saved row from
+    // the moment it's opened — there is no separate draft store here, so
+    // recovering from an interruption just means writing more often, not
+    // restoring anything on reopen.
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Invoice Autosave Job', jobType: 'pest_treatment' });
+    await win.InvoiceUI.open(job.id);
+    await wait(300);
+
+    setTextInput(win, doc.getElementById('invoice-client-name'), 'Interrupted Client Pty Ltd');
+    fireVisibility(win, true);
+    await wait(250);
+    fireVisibility(win, false);
+
+    const invoices = await win.DB.getInvoicesForJob(job.id);
+    assertEqual(invoices[0].clientName, 'Interrupted Client Pty Ltd',
+      'the client name typed just before the tab was backgrounded must already be on disk');
   });
 
   // ---------- Calendar feed ----------

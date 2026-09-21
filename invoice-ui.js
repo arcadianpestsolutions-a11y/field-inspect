@@ -225,6 +225,35 @@
     return current;
   }
 
+  // A new invoice is written to the database the moment it's opened (see
+  // InvoiceUI.open below), so unlike a report section this is never really
+  // "unsaved" in the sense of not existing anywhere — but every line item
+  // typed after that point lives only in `current` until Save or Back is
+  // tapped, same gap as reports had: a phone lock or a call coming in mid
+  // invoice loses whatever was typed since the last tap, with nothing to
+  // recover it. Same fix, same cadence.
+  let autosaveTimer = null;
+
+  async function autosaveNow() {
+    if (!current || view.classList.contains('hidden')) return;
+    try { await save(); } catch (e) {
+      console.warn('[invoice-ui] autosave failed:', e.message || e);
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && !view.classList.contains('hidden')) autosaveNow();
+  });
+
+  function startAutosave() {
+    if (autosaveTimer) clearInterval(autosaveTimer);
+    autosaveTimer = setInterval(autosaveNow, 20000);
+  }
+
+  function stopAutosave() {
+    if (autosaveTimer) { clearInterval(autosaveTimer); autosaveTimer = null; }
+  }
+
   saveBtn.addEventListener('click', async () => {
     await save();
     toast('Invoice saved');
@@ -232,6 +261,7 @@
 
   backBtn.addEventListener('click', async () => {
     await save();
+    stopAutosave();
     hide(view);
     if (returnToJobId && window.showJobViewById) window.showJobViewById(returnToJobId);
     else if (window.showJobListView) window.showJobListView();
@@ -409,6 +439,7 @@
       if (window.hideAllAppViews) window.hideAllAppViews();
       else document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
       show(view);
+      startAutosave();
     },
   };
 })();

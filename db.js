@@ -7,6 +7,12 @@
 //              blob, fileName?, note?, createdAt)
 //   reports   (jobId [key], sections: {sectionId: {fieldId: value}}, sectionStatus,
 //              aiDraft, finalizedAt, updatedAt)
+//   sectionDrafts (id [key: `${jobId}::${sectionId}`], jobId, sectionId, values,
+//              savedAt) — see report.js's autosave. Local-only, never synced,
+//              never audited: a draft is unconfirmed work-in-progress, not an
+//              answer. It exists purely so a phone lock, a low battery, or the
+//              OS killing a backgrounded tab doesn't erase ten minutes of
+//              typed findings that were never near the Save button.
 
 // A page loaded with ?test=1 gets its own IndexedDB so the automated test
 // suite (tests/run-tests.html) never touches real job data.
@@ -22,10 +28,10 @@ window.IS_TEST = !!__params.get('test');
 const DB_NAME = __params.get('test') ? 'field-inspect-db-test'
   : window.IS_DEMO ? 'field-inspect-db-demo'
   : 'field-inspect-db';
-// v3 adds the `invoices` store. onupgradeneeded below is written so each
+// v4 adds the `sectionDrafts` store. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let dbPromise = null;
 
@@ -51,6 +57,10 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('invoices')) {
         const store = db.createObjectStore('invoices', { keyPath: 'id' });
+        store.createIndex('jobId', 'jobId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('sectionDrafts')) {
+        const store = db.createObjectStore('sectionDrafts', { keyPath: 'id' });
         store.createIndex('jobId', 'jobId', { unique: false });
       }
     };
@@ -200,6 +210,8 @@ const DB = {
 
     const rstore = await tx('reports', 'readwrite');
     await reqToPromise(rstore.delete(id)).catch(() => {});
+
+    await this.deleteAllSectionDraftsForJob(id).catch(() => {});
 
     const jstore = await tx('jobs', 'readwrite');
     await reqToPromise(jstore.delete(id));
@@ -390,6 +402,37 @@ const DB = {
     const store = await tx('reports', 'readonly');
     const all = await reqToPromise(store.getAll());
     return all.sort((a, b) => (b.finalizedAt || b.updatedAt || 0) - (a.finalizedAt || a.updatedAt || 0));
+  },
+
+  // ---------- Section drafts ----------
+  // Local-only safety net for a section still being edited — see the note at
+  // the top of this file. Never synced (window.Sync has no idea this store
+  // exists), never audited, and deliberately separate from `reports` so an
+  // autosave tick can never be the thing that writes to the document a
+  // signed-off report's audit trail is supposed to be watching.
+  async saveSectionDraft(jobId, sectionId, values) {
+    const store = await tx('sectionDrafts', 'readwrite');
+    await reqToPromise(store.put({ id: `${jobId}::${sectionId}`, jobId, sectionId, values, savedAt: Date.now() }));
+  },
+
+  async getSectionDraft(jobId, sectionId) {
+    const store = await tx('sectionDrafts', 'readonly');
+    return reqToPromise(store.get(`${jobId}::${sectionId}`));
+  },
+
+  async deleteSectionDraft(jobId, sectionId) {
+    const store = await tx('sectionDrafts', 'readwrite');
+    await reqToPromise(store.delete(`${jobId}::${sectionId}`));
+  },
+
+  // Called once a report is finalized or a job is deleted — drafts for
+  // sections that no longer have anything to draft toward should not
+  // linger in the store forever.
+  async deleteAllSectionDraftsForJob(jobId) {
+    const store = await tx('sectionDrafts', 'readwrite');
+    const index = store.index('jobId');
+    const keys = await reqToPromise(index.getAllKeys(jobId));
+    await Promise.all(keys.map((k) => reqToPromise(store.delete(k))));
   },
 
   // Test-only: closes the open connection so the test suite can safely
