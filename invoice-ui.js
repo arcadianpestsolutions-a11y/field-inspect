@@ -32,6 +32,9 @@
   const saveBtn = el('invoice-save-btn');
   const xeroBtn = el('invoice-xero-btn');
   const emailBtn = el('invoice-email-btn');
+  const emailStatusRow = el('invoice-email-status-row');
+  const emailStatusText = el('invoice-email-status-text');
+  const emailStatusCheckBtn = el('invoice-email-status-check-btn');
 
   let current = null;   // the invoice being edited
   let returnToJobId = null;
@@ -200,6 +203,49 @@
     renderLines();
     renderTotals();
     renderXeroState();
+    renderEmailStatus();
+  }
+
+  // Mirrors report.js's renderEmailStatus/EMAIL_STATUS_LABELS exactly —
+  // duplicated rather than shared, matching this codebase's existing
+  // convention of each module owning its own small toast()/escapeHtml()
+  // rather than importing one shared copy across files.
+  const EMAIL_STATUS_LABELS = {
+    sent: 'Sent', delivered: 'Delivered ✓', opened: 'Opened by client', clicked: 'Opened by client',
+    bounced: '⚠ Bounced — check the address', complained: '⚠ Marked as spam',
+    delivery_delayed: 'Delayed — retrying', unknown: 'Status unavailable',
+  };
+
+  function renderEmailStatus() {
+    if (!emailStatusRow) return;
+    if (!current || !current.emailProviderId) { emailStatusRow.classList.add('hidden'); return; }
+    emailStatusRow.classList.remove('hidden');
+    const when = current.emailedAt ? new Date(current.emailedAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : '';
+    const label = EMAIL_STATUS_LABELS[current.emailStatus] || (current.emailStatus || 'Sent');
+    emailStatusText.textContent = `📧 ${label}${when ? ' · ' + when : ''}`;
+  }
+
+  if (emailStatusCheckBtn) {
+    emailStatusCheckBtn.addEventListener('click', async () => {
+      if (!current || !current.emailProviderId) return;
+      if (!window.EmailService || !window.EmailService.checkEmailStatus) {
+        toast('Sign in and go online to check delivery status.');
+        return;
+      }
+      emailStatusCheckBtn.disabled = true;
+      emailStatusCheckBtn.textContent = 'Checking…';
+      try {
+        const result = await window.EmailService.checkEmailStatus(current.emailProviderId);
+        current.emailStatus = result.status || current.emailStatus;
+        current = await save();
+        renderEmailStatus();
+      } catch (err) {
+        toast('Could not check status: ' + (err.message || err));
+      } finally {
+        emailStatusCheckBtn.disabled = false;
+        emailStatusCheckBtn.textContent = 'Check status';
+      }
+    });
   }
 
   // ---------- field wiring ----------
@@ -311,13 +357,23 @@
     emailBtn.textContent = 'Sending…';
     try {
       const pdfBlob = await generateInvoicePdfBlob();
-      await window.EmailService.sendReportEmail({
+      const sendResult = await window.EmailService.sendReportEmail({
         recipientEmail: to,
         recipientName: current.clientName,
         jobName: `${current.number}`,
         documentKind: 'invoice',
         pdfBlob,
       });
+      // Same reasoning as report.js's emailReport: the id Resend hands back
+      // is the only way to ever ask "did this arrive" later, via
+      // check-email-status.
+      if (sendResult && sendResult.id) {
+        current.emailProviderId = sendResult.id;
+        current.emailedAt = Date.now();
+        current.emailStatus = 'sent';
+        current = await save();
+        renderEmailStatus();
+      }
       toast('Invoice emailed to ' + to);
     } catch (err) {
       toast('Could not email the invoice: ' + (err.message || err));

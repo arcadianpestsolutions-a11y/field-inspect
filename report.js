@@ -139,6 +139,9 @@
   const finalizeBtn = document.getElementById('finalize-report-btn');
   const finalizeHint = document.getElementById('finalize-hint');
   const finalizePostActions = document.getElementById('finalize-post-actions');
+  const emailStatusRow = document.getElementById('email-status-row');
+  const emailStatusText = document.getElementById('email-status-text');
+  const emailStatusCheckBtn = document.getElementById('email-status-check-btn');
   const reportSendBtn = document.getElementById('report-send-btn');
   const reportSaveBtn = document.getElementById('report-save-btn');
 
@@ -445,13 +448,17 @@
       const jobCategory = job && job.jobType === 'pest_treatment'
         ? await this.getJobCategory(jobId)
         : null;
-      const items = window.PhotoChecklists.forJob(job, jobCategory).filter((item) => item.schemaField);
+      // Loaded once, ahead of the checklist lookup, since which of a
+      // termite job's four possible documents is active decides which
+      // checklist applies (see photo-checklists.js) — reused below rather
+      // than loading it a second time.
+      const report = await loadOrCreateReport(jobId);
+      const items = window.PhotoChecklists.forJob(job, jobCategory, report.documentType).filter((item) => item.schemaField);
       if (!items.length) return;
 
       const captures = await DB.getCaptures(jobId);
       if (!captures.length) return;
 
-      const report = await loadOrCreateReport(jobId);
       let changed = false;
       for (const item of items) {
         const matches = captures.filter((c) => c.photoBlob && c.zone === item.label);
@@ -495,7 +502,7 @@
 
       const jobCategory = job && job.jobType === 'pest_treatment' ? await this.getJobCategory(jobId) : null;
       const checklistLabels = new Set(
-        (window.PhotoChecklists ? window.PhotoChecklists.forJob(job, jobCategory) : []).map((item) => item.label)
+        (window.PhotoChecklists ? window.PhotoChecklists.forJob(job, jobCategory, report.documentType) : []).map((item) => item.label)
       );
       const captures = await DB.getCaptures(jobId);
       const unmatchedCaptures = captures
@@ -768,6 +775,54 @@
     });
   }
 
+  // "Did they actually receive it?" — the row stays hidden until the report
+  // has actually been emailed once (emailProviderId set in emailReport
+  // above); status is only ever refreshed when the technician taps Check
+  // status, not automatically, matching check-email-status's pull-not-push
+  // design (see that function's own header for why).
+  const EMAIL_STATUS_LABELS = {
+    sent: 'Sent',
+    delivered: 'Delivered ✓',
+    opened: 'Opened by client',
+    clicked: 'Opened by client',
+    bounced: '⚠ Bounced — check the address',
+    complained: '⚠ Marked as spam',
+    delivery_delayed: 'Delayed — retrying',
+    unknown: 'Status unavailable',
+  };
+
+  function renderEmailStatus() {
+    if (!emailStatusRow || !currentReport) return;
+    if (!currentReport.emailProviderId) { emailStatusRow.classList.add('hidden'); return; }
+    emailStatusRow.classList.remove('hidden');
+    const when = currentReport.emailedAt ? fmtAuditTime(currentReport.emailedAt) : '';
+    const label = EMAIL_STATUS_LABELS[currentReport.emailStatus] || (currentReport.emailStatus || 'Sent');
+    emailStatusText.textContent = `📧 ${label}${when ? ' · ' + when : ''}`;
+  }
+
+  if (emailStatusCheckBtn) {
+    emailStatusCheckBtn.addEventListener('click', async () => {
+      if (!currentReport || !currentReport.emailProviderId) return;
+      if (!window.EmailService || !window.EmailService.checkEmailStatus) {
+        toast('Sign in and go online to check delivery status.');
+        return;
+      }
+      emailStatusCheckBtn.disabled = true;
+      emailStatusCheckBtn.textContent = 'Checking…';
+      try {
+        const result = await window.EmailService.checkEmailStatus(currentReport.emailProviderId);
+        currentReport.emailStatus = result.status || currentReport.emailStatus;
+        await DB.saveReport(currentReport);
+        renderEmailStatus();
+      } catch (err) {
+        toast('Could not check status: ' + aiErrorText(err));
+      } finally {
+        emailStatusCheckBtn.disabled = false;
+        emailStatusCheckBtn.textContent = 'Check status';
+      }
+    });
+  }
+
   function renderSchemaNotice() {
     if (!schemaMismatchNotice) return;
     const current = window.REPORT_SCHEMA_VERSION || null;
@@ -1024,6 +1079,7 @@
     renderPreflight();
     renderAuditTrail();
     renderSchemaNotice();
+    renderEmailStatus();
     reportSectionList.innerHTML = '';
     let allRequiredGreen = true;
 
@@ -1158,10 +1214,11 @@
         waitedSeconds += 3;
         toast('Still sending the report… (' + waitedSeconds + 's)');
       }, 3000);
+      let sendResult;
       try {
         const pdfBlob = await generateReportPdfBlob(job, currentReport);
         const clientDetails = currentReport.sections.clientDetails || {};
-        await window.EmailService.sendReportEmail({
+        sendResult = await window.EmailService.sendReportEmail({
           recipientEmail: recipientEmail.trim(),
           recipientName: clientDetails.clientName || job.name,
           jobName: job.name,
@@ -1170,6 +1227,18 @@
         });
       } finally {
         clearInterval(keepAlive);
+      }
+      // The id Resend hands back is the only way to ever ask "did this
+      // arrive" later — see check-email-status. Saved on the report itself
+      // (not the job) since a job can be re-emailed as its report changes,
+      // and each send should overwrite the last id, not accumulate a list
+      // nothing reads yet.
+      if (sendResult && sendResult.id) {
+        currentReport.emailProviderId = sendResult.id;
+        currentReport.emailedAt = Date.now();
+        currentReport.emailStatus = 'sent';
+        await DB.saveReport(currentReport);
+        renderSectionList();
       }
       toast('Report emailed to ' + recipientEmail.trim());
     } catch (err) {
@@ -1227,6 +1296,17 @@
       inspectorLicence: '5095443',
       inspectorPhone: '0291271320', // Arcadian Pest Solutions office number (matches providerPhone's default)
     },
+  };
+
+  // Same table, reused for a different job: turning a job's assignedTo
+  // email into a name worth showing on a job list or a scheduler slot. A
+  // login not yet added to INSPECTOR_DEFAULTS_BY_EMAIL just shows as its
+  // email — never blank, since "someone" is always better than nothing on
+  // a shared job list.
+  window.technicianDisplayName = function technicianDisplayName(email) {
+    if (!email) return '';
+    const defaults = INSPECTOR_DEFAULTS_BY_EMAIL[email.toLowerCase()];
+    return (defaults && defaults.inspectorName) || email;
   };
 
   // Merges AI-suggested values into pendingSectionValues, same rule

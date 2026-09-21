@@ -63,6 +63,10 @@
         <button class="status-filter-chip" data-status="completed">Completed</button>
         <button class="status-filter-chip" data-status="due">Due</button>
       </div>
+      <!-- Built and shown only once a second technician actually exists —
+           see renderTechnicianFilters in app.js. A solo business never
+           sees this row at all. -->
+      <div id="job-technician-filters" class="status-filter-row hidden"></div>
     </div>
 
     <div id="job-form" class="card job-form hidden">
@@ -110,6 +114,9 @@
       <h1 id="job-title">Job</h1>
       <span id="job-subtitle" class="subtitle"></span>
     </div>
+    <!-- Hidden until a second technician exists (see renderAssignedToTag in
+         app.js) — a solo business has nobody to reassign a job to. -->
+    <button id="assigned-to-btn" class="link-btn hidden" aria-label="Reassign this job"></button>
     <button id="delete-job-btn" class="icon-btn" aria-label="Delete job">🗑</button>
   </header>
 
@@ -282,6 +289,13 @@
       <button id="report-send-btn" class="btn btn-primary">📧 Send Report</button>
       <button id="report-save-btn" class="btn btn-secondary">💾 Save Report</button>
     </div>
+    <!-- Hidden until the report has actually been emailed once (see
+         renderEmailStatus in report.js) — "did they get it" only ever
+         means anything after a send has happened. -->
+    <div id="email-status-row" class="email-status-row hidden">
+      <span id="email-status-text"></span>
+      <button id="email-status-check-btn" class="link-btn">Check status</button>
+    </div>
   </main>
 </section>
 
@@ -446,6 +460,12 @@
     <button id="invoice-save-btn" class="btn btn-secondary full">Save invoice</button>
     <button id="invoice-xero-btn" class="btn btn-primary full">Send to Xero as draft</button>
     <button id="invoice-email-btn" class="btn btn-outline full">📧 Email invoice to client</button>
+    <!-- Same pattern as the report view's email-status-row — hidden until
+         the invoice has actually been emailed once. -->
+    <div id="invoice-email-status-row" class="email-status-row hidden">
+      <span id="invoice-email-status-text"></span>
+      <button id="invoice-email-status-check-btn" class="link-btn">Check status</button>
+    </div>
   </main>
 </section>
 

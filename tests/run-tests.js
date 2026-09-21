@@ -138,6 +138,36 @@
     assertEqual(fetched.name, 'Test Job A');
   });
 
+  test('DB.addJob assigns a new job to whoever is logged in', async () => {
+    // sync.js never initializes in test mode (IS_TEST short-circuits it
+    // before window.Sync is ever set) — this doesn't need the real thing,
+    // just something with the same currentUser() shape addJob actually
+    // reads, standing in for a real session the same way a test double
+    // stands in for any other dependency.
+    const original = window.Sync;
+    window.Sync = { currentUser: () => ({ id: 'u1', email: 'Tech@Example.com' }), pushJob: () => {} };
+    try {
+      const job = await DB.addJob({ name: 'Auto Assign Job' });
+      assertEqual(job.assignedTo, 'Tech@Example.com', 'whoever is logged in owns the job they just created');
+    } finally {
+      window.Sync = original;
+    }
+  });
+
+  test('DB.addJob leaves a job unassigned with nobody logged in', async () => {
+    // The default, and what every other test in this file already runs
+    // under — asserted explicitly so a future change to this fallback
+    // doesn't slip by unnoticed.
+    const original = window.Sync;
+    delete window.Sync;
+    try {
+      const job = await DB.addJob({ name: 'No Session Job' });
+      assertEqual(job.assignedTo, '', 'no session means nobody to assign it to yet');
+    } finally {
+      window.Sync = original;
+    }
+  });
+
   test('DB.getJobs returns newest first', async () => {
     const a = await DB.addJob({ name: 'Older' });
     await wait(5);
@@ -350,6 +380,85 @@
 
     doc.querySelector('.status-filter-chip[data-status="all"]').click();
     await wait(100);
+  });
+
+  // ---------- Multi-technician support ----------
+  // Everything here is "invisible until it matters": a solo business (the
+  // only kind this app has ever actually run for) must never see a
+  // technician tag, a technician filter, or a reassign button — the moment
+  // this section runs, jobs from every earlier test are already sitting in
+  // the shared test database with no assignedTo at all, which is exactly
+  // the "nobody else exists yet" state these guard against reacting to.
+
+  test('UI: no technician tag or filter appears with fewer than two technicians', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(150);
+    assert(doc.getElementById('job-technician-filters').classList.contains('hidden'),
+      'one technician (or none at all) is not a "whose job is whose" situation yet');
+    assert(!doc.querySelector('.job-item-technician'), 'and no row should carry a technician tag either');
+  });
+
+  test('UI: a second technician makes the filter and tags appear, and filtering actually narrows the list', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const jobA = await win.DB.addJob({ name: 'Tech A Job' });
+    const jobB = await win.DB.addJob({ name: 'Tech B Job' });
+    await win.DB.updateJob(jobA.id, { assignedTo: 'alice@example.com' });
+    await win.DB.updateJob(jobB.id, { assignedTo: 'bob@example.com' });
+
+    win.showJobListView();
+    await wait(150);
+
+    const filterRow = doc.getElementById('job-technician-filters');
+    assert(!filterRow.classList.contains('hidden'), 'a second technician must make the filter row appear');
+    assert(filterRow.textContent.includes('Everyone'), 'an explicit "everyone" option, not just individual names');
+    assert(filterRow.textContent.includes('alice@example.com') || filterRow.textContent.includes('Alice'),
+      'each known technician gets their own chip');
+    assert(doc.querySelector('.job-item-technician'), 'and rows now carry a technician tag too');
+
+    const aliceChip = Array.from(doc.querySelectorAll('#job-technician-filters .status-filter-chip'))
+      .find((b) => b.dataset.technician === 'alice@example.com');
+    assert(aliceChip, 'alice has her own filter chip specifically');
+    aliceChip.click();
+    await wait(150);
+    const visible = Array.from(doc.querySelectorAll('.job-item-name')).map((el) => el.textContent);
+    assert(visible.includes('Tech A Job'), "alice's own job stays visible under her filter");
+    assert(!visible.includes('Tech B Job'), "bob's job must not appear under alice's filter");
+
+    doc.querySelector('#job-technician-filters .status-filter-chip[data-technician="all"]').click();
+    await wait(100);
+  });
+
+  test('UI: reassigning a job from its detail view updates who it belongs to', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // Two technicians already need to exist for the reassign button to
+    // show at all — same rule as the list view, applied to the job screen.
+    const other = await win.DB.addJob({ name: 'Existing Other Tech Job' });
+    await win.DB.updateJob(other.id, { assignedTo: 'carol@example.com' });
+    const job = await win.DB.addJob({ name: 'Reassign Target Job' });
+    await win.DB.updateJob(job.id, { assignedTo: 'dave@example.com' });
+
+    win.showJobViewById(job.id);
+    await wait(200);
+    const btn = doc.getElementById('assigned-to-btn');
+    assert(!btn.classList.contains('hidden'), 'two technicians exist, so the reassign control must be visible');
+    assert(btn.textContent.includes('dave@example.com') || /dave/i.test(btn.textContent),
+      `should show who it is currently assigned to, got: ${btn.textContent}`);
+
+    const origPrompt = win.prompt;
+    win.prompt = () => 'carol@example.com';
+    try {
+      btn.click();
+      await wait(200);
+    } finally {
+      win.prompt = origPrompt;
+    }
+
+    const updated = await win.DB.getJob(job.id);
+    assertEqual(updated.assignedTo, 'carol@example.com', 'typing a different email must actually reassign the job');
   });
 
   // =====================================================================
@@ -2052,6 +2161,70 @@
     void bigDataUrl;
   });
 
+  // ---------- Email delivery confirmation ----------
+  // "Did they actually receive it?" reads the status back from Resend on
+  // demand, using the id saved on the report when it was sent — see
+  // check-email-status's own header for why this is pull, not push.
+
+  test('Delivery: the status row stays hidden until a report has actually been emailed', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Never Emailed Job' });
+    await win.DB.saveReport({ jobId: job.id, sections: {}, finalizedAt: null });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    assert(doc.getElementById('email-status-row').classList.contains('hidden'),
+      'a report that has never been sent has nothing to report delivery status about');
+  });
+
+  test('Delivery: a sent report shows its status and when it went out', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Sent Report Job' });
+    const sentAt = Date.now() - 60000;
+    await win.DB.saveReport({
+      jobId: job.id, sections: {}, finalizedAt: Date.now(),
+      emailProviderId: 'resend_abc123', emailedAt: sentAt, emailStatus: 'delivered',
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+
+    const row = doc.getElementById('email-status-row');
+    assert(!row.classList.contains('hidden'), 'a sent report must show the row');
+    assert(/Delivered/.test(doc.getElementById('email-status-text').textContent),
+      `the human label for "delivered" must actually be shown, got: ${doc.getElementById('email-status-text').textContent}`);
+  });
+
+  test('Delivery: checking status calls Resend by the saved id and persists what comes back', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Check Status Job' });
+    await win.DB.saveReport({
+      jobId: job.id, sections: {}, finalizedAt: Date.now(),
+      emailProviderId: 'resend_xyz789', emailedAt: Date.now(), emailStatus: 'sent',
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+
+    let calledWith = null;
+    const originalService = win.EmailService;
+    win.EmailService = {
+      checkEmailStatus: async (emailId) => { calledWith = emailId; return { status: 'bounced' }; },
+    };
+    try {
+      doc.getElementById('email-status-check-btn').click();
+      await wait(300);
+    } finally {
+      win.EmailService = originalService;
+    }
+
+    assertEqual(calledWith, 'resend_xyz789', 'must check the actual id this report was sent under, not a placeholder');
+    assert(/Bounced/i.test(doc.getElementById('email-status-text').textContent),
+      'the fresh status from Resend must actually reach the screen');
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.emailStatus, 'bounced', 'and persist, so it survives closing and reopening the report');
+  });
+
   // ---------- Form validation ----------
   // Each of these is a real defect found in a submitted Formitize report that
   // went to a client. The test is the record of what happened and the proof it
@@ -2179,6 +2352,72 @@
       'all four termite documents are offered');
     const pest = win.ReportUI.documentTypesFor('pest_treatment').map((d) => d.id);
     assertEqual(pest.join(','), 'general_pest', 'a general pest job offers only its own document');
+  });
+
+  // ---------- Guided capture per document type ----------
+  // A termite job's single report can be any one of four document types,
+  // but until now every one of them got the same inspection-focused
+  // checklist — a technician on site to install a barrier system was being
+  // prompted for "Weep Holes" instead of anything the certificate's own
+  // schema actually needs evidence of. These pin forJob's branching
+  // directly, since a wrong checklist here means a technician either gets
+  // asked for photos with nowhere to go, or never asked for the ones a
+  // document actually requires.
+
+  test('Checklist: an inspection (or no document type yet) gets the standard inspection checklist', () => {
+    const win = frame.contentWindow;
+    const withNone = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, undefined);
+    const withInspection = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection');
+    assert(withNone.some((i) => i.id === 'weepHoles'), 'a brand new job with no report yet defaults to the inspection checklist');
+    assert(withInspection.some((i) => i.id === 'weepHoles'), 'and naming the inspection explicitly gives the same list');
+  });
+
+  test('Checklist: a certificate asks for the installed system and the durable notice, not inspection findings', () => {
+    const win = frame.contentWindow;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_certificate');
+    const ids = items.map((i) => i.id);
+    assert(ids.includes('installedSystem'), 'the certificate exists to prove what was installed');
+    assert(ids.includes('durableNotice'), 'and that a durable notice was fixed — both required by TERMITE_CERTIFICATE_SCHEMA');
+    assert(!ids.includes('weepHoles') && !ids.includes('antCapping'),
+      'inspection-only items must not leak into a document that never asked an inspection question');
+    const notice = items.find((i) => i.id === 'durableNotice');
+    assertEqual(notice.schemaSection, 'durableNotice');
+    assertEqual(notice.schemaField, 'noticePhoto', 'must route into the field the schema actually named it');
+  });
+
+  test('Checklist: a service record asks about the stations being serviced, not what a fresh inspection found', () => {
+    const win = frame.contentWindow;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_service_record');
+    assert(items.length > 1, 'a real checklist, not an empty one');
+    assert(!items.some((i) => i.id === 'weepHoles'), 'this is a periodic visit to an existing system, not a fresh inspection');
+    assert(items.every((i) => !i.schemaField || i.schemaField === 'servicePhotos'),
+      'every routed item lands in the one photo field TERMITE_SERVICE_RECORD_SCHEMA actually has');
+  });
+
+  test('Checklist: an action plan gets no checklist at all — there is nowhere for a photo to go', () => {
+    // TERMITE_ACTION_PLAN_SCHEMA has no photo field anywhere in it — it's a
+    // proposal written from an inspection that already happened, not a
+    // document needing its own fresh evidence.
+    const win = frame.contentWindow;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_action_plan');
+    assertEqual(items.length, 0, 'sending a technician out with a checklist for a document with no photo field is pure busywork');
+  });
+
+  test('Checklist: which document is active on the job is what decides the checklist, end to end', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Certificate Checklist Job', jobType: 'termite' });
+    // A brand-new report lives purely in memory until something real is
+    // saved (see loadOrCreateReport) — openReview alone would never leave
+    // anything for DB.getReport to find. Seeding one directly is what
+    // actually proves attachChecklistPhotos reads a real persisted
+    // documentType, which is the thing under test here.
+    await win.DB.saveReport({ jobId: job.id, sections: {}, documentType: 'termite_certificate', finalizedAt: null });
+
+    await win.DB.addCapture({ jobId: job.id, zone: 'Installed System', type: 'photo', photoBlob: new win.Blob(['x'], { type: 'image/jpeg' }) });
+    await win.ReportUI.attachChecklistPhotos(job.id);
+    const after = await win.DB.getReport(job.id);
+    assertEqual((after.sections.installation.installationPhotos || []).length, 1,
+      'a photo taken against the certificate\'s own checklist label must land in the certificate\'s own schema field');
   });
 
   test('Documents: each schema is structurally sound', () => {

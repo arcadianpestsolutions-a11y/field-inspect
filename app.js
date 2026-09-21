@@ -34,11 +34,13 @@
   const jobEmptyEl = document.getElementById('job-empty');
   const jobSearchInput = document.getElementById('job-search-input');
   const jobStatusFilters = document.getElementById('job-status-filters');
+  const jobTechnicianFilters = document.getElementById('job-technician-filters');
 
   const backBtn = document.getElementById('back-btn');
   const deleteJobBtn = document.getElementById('delete-job-btn');
   const jobTitleEl = document.getElementById('job-title');
   const jobSubtitleEl = document.getElementById('job-subtitle');
+  const assignedToBtn = document.getElementById('assigned-to-btn');
   const zoneSuggestions = document.getElementById('zone-suggestions');
   const zoneChipRow = document.getElementById('zone-chip-row');
   const galleryEl = document.getElementById('gallery');
@@ -130,6 +132,7 @@
   let jobsCache = [];
   let jobSearchQuery = '';
   let jobStatusFilter = 'all';
+  let jobTechnicianFilter = 'all';
 
   let activeZoneFilter = null;
   let selectMode = false;
@@ -367,6 +370,7 @@
     if (!job) { showJobListView(); return; }
     jobTitleEl.textContent = job.name;
     jobSubtitleEl.textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
+    await renderAssignedToButton(job);
     activeZoneFilter = null;
     selectMode = false;
     selectedCaptureIds.clear();
@@ -377,6 +381,43 @@
     renderInspectionControls(job);
     await renderGallery();
   }
+
+  // Same "invisible until it matters" rule as the job list's technician tag
+  // and filter — no button, no name, nothing, until a second technician's
+  // email has actually shown up in the data.
+  async function renderAssignedToButton(job) {
+    if (!assignedToBtn) return;
+    const allJobs = await DB.getJobs();
+    const technicians = Array.from(new Set(allJobs.map((j) => j.assignedTo).filter(Boolean))).sort();
+    if (technicians.length < 2) { hide(assignedToBtn); return; }
+    const name = job.assignedTo ? (window.technicianDisplayName ? window.technicianDisplayName(job.assignedTo) : job.assignedTo) : 'Unassigned';
+    assignedToBtn.textContent = `👤 ${name}`;
+    show(assignedToBtn);
+  }
+
+  assignedToBtn.addEventListener('click', async () => {
+    if (!currentJobId) return;
+    const job = await DB.getJob(currentJobId);
+    if (!job) return;
+    const allJobs = await DB.getJobs();
+    const technicians = Array.from(new Set(allJobs.map((j) => j.assignedTo).filter(Boolean))).sort();
+    const list = technicians.map((email, i) => `${i + 1}. ${window.technicianDisplayName ? window.technicianDisplayName(email) : email}`).join('\n');
+    // A prompt rather than a custom picker UI — reassigning a job is rare
+    // enough that a small modal would be more code than the interaction is
+    // worth; typing a number (or a new email nobody's used yet) is enough.
+    const answer = (window.prompt(
+      `Reassign "${job.name}" to:\n${list}\n\nType a number above, or type a different email:`,
+      job.assignedTo || ''
+    ) || '').trim();
+    if (!answer) return;
+    const index = parseInt(answer, 10);
+    const email = (Number.isInteger(index) && index >= 1 && index <= technicians.length)
+      ? technicians[index - 1]
+      : answer;
+    await DB.updateJob(currentJobId, { assignedTo: email });
+    toast(`Assigned to ${window.technicianDisplayName ? window.technicianDisplayName(email) : email}`);
+    await renderAssignedToButton(await DB.getJob(currentJobId));
+  });
 
   // Shows the rebooking prompt on a completed job once its property is due
   // (or nearly due) again — turning "this job is finished" into "this client
@@ -523,7 +564,26 @@
     return { level: 'later', label: `Due ${fmtDate(job.nextDueAt)}`, days };
   }
 
+  // Nothing renders and nothing is even asked of the technician filter row
+  // until a second technician's email actually shows up in the data — a
+  // solo business must see literally zero trace of a multi-technician
+  // feature it has no use for yet.
+  function renderTechnicianFilters(technicians) {
+    if (technicians.length < 2) {
+      jobTechnicianFilters.classList.add('hidden');
+      jobTechnicianFilters.innerHTML = '';
+      if (jobTechnicianFilter !== 'all') jobTechnicianFilter = 'all';
+      return;
+    }
+    jobTechnicianFilters.classList.remove('hidden');
+    jobTechnicianFilters.innerHTML = `<button class="status-filter-chip${jobTechnicianFilter === 'all' ? ' active' : ''}" data-technician="all">Everyone</button>`
+      + technicians.map((email) => `<button class="status-filter-chip${jobTechnicianFilter === email ? ' active' : ''}" data-technician="${escapeHtml(email)}">${escapeHtml(window.technicianDisplayName ? window.technicianDisplayName(email) : email)}</button>`).join('');
+  }
+
   function applyJobListFilters() {
+    const knownTechnicians = Array.from(new Set(jobsCache.map(({ job }) => job.assignedTo).filter(Boolean))).sort();
+    renderTechnicianFilters(knownTechnicians);
+    const showTechnicianTags = knownTechnicians.length >= 2;
     const q = jobSearchQuery.trim().toLowerCase();
     let filtered = jobsCache.filter(({ job }) => {
       if (jobStatusFilter === 'due') {
@@ -532,6 +592,7 @@
       } else if (jobStatusFilter !== 'all' && (job.status || 'new') !== jobStatusFilter) {
         return false;
       }
+      if (jobTechnicianFilter !== 'all' && job.assignedTo !== jobTechnicianFilter) return false;
       if (!q) return true;
       return job.name.toLowerCase().includes(q) || (job.address || '').toLowerCase().includes(q);
     });
@@ -571,6 +632,13 @@
       li.querySelector('.status-badge').textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
       li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment' : '🐜 Termite';
       li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
+
+      if (showTechnicianTags) {
+        const tag = document.createElement('span');
+        tag.className = 'job-item-technician';
+        tag.textContent = job.assignedTo ? (window.technicianDisplayName ? window.technicianDisplayName(job.assignedTo) : job.assignedTo) : 'Unassigned';
+        li.querySelector('.job-item-top').appendChild(tag);
+      }
 
       // A booking is more actionable than a due date, so it wins the badge
       // slot while the job is still outstanding. Once the job is finished the
@@ -617,6 +685,17 @@
     if (!btn) return;
     jobStatusFilter = btn.dataset.status;
     jobStatusFilters.querySelectorAll('.status-filter-chip').forEach((el) => el.classList.toggle('active', el === btn));
+    applyJobListFilters();
+  });
+
+  // Delegated the same way, but the chips themselves are rebuilt by
+  // renderTechnicianFilters on every render (the list of technicians can
+  // change), so this listens on the container rather than on buttons that
+  // may no longer exist by the time someone taps one.
+  jobTechnicianFilters.addEventListener('click', (e) => {
+    const btn = e.target.closest('.status-filter-chip');
+    if (!btn) return;
+    jobTechnicianFilter = btn.dataset.technician;
     applyJobListFilters();
   });
 
@@ -1414,7 +1493,14 @@
       const jobCategoryForChecklist = window.ReportUI && window.ReportUI.getJobCategory
         ? await window.ReportUI.getJobCategory(currentJobId).catch(() => null)
         : null;
-      inspectionChecklistItems = (window.PhotoChecklists ? window.PhotoChecklists.forJob(jobForChecklist, jobCategoryForChecklist) : [])
+      // A termite job's report can be any one of four document types (see
+      // photo-checklists.js) — without reading it, every termite job got
+      // the same inspection checklist even mid-visit for a certificate or
+      // service record. No report yet (a brand new job) means forJob's own
+      // default (the standard inspection) applies, same as always.
+      const existingReport = await DB.getReport(currentJobId).catch(() => null);
+      const documentTypeForChecklist = existingReport ? existingReport.documentType : null;
+      inspectionChecklistItems = (window.PhotoChecklists ? window.PhotoChecklists.forJob(jobForChecklist, jobCategoryForChecklist, documentTypeForChecklist) : [])
         .filter((item) => item.id !== 'frontElevation');
       renderInspectionChecklist();
     } catch (err) {

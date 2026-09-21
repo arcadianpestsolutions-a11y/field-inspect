@@ -45,5 +45,19 @@
     return data;
   }
 
-  window.EmailService = { sendReportEmail };
+  // "Did they actually receive it?" — reads back the current delivery
+  // status of an email already sent, by the id Resend returned at send
+  // time (data.id from sendReportEmail above). Checked on demand rather
+  // than pushed by a webhook — see check-email-status's own header for why.
+  async function checkEmailStatus(emailId) {
+    if (!emailId) throw new Error('No email id to check — this was never sent, or sent before delivery tracking existed.');
+    const { data, error } = await supabaseClient.functions.invoke('check-email-status', {
+      body: { emailId },
+    });
+    if (error) throw error;
+    if (data && data.error) throw new Error(data.error);
+    return data;
+  }
+
+  window.EmailService = { sendReportEmail, checkEmailStatus };
 })();

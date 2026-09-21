@@ -223,7 +223,13 @@
         btn.appendChild(name);
         const meta = document.createElement('span');
         meta.className = 'slot-job-meta';
-        meta.textContent = [fmtTime(entry.job.scheduledAt), `${durationOf(entry.job)} min`, entry.job.address]
+        // Same rule as the job list: a technician name is only worth a
+        // technician's attention once there's more than one to distinguish.
+        const technicians = new Set(jobs.map((j) => j.assignedTo).filter(Boolean));
+        const who = technicians.size >= 2 && entry.job.assignedTo
+          ? (window.technicianDisplayName ? window.technicianDisplayName(entry.job.assignedTo) : entry.job.assignedTo)
+          : null;
+        meta.textContent = [fmtTime(entry.job.scheduledAt), `${durationOf(entry.job)} min`, entry.job.address, who]
           .filter(Boolean).join(' · ');
         btn.appendChild(meta);
         btn.addEventListener('click', () => {

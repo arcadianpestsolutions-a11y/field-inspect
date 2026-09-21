@@ -32,6 +32,43 @@
     { id: 'exteriorTimbers', label: 'External Timbers', schemaSection: 'conducive', schemaField: 'conducivePhotos' },
   ];
 
+  // A termite job's single report can represent any one of four document
+  // types (see DOCUMENT_TYPES in report.js) — an inspection, an action
+  // plan, a certificate, or a service record — but until now every termite
+  // job got this same inspection-focused checklist regardless of which one
+  // was actually active. A technician on site to install a barrier system
+  // was being prompted for "Weep Holes" and "Kitchen / Bathroom" — findings
+  // from an inspection that likely already happened — instead of anything
+  // that document's own schema actually asks for.
+
+  // Certificate of Installation: the whole point of this document is
+  // proving what was physically installed, so its checklist is exactly the
+  // two things the schema needs evidence of (see TERMITE_CERTIFICATE_SCHEMA
+  // in termite-management-schemas.js).
+  const TERMITE_CERTIFICATE_CHECKLIST = [
+    { id: 'frontElevation', label: 'Front Elevation' },
+    { id: 'installedSystem', label: 'Installed System', schemaSection: 'installation', schemaField: 'installationPhotos' },
+    { id: 'durableNotice', label: 'Durable Notice', schemaSection: 'durableNotice', schemaField: 'noticePhoto' },
+  ];
+
+  // Service Record: a periodic visit to a system already installed. The
+  // schema's own photo field lives in the Findings section, but a
+  // technician thinking in terms of "what do I photograph" reads more
+  // naturally as one item per thing being checked than one generic prompt —
+  // both route to the same servicePhotos field either way.
+  const TERMITE_SERVICE_RECORD_CHECKLIST = [
+    { id: 'frontElevation', label: 'Front Elevation' },
+    { id: 'stationCondition', label: 'Station / Bait Condition', schemaSection: 'findings', schemaField: 'servicePhotos' },
+    { id: 'structureCheck', label: 'Structure — Any New Activity', schemaSection: 'findings', schemaField: 'servicePhotos' },
+  ];
+
+  // Action Plan deliberately has no checklist at all — TERMITE_ACTION_PLAN_
+  // SCHEMA has no photo field anywhere in it. It's a proposal written from
+  // an inspection that already happened ("Inspection report this follows
+  // from" is a required field), not a document that needs its own fresh
+  // evidence — sending a technician out with a photo checklist for a
+  // document that has nowhere to put photos would be pure busywork.
+
   const PEST_CHECKLISTS = {
     'Exterior Only': [
       { id: 'frontElevation', label: 'Front Elevation' },
@@ -65,9 +102,17 @@
     { id: 'evidence', label: 'Pest Evidence', schemaSection: 'pestIdentification', schemaField: 'pestPhotos' },
   ];
 
-  function forJob(job, jobCategory) {
+  // documentType is optional and defaults to the standard inspection —
+  // every existing caller that doesn't know or care which document is
+  // active keeps working exactly as before.
+  function forJob(job, jobCategory, documentType) {
     if (!job) return [];
-    if (job.jobType === 'termite') return TERMITE_CHECKLIST;
+    if (job.jobType === 'termite') {
+      if (documentType === 'termite_certificate') return TERMITE_CERTIFICATE_CHECKLIST;
+      if (documentType === 'termite_service_record') return TERMITE_SERVICE_RECORD_CHECKLIST;
+      if (documentType === 'termite_action_plan') return [];
+      return TERMITE_CHECKLIST;
+    }
     if (job.jobType === 'pest_treatment') return PEST_CHECKLISTS[jobCategory] || PEST_DEFAULT_CHECKLIST;
     return [];
   }

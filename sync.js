@@ -129,7 +129,7 @@
 
   // ---------- Field <-> column mapping ----------
   function localJobToRemote(job) {
-    return {
+    const row = {
       id: job.id,
       name: job.name,
       job_type: job.jobType || 'termite',
@@ -146,8 +146,6 @@
       inspection_started_at: job.inspectionStartedAt || null,
       inspection_ended_at: job.inspectionEndedAt || null,
       next_due_at: job.nextDueAt || null,
-      reinspection_interval_months: job.reinspectionIntervalMonths || null,
-      reminder_sent_for_due_at: job.reminderSentForDueAt || null,
       scheduled_at: job.scheduledAt || null,
       scheduled_duration_mins: job.scheduledDurationMins || null,
       recurring_from_id: job.recurringFromId || null,
@@ -155,6 +153,15 @@
       created_at: job.createdAt,
       updated_at: job.updatedAt,
     };
+    if (!jobExtraColumnsMissing) {
+      // Newer columns (migrations 011-013) a project may not have run yet —
+      // see pushJob's retry-without-these fallback, same pattern pushReport
+      // already uses for audit_log/schema_version/document_type.
+      row.reinspection_interval_months = job.reinspectionIntervalMonths || null;
+      row.reminder_sent_for_due_at = job.reminderSentForDueAt || null;
+      row.assigned_to = job.assignedTo || '';
+    }
+    return row;
   }
 
   function remoteJobToLocal(rj) {
@@ -184,6 +191,7 @@
       scheduledAt: rj.scheduled_at || null,
       scheduledDurationMins: rj.scheduled_duration_mins || 60,
       recurringFromId: rj.recurring_from_id || null,
+      assignedTo: rj.assigned_to || '',
       createdAt: rj.created_at,
       updatedAt: rj.updated_at,
     };
@@ -260,12 +268,17 @@
     return merged;
   }
 
-  // Flipped the first time the server rejects audit_log/schema_version because
-  // migration 008 hasn't been run against this project yet. Without this, every
-  // report push would fail from the moment this build ships until someone runs
-  // the migration — losing ordinary report sync to protect a new column. The
-  // audit trail still exists locally and pushes as soon as the column does.
+  // Flipped the first time the server rejects one of these newer report
+  // columns because its migration hasn't been run against this project
+  // yet: audit_log/schema_version (008), document_type (015). Without this,
+  // every report push would fail outright the moment this build ships,
+  // until someone runs the migration — losing ordinary report sync to
+  // protect a column nobody's asked for yet. Everything still exists
+  // locally and pushes as soon as the column does.
   let reportAuditColumnsMissing = false;
+  // Same idea, for jobs' own newer columns: assigned_to (013),
+  // reinspection_interval_months (012), reminder_sent_for_due_at (011).
+  let jobExtraColumnsMissing = false;
 
   function localReportToRemote(report, pushedSections) {
     const row = {
@@ -281,16 +294,32 @@
     if (!reportAuditColumnsMissing) {
       row.audit_log = Array.isArray(report.auditLog) ? report.auditLog : [];
       row.schema_version = report.schemaVersion || null;
+      // Which of a termite job's four possible documents this report
+      // actually is (see DOCUMENT_TYPES in report.js). Never synced before
+      // migration 015 — a report pulled down on a second device, or after
+      // this device's own local DB was rebuilt, silently reverted to
+      // undefined, which is exactly the kind of thing that makes a
+      // certificate quietly start rendering as a standard inspection. Kept
+      // behind the same flag as the other two: if this migration hasn't
+      // run either, it needs to drop out of the retry the same way.
+      row.document_type = report.documentType || null;
+      // Set once EmailService.sendReportEmail succeeds (see report.js's
+      // emailReport) — check-email-status reads emailProviderId back from
+      // Resend on demand. Migration 014.
+      row.email_provider_id = report.emailProviderId || null;
+      row.emailed_at = report.emailedAt || null;
+      row.email_status = report.emailStatus || null;
     }
     return row;
   }
 
-  // PostgREST answers an unknown column with PGRST204 and a message naming it.
+  // PostgREST answers an unknown column with PGRST204 — the generic code
+  // covers any column name, which is why nothing here needs to list them.
   function isMissingColumnError(error) {
     if (!error) return false;
     const code = error.code || '';
     const msg = String(error.message || '');
-    return code === 'PGRST204' || /audit_log|schema_version/.test(msg);
+    return code === 'PGRST204' || /audit_log|schema_version|document_type/.test(msg);
   }
 
   function remoteReportToLocal(rr, existingLocal) {
@@ -299,6 +328,14 @@
       sections: mergeRemoteSections(rr.sections, existingLocal ? existingLocal.sections : {}),
       aiDraft: rr.ai_draft || (existingLocal ? existingLocal.aiDraft : null),
       finalizedAt: rr.finalized_at || null,
+      // Falls back to whatever this device already had if an older row
+      // (synced before migration 014, or a remote still missing the
+      // column) doesn't carry it — never to undefined, which is the
+      // silent-revert-to-inspection bug this column exists to close.
+      documentType: rr.document_type || (existingLocal ? existingLocal.documentType : null),
+      emailProviderId: rr.email_provider_id || (existingLocal ? existingLocal.emailProviderId : null),
+      emailedAt: rr.emailed_at || (existingLocal ? existingLocal.emailedAt : null),
+      emailStatus: rr.email_status || (existingLocal ? existingLocal.emailStatus : null),
       // The audit log only ever grows, and each device may hold events the
       // other has never seen — a plain last-write-wins overwrite here would
       // erase exactly the history the log exists to preserve. Union by
@@ -328,7 +365,12 @@
   async function pushJob(job) {
     if (!isReady()) return;
     try {
-      const { error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job));
+      let { error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job));
+      if (error && !jobExtraColumnsMissing && isMissingColumnError(error)) {
+        jobExtraColumnsMissing = true;
+        console.warn('[sync] jobs.assigned_to / reinspection_interval_months / reminder_sent_for_due_at not in the database yet — run migrations 011-013. Job sync continues without them.');
+        ({ error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job)));
+      }
       if (error) throw error;
     } catch (e) {
       console.warn('[sync] push job failed, will retry on next sync:', e.message || e);
@@ -484,35 +526,55 @@
     catch (e) { console.warn('[sync] delete footage remote failed:', e.message || e); }
   }
 
+  // Same reasoning as reportAuditColumnsMissing/jobExtraColumnsMissing —
+  // migration 014's email_provider_id/emailed_at/email_status columns may
+  // not exist on this project yet.
+  let invoiceExtraColumnsMissing = false;
+
+  function localInvoiceToRemote(invoice) {
+    const row = {
+      id: invoice.id,
+      job_id: invoice.jobId,
+      number: invoice.number,
+      issue_date: invoice.issueDate,
+      due_date: invoice.dueDate,
+      client_name: invoice.clientName || '',
+      client_email: invoice.clientEmail || '',
+      property_address: invoice.propertyAddress || '',
+      reference: invoice.reference || '',
+      line_items: invoice.lineItems || [],
+      gst_registered: invoice.gstRegistered !== false,
+      status: invoice.status || 'draft',
+      xero_invoice_id: invoice.xeroInvoiceId || null,
+      xero_status: invoice.xeroStatus || null,
+      created_at: invoice.createdAt,
+      updated_at: invoice.updatedAt || invoice.createdAt,
+      created_by: currentUserId(),
+    };
+    if (!invoiceExtraColumnsMissing) {
+      row.email_provider_id = invoice.emailProviderId || null;
+      row.emailed_at = invoice.emailedAt || null;
+      row.email_status = invoice.emailStatus || null;
+    }
+    return row;
+  }
+
   async function pushInvoice(invoice) {
     if (!isReady()) return;
     try {
-      const { error } = await supabaseClient.from('invoices').upsert({
-        id: invoice.id,
-        job_id: invoice.jobId,
-        number: invoice.number,
-        issue_date: invoice.issueDate,
-        due_date: invoice.dueDate,
-        client_name: invoice.clientName || '',
-        client_email: invoice.clientEmail || '',
-        property_address: invoice.propertyAddress || '',
-        reference: invoice.reference || '',
-        line_items: invoice.lineItems || [],
-        gst_registered: invoice.gstRegistered !== false,
-        status: invoice.status || 'draft',
-        xero_invoice_id: invoice.xeroInvoiceId || null,
-        xero_status: invoice.xeroStatus || null,
-        created_at: invoice.createdAt,
-        updated_at: invoice.updatedAt || invoice.createdAt,
-        created_by: currentUserId(),
-      });
+      let { error } = await supabaseClient.from('invoices').upsert(localInvoiceToRemote(invoice));
+      if (error && !invoiceExtraColumnsMissing && isMissingColumnError(error)) {
+        invoiceExtraColumnsMissing = true;
+        console.warn('[sync] invoices.email_provider_id / emailed_at / email_status not in the database yet — run supabase-migration-014-email-delivery-tracking.sql. Invoice sync continues without them.');
+        ({ error } = await supabaseClient.from('invoices').upsert(localInvoiceToRemote(invoice)));
+      }
       if (error) throw error;
     } catch (e) {
       console.warn('[sync] push invoice failed, will retry on next sync:', e.message || e);
     }
   }
 
-  function remoteInvoiceToLocal(ri) {
+  function remoteInvoiceToLocal(ri, existingLocal) {
     return {
       id: ri.id,
       jobId: ri.job_id,
@@ -528,6 +590,9 @@
       status: ri.status || 'draft',
       xeroInvoiceId: ri.xero_invoice_id || null,
       xeroStatus: ri.xero_status || null,
+      emailProviderId: ri.email_provider_id || (existingLocal ? existingLocal.emailProviderId : null),
+      emailedAt: ri.emailed_at || (existingLocal ? existingLocal.emailedAt : null),
+      emailStatus: ri.email_status || (existingLocal ? existingLocal.emailStatus : null),
       createdAt: ri.created_at,
       updatedAt: ri.updated_at,
     };

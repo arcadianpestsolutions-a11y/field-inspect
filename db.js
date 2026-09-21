@@ -24,8 +24,19 @@ window.IS_DEMO = __params.get('demo') === '1';
 // suite on a browser that happens to hold a live session pulls production
 // records into the test database AND pushes every test fixture up to the real
 // one — which is precisely what happened.
-window.IS_TEST = !!__params.get('test');
-const DB_NAME = __params.get('test') ? 'field-inspect-db-test'
+//
+// tests/run-tests.html itself (not just the app-under-test iframe it loads
+// via ?test=1) also calls DB.addJob directly for its own DB-layer tests —
+// and its OWN address bar has never carried ?test=1, only a cache-busting
+// query the operator remembers to add or doesn't. Found by checking a real
+// device's job list and finding 32 copies of "Test Job A", "Older", "Newer"
+// and "Filter Status Job" sitting in it: the query-string check alone had
+// been silently writing test fixtures into the same local database the real
+// app reads from, on every single run of the suite. A page loaded from
+// /tests/ is unconditionally test mode regardless of its own query string —
+// this is not something a forgotten "?test=1" should be able to defeat.
+window.IS_TEST = !!__params.get('test') || location.pathname.includes('/tests/');
+const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
   : window.IS_DEMO ? 'field-inspect-db-demo'
   : 'field-inspect-db';
 // v4 adds the `sectionDrafts` store. onupgradeneeded below is written so each
@@ -136,6 +147,13 @@ const DB = {
       // The job this one was raised from, so a property's inspection history
       // can be walked backwards.
       recurringFromId: recurringFromId || null,
+      // Whoever is logged in when the job is created owns it by default —
+      // right now that's always the same one technician, so this costs
+      // nothing today, but the moment a second person logs in, every job
+      // they create is already correctly theirs with no extra step. See
+      // scheduler.js's technician filter and app.js's reassign action for
+      // where this actually gets read and changed.
+      assignedTo: (window.Sync && window.Sync.currentUser && window.Sync.currentUser() && window.Sync.currentUser().email) || '',
       createdAt: now,
       updatedAt: now,
     };
