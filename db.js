@@ -163,6 +163,28 @@ const DB = {
     return updated;
   },
 
+  // A tap-to-book flow only ever checks the hour the technician tapped — if
+  // that hour is free but the chosen duration runs into the hour after,
+  // nothing catches it, because nothing else in the app looks at durations
+  // together. Same gap in the auto-rebook flow: a recurring inspection is
+  // booked straight onto its due date with no visibility into what else that
+  // day already holds. This is the one place that check lives, so every
+  // booking path — the day grid, the backlog's one-tap book, the AI
+  // scheduling assistant, and auto-rebook — asks the same question the same
+  // way instead of five different half-checks drifting apart over time.
+  async getOverlappingJobs(scheduledAt, durationMins, excludeJobId) {
+    if (!scheduledAt) return [];
+    const start = scheduledAt;
+    const end = scheduledAt + (durationMins || 60) * 60000;
+    const all = await this.getJobs();
+    return all.filter((j) => {
+      if (j.id === excludeJobId || !j.scheduledAt) return false;
+      const jStart = j.scheduledAt;
+      const jEnd = jStart + (j.scheduledDurationMins || 60) * 60000;
+      return start < jEnd && jStart < end;
+    });
+  },
+
   async deleteJob(id) {
     const captures = await this.getCaptures(id);
     const cstore = await tx('captures', 'readwrite');

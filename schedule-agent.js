@@ -207,6 +207,15 @@
       };
 
       yes.addEventListener('click', async () => {
+        // The assistant checks the diary before proposing a time, but that
+        // check happened whenever it ran the tool — seconds or minutes
+        // before this tap. If something else got booked into the same slot
+        // in between (another device, the scheduler screen), this is the
+        // last chance to catch it before two jobs land in one slot.
+        if (window.Scheduler && window.Scheduler.confirmNoOverlap) {
+          const clear = await window.Scheduler.confirmNoOverlap(jobId, when.getTime(), mins);
+          if (!clear) { settle({ booked: false, reason: 'The technician cancelled — that slot was no longer free.' }, 'Cancelled'); return; }
+        }
         await DB.updateJob(jobId, { scheduledAt: when.getTime(), scheduledDurationMins: mins });
         if (window.Scheduler) await window.Scheduler.refresh();
         settle({ booked: true, jobName: job.name, at: `${toLocalDate(when)} ${fmtTime(when.getTime())}`, durationMins: mins }, '✓ Booked');

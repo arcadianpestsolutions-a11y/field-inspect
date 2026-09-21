@@ -309,6 +309,7 @@
       <h1>Scheduler</h1>
       <span id="scheduler-month-label" class="subtitle"></span>
     </div>
+    <button id="calendar-feed-open" class="icon-btn" aria-label="Calendar feed" title="Subscribe from another calendar">🔗</button>
     <button id="agent-open" class="icon-btn" aria-label="Booking assistant" title="Booking assistant">💬</button>
     <button id="scheduler-today" class="link-btn">Today</button>
   </header>
@@ -326,6 +327,22 @@
       <input id="agent-input" type="text" placeholder="e.g. book the Nguyen re-inspection Tuesday morning" autocomplete="off" />
       <button id="agent-send" class="btn btn-primary agent-send">Send</button>
     </div>
+  </div>
+
+  <!-- Calendar feed: a live .ics link any external calendar can subscribe
+       to. See calendar-feed.js — this only holds the markup it drives. -->
+  <div id="calendar-feed-panel" class="agent-panel hidden">
+    <div class="agent-head">
+      <span class="agent-title">Calendar feed</span>
+      <button id="calendar-feed-close" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <p id="calendar-feed-hint" class="calendar-feed-hint">Loading…</p>
+    <div class="calendar-feed-url-row">
+      <input id="calendar-feed-url" type="text" class="hidden" readonly aria-label="Calendar feed link" />
+      <button id="calendar-feed-copy" class="btn btn-secondary hidden">Copy</button>
+    </div>
+    <button id="calendar-feed-generate" class="btn btn-outline full hidden">Generate link</button>
+    <button id="calendar-feed-regenerate" class="btn btn-outline full hidden">Regenerate link</button>
   </div>
 
   <main class="content">
@@ -470,6 +487,7 @@
 <script src="invoice-ui.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>
+<script src="calendar-feed.js"></script>
 <script src="demo.js"></script>
 <script src="app.js"></script>
 </body>

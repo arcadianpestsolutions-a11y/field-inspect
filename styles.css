@@ -1917,3 +1917,30 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   color: var(--text-dim);
   margin-top: 2px;
 }
+
+/* Calendar feed panel — reuses .agent-panel/.agent-head for the shell, this
+   just covers the link row and hint text specific to this one. */
+.calendar-feed-hint {
+  padding: 12px 16px 4px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.calendar-feed-url-row {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+}
+.calendar-feed-url-row input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+}
+#calendar-feed-generate,
+#calendar-feed-regenerate {
+  margin-left: 16px;
+  margin-right: 16px;
+  margin-bottom: 12px;
+  width: calc(100% - 32px);
+}

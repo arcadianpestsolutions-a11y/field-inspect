@@ -2314,6 +2314,208 @@
     assert(detail.classList.contains('hidden'), 'and it stays out of the way when there is nothing to say');
   });
 
+  // ---------- Booking overlap ----------
+  // Five separate places in this app write scheduledAt/scheduledDurationMins
+  // (the day grid, the backlog's one-tap book, the AI scheduling assistant,
+  // auto-rebook, and the new-job form). Before this, none of them checked
+  // whether the slot they were about to write into already belonged to
+  // another job — two jobs could be booked into the same hour with nothing
+  // ever telling anyone. These pin the shared check itself; the confirm-based
+  // UI wiring at each call site is exercised live rather than re-mocked five
+  // times over.
+
+  test('Overlap: two jobs booked into the same window are detected', async () => {
+    const win = frame.contentWindow;
+    const base = Date.parse('2026-10-12T09:00:00');
+    const a = await win.DB.addJob({ name: 'Overlap A', scheduledAt: base, scheduledDurationMins: 120 });
+    const b = await win.DB.addJob({ name: 'Overlap B' });
+    const clashes = await win.DB.getOverlappingJobs(base + 60 * 60000, 60, b.id);
+    assertEqual(clashes.length, 1, 'a job starting inside another job\'s window is a clash');
+    assertEqual(clashes[0].id, a.id, 'and it names the actual job it clashes with');
+  });
+
+  test('Overlap: back-to-back bookings do not clash', async () => {
+    // 9:00-10:00 followed by 10:00-11:00 is a full diary, not a double-booking
+    // — the boundary itself must not count as overlapping, or a technician
+    // could never book two jobs back to back without a false warning.
+    const win = frame.contentWindow;
+    const base = Date.parse('2026-10-13T09:00:00');
+    const a = await win.DB.addJob({ name: 'Back-to-back A', scheduledAt: base, scheduledDurationMins: 60 });
+    const clashes = await win.DB.getOverlappingJobs(base + 60 * 60000, 60, null);
+    assertEqual(clashes.length, 0, 'a job starting exactly when another ends is not a clash');
+  });
+
+  test('Overlap: a job never clashes with itself', async () => {
+    const win = frame.contentWindow;
+    const base = Date.parse('2026-10-14T09:00:00');
+    const a = await win.DB.addJob({ name: 'Self Job', scheduledAt: base, scheduledDurationMins: 90 });
+    const clashes = await win.DB.getOverlappingJobs(base, 90, a.id);
+    assertEqual(clashes.length, 0, 'moving a job or re-saving it at the same time must not flag against itself');
+  });
+
+  test('Overlap: an unscheduled candidate has nothing to check', async () => {
+    const win = frame.contentWindow;
+    const clashes = await win.DB.getOverlappingJobs(null, 60, null);
+    assertEqual(clashes.length, 0, 'no time means no conflict is possible');
+  });
+
+  test('Overlap: a long job that runs into a later booking is caught, not just the start hour', async () => {
+    // This is the exact bug found in bookInto: the day grid only shows the
+    // tapped hour as free. A 3pm job that runs 3 hours reaches 6pm even
+    // though 3pm itself was clear.
+    const win = frame.contentWindow;
+    const base = Date.parse('2026-10-15T17:00:00'); // 5pm
+    const later = await win.DB.addJob({ name: 'Late Job', scheduledAt: base, scheduledDurationMins: 60 });
+    const candidateStart = Date.parse('2026-10-15T15:00:00'); // 3pm, itself free
+    const clashes = await win.DB.getOverlappingJobs(candidateStart, 180, null); // runs to 6pm
+    assertEqual(clashes.length, 1, 'the 5pm job is caught even though 3pm itself was empty');
+  });
+
+  test('Overlap: the confirm prompt names the job it clashes with', async () => {
+    const win = frame.contentWindow;
+    const base = Date.parse('2026-10-16T10:00:00');
+    await win.DB.addJob({ name: 'Existing Slot Job', scheduledAt: base, scheduledDurationMins: 60 });
+    const mover = await win.DB.addJob({ name: 'Mover Job' });
+
+    const origConfirm = win.confirm;
+    let confirmMessage = null;
+    win.confirm = (msg) => { confirmMessage = msg; return false; }; // decline the clash
+    try {
+      const clear = await win.Scheduler.confirmNoOverlap(mover.id, base, 60);
+      assert(!clear, 'declining the clash must not clear the booking');
+      assert(confirmMessage && /Existing Slot Job/.test(confirmMessage),
+        `the prompt must name the job it clashes with, got: ${confirmMessage}`);
+    } finally {
+      win.confirm = origConfirm;
+    }
+  });
+
+  test('Scheduler: declining a clash leaves the picker open and books nothing; accepting books it', async () => {
+    // The real bug, end to end: 3pm is genuinely free, so the grid offers it.
+    // A 90-minute job booked there runs to 4:30pm, reaching into a job
+    // already sitting at 4pm — a clash the grid itself has no way to show,
+    // because it only ever looks one hour ahead of the tap.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const day = dayThisMonth(14);
+    await win.DB.addJob({ name: 'Four PM Job', scheduledAt: new Date(day).setHours(16, 0, 0, 0), scheduledDurationMins: 60 });
+    await win.DB.addJob({ name: 'Long Mover Job' });
+
+    await win.Scheduler.open();
+    await wait(300);
+    Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(14).getDate())).click();
+    await wait(300);
+
+    const pmRow = Array.from(doc.querySelectorAll('.slot-row'))
+      .find((r) => r.textContent.startsWith('3pm') && r.querySelector('.slot-free'));
+    assert(pmRow, '3pm itself is free — the clash only exists once the duration is applied');
+    pmRow.querySelector('.slot-free').click();
+    await wait(300);
+    doc.getElementById('slot-picker-duration').value = '90';
+    const row = Array.from(doc.querySelectorAll('.picker-row')).find((r) => r.textContent.includes('Long Mover Job'));
+
+    const origConfirm = win.confirm;
+    win.confirm = () => false; // decline
+    try {
+      row.click();
+      await wait(400);
+    } finally {
+      win.confirm = origConfirm;
+    }
+    assert(!doc.getElementById('slot-picker-modal').classList.contains('hidden'),
+      'declining leaves the picker open so a different time can be chosen');
+    let saved = (await win.DB.getJobs()).find((j) => j.name === 'Long Mover Job');
+    assertEqual(saved.scheduledAt, null, 'nothing is written when the clash is declined');
+
+    win.confirm = () => true; // now accept the same clash
+    try {
+      row.click();
+      await wait(400);
+    } finally {
+      win.confirm = origConfirm;
+    }
+    saved = (await win.DB.getJobs()).find((j) => j.name === 'Long Mover Job');
+    assert(saved.scheduledAt, 'accepting the clash books it anyway — this is a warning, not a hard block');
+    assert(doc.getElementById('slot-picker-modal').classList.contains('hidden'), 'and the picker closes as normal');
+  });
+
+  // ---------- Calendar feed ----------
+  // The feed itself is served by an Edge Function nothing here can reach
+  // (it needs a live deploy), so these pin what's testable without one: the
+  // markup exists, and a Postgres error a technician would never understand
+  // gets translated into one they can act on — the same discipline sync.js's
+  // message tests hold it to.
+
+  test('Overlap: creating a job through the new-job form checks the diary too', async () => {
+    // The fifth booking path, and the easiest to forget precisely because it
+    // isn't in the scheduler at all — a technician adding a job straight
+    // from the job list, giving it a time on the spot.
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const day = dayThisMonth(18);
+    await win.DB.addJob({ name: 'Form Clash Existing', scheduledAt: new Date(day).setHours(10, 0, 0, 0), scheduledDurationMins: 60 });
+
+    doc.getElementById('new-job-btn').click();
+    doc.getElementById('job-name').value = 'Form Clash New';
+    doc.getElementById('job-scheduled-date').value = localISO(dayThisMonth(18));
+    doc.getElementById('job-scheduled-time').value = '10:00';
+
+    const origConfirm = win.confirm;
+    let confirmMessage = null;
+    win.confirm = (msg) => { confirmMessage = msg; return false; }; // decline
+    try {
+      doc.getElementById('job-form-save').click();
+      await wait(300);
+    } finally {
+      win.confirm = origConfirm;
+    }
+    assert(confirmMessage && /Form Clash Existing/i.test(confirmMessage),
+      `the new-job form must ask before booking over an existing job, got: ${confirmMessage}`);
+    assert(!(await win.DB.getJobs()).some((j) => j.name === 'Form Clash New'),
+      'declining must stop the job being created at all, not just leave it unscheduled');
+  });
+
+  test('Calendar feed: the panel exists and starts hidden', () => {
+    const doc = frame.contentDocument;
+    assert(doc.getElementById('calendar-feed-open'), 'the scheduler offers a way to open the feed panel');
+    assert(doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'closed until asked for');
+  });
+
+  test('Calendar feed: a missing migration reads as a setup problem, not raw Postgres', () => {
+    const win = frame.contentWindow;
+    const msg = win.CalendarFeedMessages.feedErrorText(
+      new Error("Could not find the table 'public.calendar_feed' in the schema cache"));
+    assert(/migration/i.test(msg), 'it names the actual fix, not just that something went wrong');
+    assert(!/schema cache/i.test(msg), 'the raw Postgres string never reaches the technician');
+  });
+
+  test('Calendar feed: every error path names where the work still is or how to fix it', () => {
+    const win = frame.contentWindow;
+    const cases = [
+      win.CalendarFeedMessages.feedErrorText(new Error('permission denied for table calendar_feed')),
+      win.CalendarFeedMessages.feedErrorText(new Error('Failed to fetch')),
+      win.CalendarFeedMessages.feedErrorText(new Error('something odd')),
+    ];
+    for (const msg of cases) assert(msg && msg.length > 10, `every path produces a real message, got: ${msg}`);
+  });
+
+  test('Calendar feed: the link embeds the token and points at the functions endpoint', () => {
+    const win = frame.contentWindow;
+    const url = win.CalendarFeedMessages.feedUrlFor('abc123');
+    assert(url && url.includes('/functions/v1/calendar-feed'), `expected the functions endpoint, got: ${url}`);
+    assert(url.includes('token=abc123'), 'the token must actually be in the link a calendar app is given');
+  });
+
+  test('Calendar feed: each generated token is long and does not repeat', () => {
+    const win = frame.contentWindow;
+    const a = win.CalendarFeedMessages.randomToken();
+    const b = win.CalendarFeedMessages.randomToken();
+    assert(a.length >= 48, 'short enough to guess is the one thing this token must never be');
+    assert(a !== b, 'two calls must not hand back the same secret');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

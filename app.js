@@ -405,6 +405,17 @@
   async function rebookJob(jobId) {
     const previous = await DB.getJob(jobId);
     if (!previous) return;
+    // Put it straight in the diary on the day it fell due, at 9am. The date
+    // is a starting point the technician can drag around in the scheduler —
+    // but a re-inspection that lands unscheduled is one that gets forgotten.
+    const autoWhen = previous.nextDueAt ? atNineAm(previous.nextDueAt) : null;
+    // This is the one booking path with no calendar in view when it fires —
+    // it's tapped from the job screen, not the scheduler — so a clash here
+    // is the one a technician is least likely to spot on their own.
+    if (autoWhen && window.Scheduler && window.Scheduler.confirmNoOverlap) {
+      const clear = await window.Scheduler.confirmNoOverlap(null, autoWhen, 60);
+      if (!clear) { toast('Rebooking cancelled — pick a time in the scheduler instead.'); return; }
+    }
     const next = await DB.addJob({
       name: previous.name,
       address: previous.address,
@@ -415,10 +426,7 @@
       clientEmail: previous.clientEmail,
       jobType: previous.jobType,
       recurringFromId: previous.id,
-      // Put it straight in the diary on the day it fell due, at 9am. The date
-      // is a starting point the technician can drag around in the scheduler —
-      // but a re-inspection that lands unscheduled is one that gets forgotten.
-      scheduledAt: previous.nextDueAt ? atNineAm(previous.nextDueAt) : null,
+      scheduledAt: autoWhen,
     });
     await DB.updateJob(previous.id, { nextDueAt: null });
     toast('Next inspection booked for ' + next.name);
@@ -648,6 +656,11 @@
   jobFormSave.addEventListener('click', async () => {
     const name = jobNameInput.value.trim();
     if (!name) { toast('Enter a job name'); jobNameInput.focus(); return; }
+    const newScheduledAt = readScheduledAtFromForm();
+    if (newScheduledAt && window.Scheduler && window.Scheduler.confirmNoOverlap) {
+      const clear = await window.Scheduler.confirmNoOverlap(null, newScheduledAt, 60);
+      if (!clear) return;
+    }
     const job = await DB.addJob({
       name,
       jobType: selectedJobType,
@@ -657,7 +670,7 @@
       notes: jobNotesInput.value.trim(),
       clientPhone: jobPhoneInput.value.trim(),
       clientEmail: jobEmailInput.value.trim(),
-      scheduledAt: readScheduledAtFromForm(),
+      scheduledAt: newScheduledAt,
     });
     hide(jobForm);
     await renderJobList();

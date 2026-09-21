@@ -323,6 +323,11 @@
     const when = new Date(selected);
     when.setHours(hour, 0, 0, 0);
     const mins = parseInt(pickerDuration.value, 10) || 60;
+    // The grid only ever shows the tapped hour as free — it says nothing
+    // about whether the chosen duration runs into the hour after, which is
+    // exactly how a 2pm slot with a 3-hour job silently landed on top of a
+    // 3pm booking before this existed.
+    if (!(await confirmNoOverlap(job.id, when.getTime(), mins))) return;
     await DB.updateJob(job.id, { scheduledAt: when.getTime(), scheduledDurationMins: mins });
     closePicker();
     toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtHour(hour)} (${mins} min)`);
@@ -392,9 +397,31 @@
     while (taken.has(hour) && hour < DAY_END_HOUR - 1) hour++;
     const when = new Date(selected);
     when.setHours(hour, 0, 0, 0);
+    // This search only ever checked the starting hour against single-hour
+    // marks — a job that starts free but runs long enough to reach an
+    // occupied hour later in its own duration slipped straight through. The
+    // confirm below is the actual safety net; the search above just aims for
+    // a good default.
+    if (!(await confirmNoOverlap(job.id, when.getTime(), durationOf(job)))) return;
     await DB.updateJob(job.id, { scheduledAt: when.getTime(), scheduledDurationMins: durationOf(job) });
     toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtHour(hour)}`);
     await refresh();
+  }
+
+  // Shared by every booking path in this file. Returns true if it's clear to
+  // book, or if the technician confirmed the clash anyway — a hard block
+  // would be wrong here, since a genuine double-up (two technicians, or a
+  // quick 10-minute drop-in alongside a long job) is a real thing that
+  // happens; the point is that nobody books over another job without seeing
+  // it first.
+  async function confirmNoOverlap(jobId, scheduledAt, durationMins) {
+    const clashes = await DB.getOverlappingJobs(scheduledAt, durationMins, jobId);
+    if (!clashes.length) return true;
+    const names = clashes.map((j) => `${j.name} at ${fmtTime(j.scheduledAt)}`).join(', ');
+    return window.confirm(
+      `This clashes with ${clashes.length === 1 ? 'a job already booked' : `${clashes.length} jobs already booked`}: `
+      + `${names}.\n\nBook it anyway?`
+    );
   }
 
   async function refresh() {
@@ -434,5 +461,9 @@
       view.classList.remove('hidden');
     },
     refresh,
+    // Exposed so every other booking path (the AI assistant, auto-rebook)
+    // asks the same question with the same wording, instead of each writing
+    // its own half of a conflict check.
+    confirmNoOverlap,
   };
 })();
