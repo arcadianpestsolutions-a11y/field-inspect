@@ -78,6 +78,10 @@
       </div>
       <input id="job-phone" type="tel" placeholder="Client phone (optional)" autocomplete="off" />
       <input id="job-email" type="email" placeholder="Client email (optional)" autocomplete="off" />
+      <!-- Shown when a phone/email matches an existing job — there is no
+           client record to open, just a look back at what this same
+           contact has booked before. See findClientHistory in db.js. -->
+      <div id="returning-client-panel" class="returning-client-panel hidden"></div>
       <label class="field-label">Book it in (optional)</label>
       <div class="row gap">
         <input id="job-scheduled-date" type="date" />

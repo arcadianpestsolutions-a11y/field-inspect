@@ -2697,6 +2697,90 @@
     assert(a !== b, 'two calls must not hand back the same secret');
   });
 
+  // ---------- Returning-client detection ----------
+  // There is no clients table — a returning customer is recognised by
+  // matching the phone/email being typed against every existing job's own
+  // contact fields. These pin the matching rules themselves, since a wrong
+  // match here means telling a technician a stranger is a repeat customer,
+  // and a missed match means the opposite — the whole point silently failing.
+
+  test('Client history: the same phone in different formats still matches', async () => {
+    const win = frame.contentWindow;
+    await win.DB.addJob({ name: 'Format Test Job', clientPhone: '0412 345 678' });
+    const history = await win.DB.findClientHistory({ phone: '(04) 1234-5678' });
+    assert(history.some((j) => j.name === 'Format Test Job'),
+      'digits are the same person regardless of spaces, dashes or brackets');
+  });
+
+  test('Client history: email match is case-insensitive', async () => {
+    const win = frame.contentWindow;
+    await win.DB.addJob({ name: 'Case Test Job', clientEmail: 'Jane@Example.com' });
+    const history = await win.DB.findClientHistory({ email: 'jane@example.com' });
+    assert(history.some((j) => j.name === 'Case Test Job'), 'an inbox does not care about letter case');
+  });
+
+  test('Client history: either phone or email matching is enough', async () => {
+    // A returning customer often keeps one contact detail and changes the
+    // other — a new phone, the same email, or vice versa.
+    const win = frame.contentWindow;
+    await win.DB.addJob({ name: 'Either Match Job', clientPhone: '0400 111 222', clientEmail: 'old@example.com' });
+    const byPhoneOnly = await win.DB.findClientHistory({ phone: '0400 111 222', email: 'different@example.com' });
+    const byEmailOnly = await win.DB.findClientHistory({ phone: '0499 999 999', email: 'old@example.com' });
+    assert(byPhoneOnly.some((j) => j.name === 'Either Match Job'), 'a phone match alone is enough');
+    assert(byEmailOnly.some((j) => j.name === 'Either Match Job'), 'an email match alone is enough');
+  });
+
+  test('Client history: a job never matches itself, and unrelated jobs never match', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Self Match Job', clientPhone: '0455 555 555' });
+    const excludingSelf = await win.DB.findClientHistory({ phone: '0455 555 555', excludeJobId: job.id });
+    assert(!excludingSelf.some((j) => j.id === job.id), 'the job being created is never its own history');
+
+    const noMatch = await win.DB.findClientHistory({ phone: '0400 000 000', email: 'nobody@nowhere.test' });
+    assert(!noMatch.length || !noMatch.some((j) => j.name === 'Self Match Job'),
+      'a phone/email that matches nothing must not return unrelated jobs');
+  });
+
+  test('Client history: blank phone and email return nothing, never every job', async () => {
+    const win = frame.contentWindow;
+    const history = await win.DB.findClientHistory({ phone: '', email: '' });
+    assertEqual(history.length, 0,
+      'two blank fields must never be treated as a match against every job\'s own blank fields');
+  });
+
+  test('UI: typing a matching phone into the new-job form shows the returning-client panel', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.DB.addJob({ name: 'Panel Test Prior Job', clientPhone: '0433 222 111', address: '9 Panel St' });
+
+    doc.getElementById('new-job-btn').click();
+    await wait(200);
+    setTextInput(win, doc.getElementById('job-phone'), '0433222111');
+    await wait(600);
+
+    const panel = doc.getElementById('returning-client-panel');
+    assert(!panel.classList.contains('hidden'), 'a matching phone must surface the panel, not stay hidden');
+    assert(panel.textContent.includes('Panel Test Prior Job'), 'it names the actual previous job, not just a count');
+  });
+
+  test('UI: the returning-client panel clears when the field is emptied', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.DB.addJob({ name: 'Clear Test Prior Job', clientPhone: '0477 888 999' });
+
+    doc.getElementById('new-job-btn').click();
+    await wait(200);
+    const phoneInput = doc.getElementById('job-phone');
+    setTextInput(win, phoneInput, '0477888999');
+    await wait(600);
+    assert(!doc.getElementById('returning-client-panel').classList.contains('hidden'), 'sanity check: it showed up first');
+
+    setTextInput(win, phoneInput, '');
+    await wait(600);
+    assert(doc.getElementById('returning-client-panel').classList.contains('hidden'),
+      'clearing the field must hide it again, not leave a stale match showing');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

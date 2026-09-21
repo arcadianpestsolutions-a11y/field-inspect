@@ -158,6 +158,45 @@ const DB = {
     return jobs.sort((a, b) => b.createdAt - a.createdAt);
   },
 
+  // ---------- Client history ----------
+  // There is no `clients` table — a customer's contact details live on each
+  // job record, same as they always have. Building a real client entity
+  // means migrating every existing job for a business already using this
+  // app daily, which is a much bigger and riskier change than "tell the
+  // technician this is a repeat customer." This gets the actual value —
+  // recognising a returning client — by matching on the data that already
+  // exists, with nothing to migrate and nothing that can go wrong with old
+  // records.
+  //
+  // Phone numbers get typed as "0412 345 678", "0412-345-678", "(04) 1234
+  // 5678" — digits-only comparison is the only reliable match. Email is
+  // compared case-insensitively, since "Jane@x.com" and "jane@x.com" are
+  // the same inbox.
+  _normalizePhone(phone) {
+    return String(phone || '').replace(/\D/g, '');
+  },
+  _normalizeEmail(email) {
+    return String(email || '').trim().toLowerCase();
+  },
+
+  // Returns past jobs for the same client, newest first, excluding the job
+  // being looked up from (a job matches itself trivially otherwise). A
+  // client is the same person if EITHER their phone or their email matches
+  // — a returning customer often gives a different phone (new number, a
+  // partner booking this time) but keeps the same email, or vice versa.
+  async findClientHistory({ phone, email, excludeJobId } = {}) {
+    const normPhone = this._normalizePhone(phone);
+    const normEmail = this._normalizeEmail(email);
+    if (!normPhone && !normEmail) return [];
+    const all = await this.getJobs();
+    return all.filter((j) => {
+      if (j.id === excludeJobId) return false;
+      const phoneMatch = normPhone && this._normalizePhone(j.clientPhone) === normPhone;
+      const emailMatch = normEmail && this._normalizeEmail(j.clientEmail) === normEmail;
+      return phoneMatch || emailMatch;
+    });
+  },
+
   async getJob(id) {
     const store = await tx('jobs', 'readonly');
     return reqToPromise(store.get(id));

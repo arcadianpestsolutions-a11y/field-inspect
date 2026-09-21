@@ -1941,6 +1941,35 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 #calendar-feed-regenerate {
   margin-left: 16px;
   margin-right: 16px;
-  margin-bottom: 12px;
+  /* .btn-primary's own glow (--glow-accent) extends ~22px past its box —
+     enough bottom clearance to keep that soft on this panel rather than
+     bleeding visibly into whatever sits directly below it (the scheduler's
+     calendar grid). */
+  margin-bottom: 24px;
   width: calc(100% - 32px);
+}
+
+/* Returning-client detection on the new-job form — no client database, just
+   a look back at matching contact details on past jobs. Amber like the
+   sync-detail bar: a helpful heads-up, not a warning. */
+.returning-client-panel {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  background: rgba(191, 132, 22, 0.12);
+  border: 1px solid rgba(191, 132, 22, 0.3);
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+.returning-client-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.returning-client-list {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.5;
+}
+.returning-client-more {
+  margin-top: 2px;
+  color: var(--text-dim);
 }

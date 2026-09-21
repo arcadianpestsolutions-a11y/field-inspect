@@ -24,6 +24,7 @@
   const jobAddressSuggestions = document.getElementById('job-address-suggestions');
   const jobPhoneInput = document.getElementById('job-phone');
   const jobEmailInput = document.getElementById('job-email');
+  const returningClientPanel = document.getElementById('returning-client-panel');
   const jobNotesInput = document.getElementById('job-notes');
   const newJobBtn = document.getElementById('new-job-btn');
   const openArchiveBtn = document.getElementById('open-archive-btn');
@@ -635,6 +636,7 @@
     jobPhoneInput.value = '';
     jobEmailInput.value = '';
     jobNotesInput.value = '';
+    if (returningClientPanel) { returningClientPanel.classList.add('hidden'); returningClientPanel.innerHTML = ''; }
     const schedDate = document.getElementById('job-scheduled-date');
     const schedTime = document.getElementById('job-scheduled-time');
     if (schedDate) schedDate.value = '';
@@ -652,6 +654,47 @@
   });
 
   jobFormCancel.addEventListener('click', () => { hide(jobForm); hideAddressSuggestions(); });
+
+  // Recognising a returning customer without a client database: match the
+  // phone/email being typed against every existing job's own contact
+  // fields. Debounced the same way address autocomplete is — this runs on
+  // every keystroke otherwise, and a 344-job business doesn't need that.
+  let clientHistoryDebounceTimer = null;
+  function scheduleClientHistoryCheck() {
+    clearTimeout(clientHistoryDebounceTimer);
+    clientHistoryDebounceTimer = setTimeout(checkClientHistory, 400);
+  }
+
+  async function checkClientHistory() {
+    if (!returningClientPanel) return;
+    const phone = jobPhoneInput.value.trim();
+    const email = jobEmailInput.value.trim();
+    if (!phone && !email) {
+      returningClientPanel.classList.add('hidden');
+      returningClientPanel.innerHTML = '';
+      return;
+    }
+    const history = await DB.findClientHistory({ phone, email });
+    if (!history.length) {
+      returningClientPanel.classList.add('hidden');
+      returningClientPanel.innerHTML = '';
+      return;
+    }
+    const rows = history.slice(0, 5).map((j) => {
+      const date = new Date(j.createdAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      const type = j.jobType === 'pest_treatment' ? 'Pest Treatment' : 'Termite';
+      return `<li>${escapeHtml(j.name)} — ${type} · ${escapeHtml(j.address || 'no address')} · ${date}</li>`;
+    }).join('');
+    returningClientPanel.innerHTML = `
+      <div class="returning-client-title">↩ Returning client — ${history.length} previous job${history.length === 1 ? '' : 's'}</div>
+      <ul class="returning-client-list">${rows}</ul>
+      ${history.length > 5 ? `<div class="returning-client-more">+ ${history.length - 5} more</div>` : ''}
+    `;
+    returningClientPanel.classList.remove('hidden');
+  }
+
+  jobPhoneInput.addEventListener('input', scheduleClientHistoryCheck);
+  jobEmailInput.addEventListener('input', scheduleClientHistoryCheck);
 
   jobFormSave.addEventListener('click', async () => {
     const name = jobNameInput.value.trim();
@@ -886,7 +929,12 @@
     const visible = getVisibleCaptures();
 
     if (currentCaptures.length === 0) {
-      galleryEmptyEl.textContent = 'No captures yet for this job. Use the buttons below to take a photo or record a zone note.';
+      // Stale copy from before Start/Finish Inspection replaced standalone
+      // "take a photo" / "record a zone note" buttons on this screen —
+      // there is nothing "below" any more, so the message stopped matching
+      // the actual UI. index.html's own default text for this element is
+      // already correct; this used to override it with the wrong one.
+      galleryEmptyEl.textContent = 'No captures yet for this job. Photos and notes are captured during Start/Finish Inspection, or via Import Footage.';
       show(galleryEmptyEl);
     } else if (visible.length === 0) {
       galleryEmptyEl.textContent = 'No captures in this zone yet.';
