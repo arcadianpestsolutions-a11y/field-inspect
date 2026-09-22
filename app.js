@@ -376,7 +376,11 @@
     selectedCaptureIds.clear();
     gallerySelectToggle.textContent = 'Select';
     hide(selectionBar);
-    hide(viewJobList);
+    // Every view, not just viewJobList — this is reached directly from the
+    // scheduler's day view and from invoice-ui.js's "back to job", neither of
+    // which is the job list, and leaving either showing underneath was the
+    // same trap showJobListView's own comment already describes fixing once.
+    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     show(viewJob);
     renderInspectionControls(job);
     await renderGallery();
@@ -1808,7 +1812,12 @@
     if (types.length < 2) { docTypeRow.classList.add('hidden'); return; }
 
     const existing = await DB.getReport(job.id);
-    const currentId = existing && existing.documentType;
+    // documentTypeOf(), not existing.documentType directly: a report saved
+    // before this stamp existed has no documentType field at all, and without
+    // this fallback it read as falsy here — which skipped the "already has a
+    // different document" guard below and let every card silently reopen the
+    // same existing report with no explanation.
+    const currentId = existing ? window.ReportUI.documentTypeOf(existing, job).id : null;
     docTypeRow.classList.remove('hidden');
     docTypeRow.innerHTML = '';
 
@@ -1834,7 +1843,9 @@
         // would mean answering a different question set, so it is a decision
         // rather than a toggle.
         if (existing && currentId && currentId !== type.id) {
-          toast(`This job already has a ${window.ReportUI.documentTypeOf(existing, job).short}. Create a separate job for the ${type.short}.`);
+          const article = (word) => (/^[aeiou]/i.test(word) ? 'an' : 'a');
+          const existingShort = window.ReportUI.documentTypeOf(existing, job).short;
+          toast(`This job already has ${article(existingShort)} ${existingShort}. Create a separate job for the ${type.short}.`);
           return;
         }
         await ReportUI.openReview(job.id, type.id);

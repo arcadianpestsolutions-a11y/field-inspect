@@ -461,6 +461,30 @@ const DB = {
     return all.sort((a, b) => (b.finalizedAt || b.updatedAt || 0) - (a.finalizedAt || a.updatedAt || 0));
   },
 
+  // ---------- Self-service backup ----------
+  // Jobs, reports (with their full audit trails) and invoices — every record
+  // that only lives in Postgres otherwise, so the business is not one
+  // Supabase incident from losing them. Deliberately excludes captures and
+  // footage: those are photo/video blobs that would make this megabytes-to-
+  // gigabytes and slow to generate on a phone, and they already have their
+  // own backup path once media.js syncs them to Supabase Storage. This export
+  // is a belt to that path's suspenders, not a replacement for it.
+  async exportAllData() {
+    const [jobs, reports, invoices] = await Promise.all([
+      this.getJobs(),
+      this.getAllReports(),
+      this.getAllInvoices(),
+    ]);
+    return {
+      exportedAt: new Date().toISOString(),
+      appVersion: window.APP_VERSION || null,
+      counts: { jobs: jobs.length, reports: reports.length, invoices: invoices.length },
+      jobs,
+      reports,
+      invoices,
+    };
+  },
+
   // ---------- Section drafts ----------
   // Local-only safety net for a section still being edited — see the note at
   // the top of this file. Never synced (window.Sync has no idea this store

@@ -1070,6 +1070,31 @@
       `day load should total the hours, got: ${doc.getElementById('scheduler-day-load').textContent}`);
   });
 
+  test('Scheduler: opening a job from the day view leaves the scheduler behind, not stacked underneath', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const d = dayThisMonth(7, 9);
+    const job = await win.DB.addJob({ name: 'Jump From Scheduler Job', scheduledAt: d.getTime() });
+
+    await win.Scheduler.open();
+    await wait(300);
+    Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(7).getDate())).click();
+    await wait(300);
+    Array.from(doc.querySelectorAll('.slot-job'))
+      .find((b) => b.textContent.includes('Jump From Scheduler Job')).click();
+    await wait(200);
+
+    // showJobView only ever hid viewJobList before this fix — reached from
+    // anywhere else (the scheduler's day view, invoice-ui.js's "back to
+    // job"), the previous screen stayed visible underneath the job view.
+    const visible = Array.from(doc.querySelectorAll('.view'))
+      .filter((v) => !v.classList.contains('hidden'));
+    assertEqual(visible.length, 1, `exactly one view should be visible, got: ${visible.map((v) => v.id).join(', ')}`);
+    assertEqual(visible[0].id, 'view-job', 'the job view should be the one showing');
+    assert(job.id, 'sanity: the job was actually created');
+  });
+
   test('Scheduler: booking into a chosen slot uses that hour and duration', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
@@ -2418,6 +2443,68 @@
     const after = await win.DB.getReport(job.id);
     assertEqual((after.sections.installation.installationPhotos || []).length, 1,
       'a photo taken against the certificate\'s own checklist label must land in the certificate\'s own schema field');
+  });
+
+  test('Documents: picking a different document type on a legacy report (no documentType stamp) still blocks with an explanation', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Legacy Report Job', jobType: 'termite' });
+    await win.DB.updateJob(job.id, { status: 'review' });
+    // No documentType at all — exactly what every report saved before this
+    // field existed looks like. Before the fix, documentTypeOf()'s "missing
+    // means inspection" fallback was applied when deciding which card LOOKS
+    // active but not when deciding whether a click should be blocked, so
+    // every card silently reopened this same report instead of explaining
+    // that a different job is needed.
+    await win.DB.saveReport({ jobId: job.id, sections: {}, finalizedAt: null });
+
+    await win.showJobViewById(job.id);
+    await wait(200);
+    const cards = doc.querySelectorAll('.doc-type-card');
+    const certificateCard = Array.from(cards).find((c) => /Certificate of Installation/.test(c.textContent));
+    assert(certificateCard, 'the certificate option should be offered on a termite job');
+    certificateCard.click();
+    await wait(100);
+
+    assert(!doc.getElementById('view-job').classList.contains('hidden'),
+      'clicking a different document type must not navigate away from the job');
+    assert(doc.getElementById('view-report').classList.contains('hidden'),
+      'and must not silently open the existing report under the wrong pretence');
+    assertEqual(doc.getElementById('toast').textContent,
+      'This job already has an Inspection. Create a separate job for the Certificate.',
+      'the technician needs to be told why nothing happened, not left guessing');
+  });
+
+  // ---------- Self-service backup ----------
+
+  test('Backup: exportAllData bundles jobs, reports and invoices, with no photo blobs bloating it', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Export Test Job' });
+    await win.DB.saveReport({
+      jobId: job.id, sections: {}, finalizedAt: Date.now(),
+      auditLog: [{ event: 'created', at: Date.now() }],
+    });
+    await win.DB.saveInvoice({
+      id: 'export-test-invoice-' + job.id, jobId: job.id, number: 'INV-TEST',
+      lineItems: [{ description: 'Test line', qty: 1, unitPriceCents: 1000 }],
+      status: 'draft', createdAt: Date.now(),
+    });
+
+    const data = await win.DB.exportAllData();
+
+    assert(data.jobs.some((j) => j.id === job.id), 'export must include a job just created');
+    assert(data.reports.some((r) => r.jobId === job.id && Array.isArray(r.auditLog)),
+      'and its report, audit trail intact');
+    assert(data.invoices.some((i) => i.jobId === job.id), 'and its invoice');
+    assertEqual(data.counts.jobs, data.jobs.length, 'counts must match the actual arrays');
+    assertEqual(data.counts.reports, data.reports.length, 'counts must match the actual arrays');
+    assertEqual(data.counts.invoices, data.invoices.length, 'counts must match the actual arrays');
+    // Not "no report ever carries a data:image string" — a signature or a
+    // sketch canvas legitimately does, and both are small. What must never
+    // happen is the bulky captures/footage stores (raw inspection photos)
+    // riding along and turning a quick download into a multi-hundred-MB file.
+    assert(!('captures' in data) && !('footage' in data),
+      'a backup meant to be quick to generate and download on a phone must not carry the raw photo/video stores');
   });
 
   test('Documents: each schema is structurally sound', () => {

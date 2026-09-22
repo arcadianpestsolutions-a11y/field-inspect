@@ -168,6 +168,7 @@
   const archiveBackBtn = document.getElementById('archive-back-btn');
   const archiveList = document.getElementById('archive-list');
   const archiveEmpty = document.getElementById('archive-empty');
+  const exportDataBtn = document.getElementById('export-data-btn');
 
   // ---------- State ----------
   let currentJobId = null;
@@ -716,6 +717,38 @@
     if (window.showJobListView) window.showJobListView();
     else show(document.getElementById('view-joblist'));
   });
+
+  // A file the business holds itself, so a Supabase-side incident is not the
+  // only copy of a client's jobs, reports and invoices. Browser download
+  // rather than anything server-side — this has to work even if the cloud
+  // that would otherwise host a backup is exactly what's unavailable.
+  if (exportDataBtn) {
+    exportDataBtn.addEventListener('click', async () => {
+      const originalLabel = exportDataBtn.textContent;
+      exportDataBtn.disabled = true;
+      exportDataBtn.textContent = 'Preparing export…';
+      try {
+        const data = await DB.exportAllData();
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const dateStamp = new Date().toISOString().slice(0, 10);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `field-inspect-backup-${dateStamp}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast(`Exported ${data.counts.jobs} jobs, ${data.counts.reports} reports, ${data.counts.invoices} invoices.`);
+      } catch (err) {
+        toast('Could not prepare the export — try again. ' + (err && err.message ? err.message : ''));
+      } finally {
+        exportDataBtn.disabled = false;
+        exportDataBtn.textContent = originalLabel;
+      }
+    });
+  }
 
   // ---------- Audit trail + schema version UI ----------
   // Every element used here can be absent on a device pairing this script with
