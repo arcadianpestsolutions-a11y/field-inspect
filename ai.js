@@ -8,6 +8,80 @@
 (() => {
   'use strict';
 
+  // ---------- Error wording ----------
+  // Defined and exported ABOVE the Supabase guards below, the same way
+  // sync.js exports SyncMessages: these two are pure string handling with no
+  // Supabase dependency, and turning a server failure into something a
+  // technician can act on is exactly the part worth having tests for. Left
+  // below the guards they would be unreachable in any environment without a
+  // configured backend — including the test suite.
+
+  // Turns whatever came back from the Edge Function into something a
+  // technician standing at a property can act on. The raw strings are
+  // written for whoever is debugging the function — "Unknown action —
+  // expected draft-report, trace-building, ..." is accurate and useless to
+  // the person holding the phone. Each case below says what went wrong AND
+  // what to do about it. Anything unrecognised keeps its original text
+  // rather than being swallowed: a mystery message still beats no message.
+  function humanError(err) {
+    const raw = String((err && err.message) || err || '');
+
+    // Client is newer than the deployed function: the feature shipped but
+    // the server side hasn't been deployed yet.
+    if (/unknown action/i.test(raw)) {
+      return 'This AI feature is not switched on yet — the app has it, the server still needs updating. Nothing you did wrong.';
+    }
+    if (/not authenticated|jwt|\b401\b/i.test(raw)) {
+      return 'You have been signed out. Log out and back in, then try again.';
+    }
+    if (/failed to fetch|networkerror|load failed|offline/i.test(raw)
+        || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      return 'No connection. Your photos are saved on this device — try again once you have signal.';
+    }
+    if (/\b404\b|not found/i.test(raw)) {
+      return 'The AI service could not be reached. It may not be deployed yet.';
+    }
+    if (/timeout|timed out|\b504\b|deadline/i.test(raw)) {
+      return 'The AI took too long to answer. Try again, or with fewer photos at once.';
+    }
+    if (/rate limit|\b429\b|quota|overloaded/i.test(raw)) {
+      return 'The AI service is busy right now. Wait a moment and try again.';
+    }
+    // Last line of defence: supabase-js's own wording, reaching here only if
+    // edgeErrorMessage() could not recover the real body. It describes an
+    // HTTP status to whoever wrote the code and nothing at all to the person
+    // holding the phone, so it never ships as-is.
+    if (/non-2xx status code/i.test(raw)) {
+      return 'The AI service rejected that request. If it keeps happening, the server may need updating.';
+    }
+    return raw;
+  }
+
+  // Digs the message the Edge Function actually sent out of a failed
+  // invoke(). supabase-js collapses EVERY non-2xx into the single string
+  // "Edge Function returned a non-2xx status code" and hands the real
+  // response over separately, on error.context. Without this, none of the
+  // cases in humanError() above can ever match on a 4xx/5xx — including the
+  // "unknown action" one written precisely for the situation where the app
+  // is newer than the deployed function, which is the situation this
+  // project has actually been in. The technician got the raw supabase-js
+  // string instead of the sentence that tells them what to do about it.
+  async function edgeErrorMessage(error) {
+    try {
+      if (error && error.context && typeof error.context.json === 'function') {
+        const source = typeof error.context.clone === 'function' ? error.context.clone() : error.context;
+        const body = await source.json();
+        if (body && body.error) return String(body.error);
+      }
+    } catch (e) {
+      // Not JSON, already consumed, or no body at all — the generic message
+      // below is still better than throwing from the error handler.
+    }
+    return String((error && error.message) || error || '');
+  }
+
+  window.AIMessages = { humanError, edgeErrorMessage };
+
   if (!window.supabase || !window.SUPABASE_URL || !window.SUPABASE_PUBLISHABLE_KEY) {
     console.warn('[ai] Supabase not configured — AI features unavailable.');
     return;
@@ -111,40 +185,6 @@
     });
   }
 
-  // Turns whatever came back from the Edge Function into something a
-  // technician standing at a property can act on. The raw strings are
-  // written for whoever is debugging the function — "Unknown action —
-  // expected draft-report, trace-building, ..." is accurate and useless to
-  // the person holding the phone. Each case below says what went wrong AND
-  // what to do about it. Anything unrecognised keeps its original text
-  // rather than being swallowed: a mystery message still beats no message.
-  function humanError(err) {
-    const raw = String((err && err.message) || err || '');
-
-    // Client is newer than the deployed function: the feature shipped but
-    // the server side hasn't been deployed yet.
-    if (/unknown action/i.test(raw)) {
-      return 'This AI feature is not switched on yet — the app has it, the server still needs updating. Nothing you did wrong.';
-    }
-    if (/not authenticated|jwt|\b401\b/i.test(raw)) {
-      return 'You have been signed out. Log out and back in, then try again.';
-    }
-    if (/failed to fetch|networkerror|load failed|offline/i.test(raw)
-        || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
-      return 'No connection. Your photos are saved on this device — try again once you have signal.';
-    }
-    if (/\b404\b|not found/i.test(raw)) {
-      return 'The AI service could not be reached. It may not be deployed yet.';
-    }
-    if (/timeout|timed out|\b504\b|deadline/i.test(raw)) {
-      return 'The AI took too long to answer. Try again, or with fewer photos at once.';
-    }
-    if (/rate limit|\b429\b|quota|overloaded/i.test(raw)) {
-      return 'The AI service is busy right now. Wait a moment and try again.';
-    }
-    return raw;
-  }
-
   async function invoke(body) {
     let data;
     let error;
@@ -154,7 +194,7 @@
       // supabase-js throws rather than returning on transport failure.
       throw new Error(humanError(err));
     }
-    if (error) throw new Error(humanError(error));
+    if (error) throw new Error(humanError(new Error(await edgeErrorMessage(error))));
     if (data && data.error) throw new Error(humanError(new Error(data.error)));
     return data;
   }

@@ -3252,6 +3252,155 @@
     assert(!doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'the feed panel should be the one showing');
   });
 
+  // ---------- Is the AI any good? (report.js aiReview) ----------
+
+  test('AI accuracy: counts nothing until the AI has actually been used', () => {
+    const win = frame.contentWindow;
+    const summary = win.ReportUI.aiAccuracySummary([
+      { jobId: 'a', sections: {} },
+      { jobId: 'b', sections: {}, aiReview: { kept: 0, corrected: 0, fields: {} } },
+    ]);
+    assertEqual(summary.total, 0, 'reports that predate this, or never used AI, are not evidence either way');
+    assertEqual(summary.keptPercent, null, 'and no percentage is invented out of no data');
+  });
+
+  test('AI accuracy: a kept suggestion and a corrected one are told apart', () => {
+    const win = frame.contentWindow;
+    const summary = win.ReportUI.aiAccuracySummary([
+      { jobId: 'a', aiReview: { kept: 3, corrected: 1, fields: { 'findings.liveTermitesFound': { kept: 3, corrected: 1 } } } },
+      { jobId: 'b', aiReview: { kept: 1, corrected: 3, fields: { 'conducive.moisture': { kept: 1, corrected: 3 } } } },
+    ]);
+    assertEqual(summary.kept, 4);
+    assertEqual(summary.corrected, 4);
+    assertEqual(summary.total, 8);
+    assertEqual(summary.keptPercent, 50);
+    assertEqual(summary.reportsWithAi, 2);
+    // The per-field split is the point: one prompt being reliable and
+    // another being useless must not average into a meaningless number.
+    assertEqual(summary.fields['findings.liveTermitesFound'].kept, 3);
+    assertEqual(summary.fields['conducive.moisture'].corrected, 3);
+  });
+
+  test('AI accuracy: a technician editing an AI-filled field is recorded as a correction', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'AI Review Job', jobType: 'termite' });
+    // A saved AI draft is what makes openSectionEditor pre-fill a field and
+    // mark it as a suggestion — the same path a real draft takes.
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: {},
+      finalizedAt: null,
+      aiDraft: { draftFields: { clientDetails: { clientName: 'AI Guessed This Name' } } },
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((li) => /Client Details/.test(li.textContent)).click();
+    await wait(250);
+
+    const input = Array.from(doc.querySelectorAll('#report-section-fields input'))
+      .find((i) => i.value === 'AI Guessed This Name');
+    assert(input, 'the AI value should be pre-filled into the field');
+    setTextInput(win, input, 'What The Technician Actually Found');
+    doc.getElementById('section-save-btn').click();
+    await wait(400);
+
+    const saved = await win.DB.getReport(job.id);
+    assert(saved.aiReview, 'using an AI suggestion must leave a record of how it went');
+    assertEqual(saved.aiReview.corrected, 1, 'a value the technician rewrote counts as corrected');
+    assertEqual(saved.aiReview.kept, 0, 'and not as kept');
+  });
+
+  test('AI accuracy: a suggestion left alone is recorded as kept, and only counted once', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'AI Kept Job', jobType: 'termite' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: {},
+      finalizedAt: null,
+      aiDraft: { draftFields: { clientDetails: { clientName: 'Name The AI Got Right' } } },
+    });
+
+    // Save the same section twice. The technician was only ever offered that
+    // suggestion once, so it must not count twice.
+    for (let i = 0; i < 2; i++) {
+      await win.ReportUI.openReview(job.id);
+      await wait(250);
+      Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((li) => /Client Details/.test(li.textContent)).click();
+      await wait(250);
+      doc.getElementById('section-save-btn').click();
+      await wait(400);
+    }
+
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.aiReview.kept, 1, 'kept once, counted once — not once per save');
+    assertEqual(saved.aiReview.corrected, 0);
+  });
+
+  // ---------- AI error wording (ai.js) ----------
+  // The AI is the feature Tal is least able to verify by eye, so when it
+  // fails the message is the whole product. These guard the translation
+  // from "what the server said" to "what the technician should do".
+
+  // Stands in for supabase-js's FunctionsHttpError: a generic message, with
+  // the real response kept on .context. Reproducing that shape is the only
+  // way to prove the recovery works without a live backend.
+  function functionsHttpError(win, status, bodyObject) {
+    const err = new Error('Edge Function returned a non-2xx status code');
+    err.context = new win.Response(JSON.stringify(bodyObject), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return err;
+  }
+
+  test('AI errors: the message the function actually sent is recovered, not the HTTP status', async () => {
+    const win = frame.contentWindow;
+    const M = win.AIMessages;
+    // This is the real case: the app ships a feature before the Edge
+    // Function is redeployed, so the server rejects the action it has never
+    // heard of. The status code made supabase-js throw the explanation away.
+    const err = functionsHttpError(win, 400, {
+      error: 'Unknown action — expected "draft-report", "trace-building", "identify-pest", "identify-tree", or "sort-photos"',
+    });
+    const recovered = await M.edgeErrorMessage(err);
+    assert(/unknown action/i.test(recovered),
+      `the function's own words must survive the status code, got: ${recovered}`);
+    const shown = M.humanError(new Error(recovered));
+    assert(/not switched on yet/i.test(shown),
+      `and then read as something actionable, got: ${shown}`);
+    assert(!/non-2xx|status code/i.test(shown), 'no HTTP vocabulary reaches the technician');
+  });
+
+  test('AI errors: a signed-out session is recovered as sign-in advice', async () => {
+    const win = frame.contentWindow;
+    const M = win.AIMessages;
+    const err = functionsHttpError(win, 401, { error: 'Not authenticated' });
+    const shown = M.humanError(new Error(await M.edgeErrorMessage(err)));
+    assert(/sign|log/i.test(shown), `should tell them to sign in again, got: ${shown}`);
+  });
+
+  test('AI errors: an unreadable failure still never shows raw supabase wording', async () => {
+    const win = frame.contentWindow;
+    const M = win.AIMessages;
+    // No context at all — the recovery has nothing to work with, which is
+    // exactly when the old code leaked "non-2xx status code" to the screen.
+    const bare = new Error('Edge Function returned a non-2xx status code');
+    const shown = M.humanError(new Error(await M.edgeErrorMessage(bare)));
+    assert(!/non-2xx|status code/i.test(shown), `got: ${shown}`);
+    assert(shown.length > 20, 'and it still says something useful rather than going blank');
+  });
+
+  test('AI errors: an unrecognised message is passed through rather than swallowed', () => {
+    const win = frame.contentWindow;
+    const shown = win.AIMessages.humanError(new Error('Anthropic returned 529 overloaded_error'));
+    assert(shown.length > 0, 'a mystery message still beats no message');
+    assert(/busy|overload/i.test(shown), `an overload should be recognised as busy, got: ${shown}`);
+  });
+
   test('Calendar feed: a missing migration reads as a setup problem, not raw Postgres', () => {
     const win = frame.contentWindow;
     const msg = win.CalendarFeedMessages.feedErrorText(

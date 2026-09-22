@@ -169,6 +169,7 @@
   const archiveList = document.getElementById('archive-list');
   const archiveEmpty = document.getElementById('archive-empty');
   const exportDataBtn = document.getElementById('export-data-btn');
+  const aiAccuracyEl = document.getElementById('ai-accuracy');
 
   // ---------- State ----------
   let currentJobId = null;
@@ -180,6 +181,11 @@
   // section editor can explain where a value came from.
   let derivedSiteNotes = {};
   let aiAppliedFieldIds = new Set(); // fields in the currently-open section pre-filled from an AI suggestion, not yet reviewed
+  // What the AI actually proposed for each of those fields, kept separately
+  // because aiAppliedFieldIds is cleared the moment a field is touched. This
+  // survives to save time, which is the only point where it can be known
+  // whether a suggestion was kept or corrected — see recordAiReview().
+  let aiSuggestedValues = {};
   let aiDraftInProgress = false;
   const objectUrls = [];
 
@@ -305,6 +311,77 @@
       });
     }
     return changes;
+  }
+
+  // ---------- Is the AI any good? ----------
+  // Tuning a prompt without measurement is guesswork, and the only honest
+  // measure available here is what the technician did with each suggestion:
+  // a value kept through to save was right enough to sign their name under,
+  // a value corrected was not. That signal costs the technician nothing —
+  // no thumbs up, no extra tap, no judgement call while standing in a
+  // subfloor. It is recorded per field so a prompt that is reliable about
+  // termite species but hopeless about moisture is visible as exactly that,
+  // rather than averaging into one meaningless number.
+  //
+  // Stored on the report rather than in a new store: it needs no schema
+  // change, syncs with the report it describes, and travels in the data
+  // export for free. It is NOT part of the audit trail — that record is
+  // about what the document says and who changed it, and must not be
+  // diluted with telemetry about a tool.
+  function recordAiReview() {
+    const suggestedIds = Object.keys(aiSuggestedValues);
+    if (!suggestedIds.length) return;
+
+    const review = currentReport.aiReview || { kept: 0, corrected: 0, fields: {} };
+    review.fields = review.fields || {};
+    for (const fieldId of suggestedIds) {
+      const finalValue = pendingSectionValues[fieldId];
+      const wasKept = valuesEqual(finalValue, aiSuggestedValues[fieldId]);
+      const key = `${currentSectionId}.${fieldId}`;
+      const perField = review.fields[key] || { kept: 0, corrected: 0 };
+      if (wasKept) { review.kept += 1; perField.kept += 1; }
+      else { review.corrected += 1; perField.corrected += 1; }
+      review.fields[key] = perField;
+    }
+    review.updatedAt = Date.now();
+    currentReport.aiReview = review;
+    // Cleared so re-saving the same section cannot count one suggestion
+    // twice — a technician who saves, reopens and saves again has still
+    // only been offered that suggestion once.
+    aiSuggestedValues = {};
+  }
+
+  // Totals across every report on the device, for the readout in Saved
+  // Reports. Reports written before this existed simply have no aiReview
+  // and contribute nothing, which is correct — they are not evidence of
+  // the AI being right or wrong either way.
+  function aiAccuracySummary(reports) {
+    let kept = 0;
+    let corrected = 0;
+    let reportsWithAi = 0;
+    const fields = {};
+    for (const report of reports || []) {
+      const review = report && report.aiReview;
+      if (!review || (!review.kept && !review.corrected)) continue;
+      reportsWithAi += 1;
+      kept += review.kept || 0;
+      corrected += review.corrected || 0;
+      for (const [key, counts] of Object.entries(review.fields || {})) {
+        const acc = fields[key] || { kept: 0, corrected: 0 };
+        acc.kept += counts.kept || 0;
+        acc.corrected += counts.corrected || 0;
+        fields[key] = acc;
+      }
+    }
+    const total = kept + corrected;
+    return {
+      kept,
+      corrected,
+      total,
+      reportsWithAi,
+      keptPercent: total ? Math.round((kept / total) * 100) : null,
+      fields,
+    };
   }
 
   function auditActor() {
@@ -560,6 +637,10 @@
     },
     documentTypesFor,
     documentTypeOf,
+    // Exposed so the accuracy figure can be tested, and so it could be read
+    // from anywhere else that ever wants it, without re-deriving the rules
+    // for what counts as a kept suggestion.
+    aiAccuracySummary,
     async openArchive() {
       await renderArchiveList();
       hideAllAppViews();
@@ -690,11 +771,27 @@
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
   }
 
+  // Stays hidden until the AI has actually been used, so a business that
+  // never turns it on is not shown an empty statistic about it — and so the
+  // number, when it appears, is always about real work.
+  function renderAiAccuracy(reports) {
+    if (!aiAccuracyEl) return;
+    const summary = aiAccuracySummary(reports);
+    if (!summary.total) { aiAccuracyEl.classList.add('hidden'); return; }
+    const reportWord = summary.reportsWithAi === 1 ? 'report' : 'reports';
+    aiAccuracyEl.textContent =
+      `AI suggestions: ${summary.kept} of ${summary.total} kept as written (${summary.keptPercent}%) `
+      + `across ${summary.reportsWithAi} ${reportWord}. `
+      + `${summary.corrected} needed correcting.`;
+    aiAccuracyEl.classList.remove('hidden');
+  }
+
   // ---------- Saved Reports archive ----------
   async function renderArchiveList() {
     const reports = await DB.getAllReports();
     archiveList.innerHTML = '';
     archiveEmpty.classList.toggle('hidden', reports.length > 0);
+    renderAiAccuracy(reports);
 
     for (const report of reports) {
       const job = await DB.getJob(report.jobId);
@@ -1369,6 +1466,7 @@
       if ((isEmpty || isUntouchedDefault) && suggestedValue !== undefined && suggestedValue !== null && suggestedValue !== '') {
         pendingSectionValues[fieldId] = suggestedValue;
         aiAppliedFieldIds.add(fieldId);
+        aiSuggestedValues[fieldId] = suggestedValue;
       }
     }
   }
@@ -1549,6 +1647,7 @@
     // flagged via aiAppliedFieldIds so renderField can mark them, cleared
     // the moment the technician actually touches that field.
     aiAppliedFieldIds = new Set();
+    aiSuggestedValues = {};
     const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
     applyDraftFieldsToPending(section, aiFieldsForSection);
 
@@ -3447,6 +3546,7 @@
       });
     }
 
+    recordAiReview();
     currentReport.sections[currentSectionId] = pendingSectionValues;
     await DB.saveReport(currentReport);
     stopAutosave();

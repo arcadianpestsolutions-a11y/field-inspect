@@ -30,6 +30,22 @@
     });
   }
 
+  // functions.invoke collapses every non-2xx into "Edge Function returned a
+  // non-2xx status code" and hands the real response over on error.context.
+  // Without reading it, a technician who sends a report to a bad address, or
+  // whose check-email-status function is not deployed, is told an HTTP fact
+  // about status codes instead of what went wrong. Same approach as
+  // xero.js's invoke().
+  async function failureFrom(error, fallback) {
+    try {
+      if (error && error.context && typeof error.context.json === 'function') {
+        const body = await error.context.clone().json();
+        if (body && body.error) return new Error(String(body.error));
+      }
+    } catch (e) { /* not JSON — use the generic message below */ }
+    return new Error((error && error.message) || fallback);
+  }
+
   // Emails a finalized report's PDF to a client. pdfBlob is expected from
   // ReportUI.generatePdfBlob(jobId). Throws on failure — callers show
   // whatever went wrong rather than assuming success.
@@ -40,7 +56,7 @@
     const { data, error } = await supabaseClient.functions.invoke('send-report-email', {
       body: { recipientEmail, recipientName, jobName, jobType, documentKind, pdfBase64 },
     });
-    if (error) throw error;
+    if (error) throw await failureFrom(error, 'Could not send the email.');
     if (data && data.error) throw new Error(data.error);
     return data;
   }
@@ -54,7 +70,7 @@
     const { data, error } = await supabaseClient.functions.invoke('check-email-status', {
       body: { emailId },
     });
-    if (error) throw error;
+    if (error) throw await failureFrom(error, 'Could not check the delivery status.');
     if (data && data.error) throw new Error(data.error);
     return data;
   }

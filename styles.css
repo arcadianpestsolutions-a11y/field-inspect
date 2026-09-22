@@ -681,6 +681,17 @@ input:focus, textarea:focus {
 }
 .bulk-zone-card h2 { margin: 0; font-size: 1.1rem; }
 
+.ai-accuracy {
+  margin: 16px 0 4px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
 /* ---------- iOS "add to home screen" notice (ios-install.js) ---------- */
 .ios-install-notice {
   display: flex;
