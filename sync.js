@@ -201,6 +201,7 @@
       row.reinspection_interval_months = job.reinspectionIntervalMonths || null;
       row.reminder_sent_for_due_at = job.reminderSentForDueAt || null;
       row.assigned_to = job.assignedTo || '';
+      row.recurrence_months = job.recurrenceMonths || null;
     }
     return row;
   }
@@ -224,6 +225,7 @@
       inspectionEndedAt: rj.inspection_ended_at || null,
       nextDueAt: rj.next_due_at || null,
       reinspectionIntervalMonths: rj.reinspection_interval_months || null,
+      recurrenceMonths: rj.recurrence_months || null,
       // Only ever written server-side, by send-due-reminders — the app
       // itself never sets this locally, it only reads it back to decide
       // whether an overdue job in the backlog has already had its email

@@ -416,6 +416,7 @@
     jobSubtitleEl.textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
     await renderAssignedToButton(job);
     renderJobPermissions(job);
+    renderPlanRow(job);
     activeZoneFilter = null;
     selectMode = false;
     selectedCaptureIds.clear();
@@ -553,6 +554,60 @@
   const rebookJobBtn = document.getElementById('rebook-job-btn');
   if (rebookJobBtn) rebookJobBtn.addEventListener('click', () => rebookJob(currentJobId));
 
+  // ---------- Recurring service plan ----------
+  const planRow = document.getElementById('plan-row');
+  const planText = document.getElementById('plan-text');
+  const planBtn = document.getElementById('plan-btn');
+  const PLAN_INTERVALS = [3, 6, 12];
+
+  function renderPlanRow(job) {
+    if (!planRow) return;
+    show(planRow);
+    if (job.recurrenceMonths) {
+      planText.textContent = `🔁 On a ${job.recurrenceMonths}-monthly plan — the next visit is raised automatically.`;
+      planBtn.textContent = 'Stop plan';
+    } else {
+      planText.textContent = 'No standing plan — this property comes back only if someone rebooks it.';
+      planBtn.textContent = 'Set up a plan';
+    }
+  }
+
+  if (planBtn) {
+    planBtn.addEventListener('click', async () => {
+      if (!currentJobId) return;
+      const job = await DB.getJob(currentJobId);
+      if (!job) return;
+
+      if (job.recurrenceMonths) {
+        if (!await askConfirm(
+          'This property will stop coming back on its own. Visits already raised stay where they are.',
+          { title: 'Stop the recurring plan?', okLabel: 'Stop plan', danger: true })) return;
+        await DB.updateJob(currentJobId, { recurrenceMonths: null });
+        toast('Plan stopped');
+      } else {
+        const answer = await askPrompt(
+          `How often should this property be revisited?\n\n${PLAN_INTERVALS.map((m, i) => `${i + 1}. Every ${m} months`).join('\n')}`,
+          '12',
+          { title: 'Set up a recurring plan', okLabel: 'Start plan', inputType: 'number' });
+        if (!answer) return;
+        const picked = parseInt(answer, 10);
+        // Accept either the menu position or the number of months outright —
+        // "12" means a year to a technician, not "the twelfth option".
+        const months = PLAN_INTERVALS.includes(picked)
+          ? picked
+          : (picked >= 1 && picked <= PLAN_INTERVALS.length ? PLAN_INTERVALS[picked - 1] : null);
+        if (!months) { toast('Enter 3, 6 or 12 months.'); return; }
+        await DB.updateJob(currentJobId, { recurrenceMonths: months });
+        toast(`Every ${months} months from now on`);
+        // A job already finished gets its next visit straight away; one still
+        // in progress raises it when it completes.
+        const updated = await DB.getJob(currentJobId);
+        if (updated.status === 'completed') await DB.ensureNextOccurrence(updated);
+      }
+      await showJobView(currentJobId);
+    });
+  }
+
   function renderInspectionControls(job) {
     renderDueCallout(job);
     jobStatusBadge.textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
@@ -620,7 +675,29 @@
   };
 
   // ---------- Job list ----------
+  // Runs once per session, not on every list render — repairing a series is
+  // cheap but not free, and nothing about it needs to happen twice.
+  let plansSwept = false;
+
   async function renderJobList() {
+    // Any property on a plan whose next visit never got raised gets it now.
+    // A series that stops silently is the failure the whole plan mechanism
+    // exists to prevent, so it self-heals rather than relying on every
+    // completion having gone perfectly months ago.
+    if (!plansSwept && DB.catchUpRecurringPlans) {
+      plansSwept = true;
+      try {
+        const raised = await DB.catchUpRecurringPlans();
+        // Logged, not toasted. This is a repair of something that should
+        // have happened by itself; the visits appear in the backlog where
+        // they belong, and an announcement on load would both interrupt
+        // whatever the technician opened the app to do and talk over
+        // whatever the screen was already trying to say.
+        if (raised.length) console.info(`[plans] raised ${raised.length} missed recurring visit(s)`);
+      } catch (e) {
+        console.warn('[plans] catch-up failed:', e.message || e);
+      }
+    }
     const jobs = await DB.getJobs();
     jobsCache = await Promise.all(jobs.map(async (job) => ({ job, count: await DB.getCaptureCount(job.id) })));
     applyJobListFilters();

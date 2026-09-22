@@ -1278,11 +1278,24 @@
     currentReport.finalizedAt = Date.now();
     await DB.saveReport(currentReport);
     const { dueAt, intervalMonths } = computeNextDueAt(currentJob, currentReport);
+    // A recommended re-inspection interval IS a standing plan — the property
+    // needs seeing again every N months whether or not anyone remembers to
+    // rebook it. Adopting it here means the series continues by itself from
+    // now on, without changing anything for a job that already has a plan.
+    const planUpdate = (!currentJob.recurrenceMonths && intervalMonths)
+      ? { recurrenceMonths: intervalMonths }
+      : {};
     await DB.updateJob(currentJobId, {
       status: 'completed',
       nextDueAt: dueAt,
       reinspectionIntervalMonths: intervalMonths,
+      ...planUpdate,
     });
+    // Nothing else happens here on purpose. A finalized report already sets
+    // the due date and the existing backlog and rebook flow take it from
+    // there — that works, and raising a second job now would show the same
+    // property twice. The plan recorded above only matters for the case that
+    // flow cannot cover: a visit that completes with no report at all.
     toast('Report finalized');
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);

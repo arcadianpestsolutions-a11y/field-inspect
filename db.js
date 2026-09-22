@@ -110,7 +110,7 @@ const DB = {
   JOB_STATUS_LABELS,
 
   // ---------- Jobs ----------
-  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, recurringFromId, scheduledAt, scheduledDurationMins }) {
+  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, recurringFromId, scheduledAt, scheduledDurationMins, recurrenceMonths }) {
     const store = await tx('jobs', 'readwrite');
     const now = Date.now();
     const job = {
@@ -147,6 +147,16 @@ const DB = {
       // The job this one was raised from, so a property's inspection history
       // can be walked backwards.
       recurringFromId: recurringFromId || null,
+      // The property is on a standing plan: re-inspect every N months, and
+      // the next visit is raised automatically when this one is completed.
+      //
+      // Deliberately separate from nextDueAt and reinspectionIntervalMonths,
+      // which are both consequences of finalizing a REPORT. That was the
+      // weak link at any scale: no report finalized meant no due date, and
+      // the property silently fell out of the schedule with nothing anywhere
+      // showing it had. A plan lives on the job and survives a visit where
+      // the paperwork never got finished.
+      recurrenceMonths: typeof recurrenceMonths === 'number' && recurrenceMonths > 0 ? recurrenceMonths : null,
       // Whoever is logged in when the job is created owns it by default —
       // right now that's always the same one technician, so this costs
       // nothing today, but the moment a second person logs in, every job
@@ -160,6 +170,76 @@ const DB = {
     await reqToPromise(store.add(job));
     if (window.Sync) window.Sync.pushJob(job);
     return job;
+  },
+
+  // ---------- Recurring service plans ----------
+  // Raises the next visit for a property on a standing plan. Idempotent on
+  // purpose: it is safe to call on every completion, and safe to call again
+  // as a sweep (see catchUpRecurringPlans) for a series that stopped because
+  // something went wrong months ago. A plan that quietly stops is the whole
+  // failure this exists to prevent, so the repair has to be re-runnable
+  // rather than a one-shot at exactly the right moment.
+  async ensureNextOccurrence(job) {
+    if (!job || !job.recurrenceMonths) return null;
+
+    // A SAFETY NET, not a replacement. When a report is finalized normally it
+    // sets next_due_at, the property shows in the backlog, and the existing
+    // rebook flow handles it — that all still works untouched, and this does
+    // nothing. This only fires for the case that used to lose a client
+    // entirely: a visit that completed without paperwork, so no due date was
+    // ever set and nothing anywhere remembered the property existed.
+    if (job.nextDueAt) return null;
+
+    // Already raised. Matching on lineage rather than a flag means a series
+    // cannot double up even if two devices complete the same job offline
+    // and sync later.
+    const all = await this.getJobs();
+    const existing = all.find((j) => j.recurringFromId === job.id);
+    if (existing) return existing;
+
+    const from = job.inspectionEndedAt || job.scheduledAt || Date.now();
+    const due = new Date(from);
+    due.setMonth(due.getMonth() + job.recurrenceMonths);
+
+    const next = await this.addJob({
+      name: job.name,
+      address: job.address,
+      addressLat: job.addressLat,
+      addressLng: job.addressLng,
+      notes: job.notes,
+      clientPhone: job.clientPhone,
+      clientEmail: job.clientEmail,
+      jobType: job.jobType,
+      recurringFromId: job.id,
+      // The plan travels with the series, or it would last exactly one hop.
+      recurrenceMonths: job.recurrenceMonths,
+    });
+
+    // Due, not booked. The visit is committed; which morning it happens on
+    // is a decision for the week it falls in, so it lands in the backlog
+    // rather than inventing a booking a year out that nobody agreed to.
+    // Returning addJob's snapshot would hand back a job whose nextDueAt is
+    // still null, because it was set by the update below.
+    await this.updateJob(next.id, {
+      nextDueAt: due.getTime(),
+      assignedTo: job.assignedTo || '',
+    });
+    return this.getJob(next.id);
+  },
+
+  // Repairs any series that stopped. Cheap enough to run on load: it only
+  // acts on completed jobs that carry a plan and have no successor, which in
+  // a healthy database is none of them.
+  async catchUpRecurringPlans() {
+    const all = await this.getJobs();
+    const raised = [];
+    for (const job of all) {
+      if (job.status !== 'completed' || !job.recurrenceMonths) continue;
+      if (all.some((j) => j.recurringFromId === job.id)) continue;
+      const next = await this.ensureNextOccurrence(job);
+      if (next) raised.push(next);
+    }
+    return raised;
   },
 
   // Low-level put used only by the sync layer to write a record pulled from

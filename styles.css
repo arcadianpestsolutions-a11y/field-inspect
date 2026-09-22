@@ -681,6 +681,19 @@ input:focus, textarea:focus {
 }
 .bulk-zone-card h2 { margin: 0; font-size: 1.1rem; }
 
+.plan-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.plan-text { flex: 1; color: var(--text-dim); font-size: 0.82rem; line-height: 1.35; }
+.plan-row .link-btn { flex-shrink: 0; }
+
 /* Drive time between consecutive jobs, shown on the arriving job. Quiet by
    default — it is background information most of the time — and loud only
    when the day does not actually allow for it. */

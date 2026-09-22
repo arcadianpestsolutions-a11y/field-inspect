@@ -3252,6 +3252,99 @@
     assert(!doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'the feed panel should be the one showing');
   });
 
+  // ---------- Recurring service plans ----------
+  // The failure these exist to stop: a property that quietly leaves the
+  // schedule forever because one visit's paperwork never got finished.
+
+  test('Plans: a visit that finished with no paperwork still brings the client back', async () => {
+    const win = frame.contentWindow;
+    // The case that used to lose a property permanently: completed, but no
+    // report was finalized, so nothing ever set a due date and nothing
+    // anywhere remembered it existed.
+    const job = await win.DB.addJob({
+      name: 'Plan Source', address: '1 Plan St', clientPhone: '0400000111', clientEmail: 'plan@example.com',
+    });
+    await win.DB.updateJob(job.id, { status: 'completed', recurrenceMonths: 12, inspectionEndedAt: Date.now() });
+
+    const next = await win.DB.ensureNextOccurrence(await win.DB.getJob(job.id));
+    assert(next, 'a planned property must raise its own next visit');
+    assertEqual(next.recurringFromId, job.id, 'the new visit knows where it came from');
+    assertEqual(next.recurrenceMonths, 12, 'and carries the plan, or the series would last one hop');
+    assertEqual(next.clientPhone, '0400000111', 'the client comes with it');
+    assert(next.nextDueAt > Date.now(), 'it is due in the future');
+    assert(!next.scheduledAt, 'due, not booked — which morning it lands on is a decision for that week');
+  });
+
+  test('Plans: raising the next visit twice does not double-book the client', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Plan Idempotent' });
+    await win.DB.updateJob(job.id, { status: 'completed', recurrenceMonths: 6, inspectionEndedAt: Date.now() });
+
+    const first = await win.DB.ensureNextOccurrence(await win.DB.getJob(job.id));
+    const second = await win.DB.ensureNextOccurrence(await win.DB.getJob(job.id));
+    assertEqual(first.id, second.id,
+      'two devices completing the same job offline must not each raise a visit');
+    const all = await win.DB.getJobs();
+    assertEqual(all.filter((j) => j.recurringFromId === job.id).length, 1);
+  });
+
+  test('Plans: a job with no plan raises nothing', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Plan Absent' });
+    await win.DB.updateJob(job.id, { status: 'completed' });
+    assertEqual(await win.DB.ensureNextOccurrence(await win.DB.getJob(job.id)), null,
+      'a one-off job must not silently become a subscription');
+  });
+
+  test('Plans: the normal report-driven flow is left alone', async () => {
+    const win = frame.contentWindow;
+    // A finalized report already set a due date, so the backlog and the
+    // rebook button have this property covered. Raising a second job here
+    // would show the same client twice — the plan is a safety net for when
+    // that flow never ran, not a replacement for it.
+    const job = await win.DB.addJob({ name: 'Plan Already Handled' });
+    await win.DB.updateJob(job.id, {
+      status: 'completed', recurrenceMonths: 12,
+      nextDueAt: Date.now() + 86400000 * 300, inspectionEndedAt: Date.now(),
+    });
+    assertEqual(await win.DB.ensureNextOccurrence(await win.DB.getJob(job.id)), null,
+      'a property already carrying a due date must not be raised a second time');
+  });
+
+  test('Plans: a series that stopped repairs itself on the next sweep', async () => {
+    const win = frame.contentWindow;
+    // Exactly the historical case: completed months ago, on a plan, and the
+    // next visit was never raised because the completion predates plans.
+    const stranded = await win.DB.addJob({ name: 'Plan Stranded' });
+    await win.DB.updateJob(stranded.id, {
+      status: 'completed', recurrenceMonths: 12, inspectionEndedAt: Date.now() - 86400000 * 40,
+    });
+
+    const raised = await win.DB.catchUpRecurringPlans();
+    assert(raised.some((j) => j.recurringFromId === stranded.id),
+      'a plan that stopped must come back on its own, not stay stopped forever');
+
+    // And a second sweep must be quiet, or every load would add another.
+    const again = await win.DB.catchUpRecurringPlans();
+    assert(!again.some((j) => j.recurringFromId === stranded.id), 'the sweep is not a duplicator');
+  });
+
+  test('Plans: the next visit is due from when the work happened, not from now', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Plan Timing' });
+    // Finished a month ago. A 12-month plan means eleven months from today,
+    // not twelve — otherwise every late-entered completion quietly pushes
+    // the whole series further out.
+    const endedAt = Date.now() - 86400000 * 30;
+    await win.DB.updateJob(job.id, { status: 'completed', recurrenceMonths: 12, inspectionEndedAt: endedAt });
+
+    const next = await win.DB.ensureNextOccurrence(await win.DB.getJob(job.id));
+    const expected = new Date(endedAt);
+    expected.setMonth(expected.getMonth() + 12);
+    const driftDays = Math.abs(next.nextDueAt - expected.getTime()) / 86400000;
+    assert(driftDays < 1, `due date should follow the visit, drifted ${driftDays.toFixed(1)} days`);
+  });
+
   // ---------- Travel time between jobs ----------
 
   test('Travel: the estimate is in the right ballpark for a real Macarthur run', () => {
