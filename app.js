@@ -263,6 +263,11 @@
   window.showJobListView = showJobListView;
   // Used by invoice-ui.js to return to the job it was opened from.
   window.showJobViewById = showJobView;
+  // Real sign-out only fires this through Sync.onAuthChange, which test/demo
+  // mode never wires up (sync.js bails out before it exists) — exposed so
+  // the "logging out doesn't leave another screen showing underneath" case
+  // can be tested directly, the same reason the two exports above exist.
+  window.showLoginView = showLoginView;
   // demo.js seeds jobs after load and needs the list redrawn.
   window.renderJobListPublic = () => renderJobList();
   // Every full-screen view, so a new one can be shown without each module
@@ -273,12 +278,15 @@
 
   // ---------- Auth / sync UI ----------
   function showLoginView() {
-    hide(viewJobList);
-    hide(viewJob);
+    // Every view, not the hand-picked list this used to be — that list
+    // predated the scheduler and invoice screens, so logging out (or a
+    // session expiring) while on either of them left it showing underneath
+    // the login form: the exact "stacked views" trap showJobListView's own
+    // comment already describes fixing once, but here it also means a
+    // client's job or invoice details stay visible on a device that just
+    // logged out.
+    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     hide(syncBar);
-    document.getElementById('view-report').classList.add('hidden');
-    document.getElementById('view-report-section').classList.add('hidden');
-    document.getElementById('view-archive').classList.add('hidden');
     show(viewLogin);
     loginPasswordInput.value = '';
     hide(loginErrorEl);

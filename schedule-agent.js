@@ -341,6 +341,11 @@
   sendBtn.addEventListener('click', send);
   inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   openBtn.addEventListener('click', () => {
+    // Same fix as calendar-feed.js's own open handler, for the same reason:
+    // these two panels share the scheduler screen and used to be able to
+    // both end up open at once.
+    const feedPanel = document.getElementById('calendar-feed-panel');
+    if (feedPanel) feedPanel.classList.add('hidden');
     panel.classList.remove('hidden');
     if (!logEl.children.length) {
       addBubble('assistant', 'Ask me things like "what does Thursday look like", "when am I free for a 2 hour job next week", or "book the Nguyen re-inspection Tuesday morning".');

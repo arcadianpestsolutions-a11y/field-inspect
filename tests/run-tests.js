@@ -1095,6 +1095,28 @@
     assert(job.id, 'sanity: the job was actually created');
   });
 
+  test('Auth: logging out while on the scheduler does not leave it showing behind the login screen', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    await win.Scheduler.open();
+    await wait(200);
+    assert(!doc.getElementById('view-scheduler').classList.contains('hidden'), 'sanity: scheduler is open');
+
+    // showLoginView used a hand-picked list of views to hide that predated
+    // the scheduler and invoice screens — logging out (or a session
+    // expiring) from either used to leave it showing underneath the login
+    // form, which is a client's job/invoice details visible on a device
+    // that just signed out, not just a cosmetic glitch.
+    win.showLoginView();
+    await wait(50);
+
+    const visible = Array.from(doc.querySelectorAll('.view'))
+      .filter((v) => !v.classList.contains('hidden'));
+    assertEqual(visible.length, 1, `exactly one view should be visible, got: ${visible.map((v) => v.id).join(', ')}`);
+    assertEqual(visible[0].id, 'view-login', 'the login view should be the one showing');
+  });
+
   test('Scheduler: booking into a chosen slot uses that hour and duration', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
@@ -3036,6 +3058,22 @@
     const doc = frame.contentDocument;
     assert(doc.getElementById('calendar-feed-open'), 'the scheduler offers a way to open the feed panel');
     assert(doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'closed until asked for');
+  });
+
+  test('Scheduler: opening the calendar feed and the booking assistant never leaves both showing at once', async () => {
+    const doc = frame.contentDocument;
+    doc.getElementById('calendar-feed-open').click();
+    doc.getElementById('agent-open').click();
+    await wait(100);
+    assert(doc.getElementById('calendar-feed-panel').classList.contains('hidden'),
+      'opening the assistant after the feed panel must close the feed panel');
+    assert(!doc.getElementById('agent-panel').classList.contains('hidden'), 'the assistant should be the one showing');
+
+    doc.getElementById('calendar-feed-open').click();
+    await wait(100);
+    assert(doc.getElementById('agent-panel').classList.contains('hidden'),
+      'and going back the other way must close the assistant in turn');
+    assert(!doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'the feed panel should be the one showing');
   });
 
   test('Calendar feed: a missing migration reads as a setup problem, not raw Postgres', () => {
