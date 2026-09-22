@@ -122,9 +122,50 @@
     return user ? { id: user.id || null, email: user.email || '' } : null;
   }
 
+  // ---------- Role ----------
+  // Mirrors public.user_roles (migration 016). The server is what actually
+  // enforces this — every policy checks is_admin() in Postgres, and nothing
+  // here can grant a permission the database will not honour. This copy
+  // exists only so the app can avoid offering a technician buttons that
+  // would fail: a greyed-out Invoice button is a courtesy, not a lock.
+  //
+  // Defaults to 'technician', the restricted role, so a failed lookup or a
+  // missing row never hands out admin rights by accident.
+  let currentRole = 'technician';
+
+  async function refreshRole() {
+    const uid = currentUserId();
+    if (!uid) { currentRole = 'technician'; return currentRole; }
+    try {
+      const { data, error } = await supabaseClient
+        .from('user_roles').select('role').eq('user_id', uid).maybeSingle();
+      // A project that has not run migration 016 yet has no user_roles table
+      // at all. Everyone there is still effectively an admin, and treating
+      // them as a technician would hide invoicing from a solo operator who
+      // has done nothing wrong — so an absent table means admin.
+      if (error) {
+        currentRole = /relation .* does not exist|could not find the table|schema cache/i.test(error.message || '')
+          ? 'admin'
+          : 'technician';
+        return currentRole;
+      }
+      currentRole = (data && data.role === 'admin') ? 'admin' : 'technician';
+    } catch (e) {
+      currentRole = 'technician';
+    }
+    return currentRole;
+  }
+
+  function role() { return currentRole; }
+  function isAdmin() { return currentRole === 'admin'; }
+
   supabaseClient.auth.onAuthStateChange((_event, session) => {
     currentSession = session;
-    authListeners.forEach((fn) => { try { fn(session); } catch (e) { /* ignore listener errors */ } });
+    // Role first, then listeners: app.js rebuilds its UI from these, and
+    // doing it the other way round renders the wrong buttons for a moment.
+    refreshRole().finally(() => {
+      authListeners.forEach((fn) => { try { fn(session); } catch (e) { /* ignore listener errors */ } });
+    });
   });
 
   // ---------- Field <-> column mapping ----------
@@ -362,16 +403,39 @@
   }
 
   // ---------- Push (best effort, called from db.js after every local write) ----------
+
+  // A row-level policy that refuses an UPDATE does not raise an error.
+  // Postgres updates zero rows, PostgREST reports success, and supabase-js
+  // hands back { error: null }. On an offline-first app that is the worst
+  // shape a failure can take: the edit is already saved locally, the screen
+  // says saved, and it never reaches the cloud — the exact silent loss the
+  // rest of this file exists to prevent. Asking for the written rows back
+  // (.select()) is the only way to tell "stored" from "silently refused",
+  // which since migration 016 is what a technician editing somebody else's
+  // job actually gets.
+  function refusedByPolicy(data) {
+    return Array.isArray(data) && data.length === 0;
+  }
+
+  function reportPolicyRefusal(table, id) {
+    const message = 'Not saved to the cloud — this job belongs to another technician. '
+      + 'It is still on this device. Ask whoever it is assigned to, or have it reassigned to you.';
+    console.warn(`[sync] ${table} ${id} refused by a row-level policy — not backed up.`);
+    setStatus({ state: 'partial', lastSyncedAt: syncStatus.lastSyncedAt, error: message });
+    if (window.appToast) window.appToast(message);
+  }
+
   async function pushJob(job) {
     if (!isReady()) return;
     try {
-      let { error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job));
+      let { data, error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job)).select('id');
       if (error && !jobExtraColumnsMissing && isMissingColumnError(error)) {
         jobExtraColumnsMissing = true;
         console.warn('[sync] jobs.assigned_to / reinspection_interval_months / reminder_sent_for_due_at not in the database yet — run migrations 011-013. Job sync continues without them.');
-        ({ error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job)));
+        ({ data, error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job)).select('id'));
       }
       if (error) throw error;
+      if (refusedByPolicy(data)) reportPolicyRefusal('job', job.id);
     } catch (e) {
       console.warn('[sync] push job failed, will retry on next sync:', e.message || e);
     }
@@ -381,13 +445,14 @@
     if (!isReady()) return;
     try {
       const { sections, newPaths } = await sectionsForPush(report.jobId, report.sections);
-      let { error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections));
+      let { data, error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections)).select('job_id');
       if (error && !reportAuditColumnsMissing && isMissingColumnError(error)) {
         reportAuditColumnsMissing = true;
         console.warn('[sync] reports.audit_log / schema_version not in the database yet — run supabase-migration-008-audit-trail.sql. Report sync continues without them.');
-        ({ error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections)));
+        ({ data, error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections)).select('job_id'));
       }
       if (error) throw error;
+      if (refusedByPolicy(data)) reportPolicyRefusal('report', report.jobId);
       // Record the storage paths locally so the next save doesn't re-upload
       // bytes that are already backed up. putReportRaw deliberately does NOT
       // re-trigger a push, which would otherwise loop forever.
@@ -803,6 +868,10 @@
   async function getSession() {
     const { data } = await supabaseClient.auth.getSession();
     currentSession = data.session;
+    // A restored session skips onAuthStateChange, so without this the app
+    // boots showing a technician every admin button until something else
+    // happens to refresh it.
+    if (currentSession) await refreshRole();
     return currentSession;
   }
 
@@ -840,6 +909,11 @@
     currentUserId,
     isOnline,
     getStatus: () => syncStatus,
+    // Role is enforced by Postgres policies (migration 016); these only let
+    // the app avoid offering buttons the database would refuse.
+    role,
+    isAdmin,
+    refreshRole,
     // Exposed so the suite can assert on the wording a technician actually
     // reads, rather than on the Postgres codes behind it.
     syncFailureText,

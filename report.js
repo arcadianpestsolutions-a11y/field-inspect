@@ -792,6 +792,17 @@
     archiveList.innerHTML = '';
     archiveEmpty.classList.toggle('hidden', reports.length > 0);
     renderAiAccuracy(reports);
+    // One tap hands over every job, report and invoice in the business, so
+    // it is admin-only (migration 016). Demo and test mode have no session
+    // and nothing real to hand over, so they keep it.
+    if (exportDataBtn) {
+      const isAdmin = window.IS_DEMO
+        || !window.Sync || typeof window.Sync.isAdmin !== 'function'
+        || window.Sync.isAdmin();
+      exportDataBtn.classList.toggle('hidden', !isAdmin);
+      const blurb = exportDataBtn.nextElementSibling;
+      if (blurb) blurb.classList.toggle('hidden', !isAdmin);
+    }
 
     for (const report of reports) {
       const job = await DB.getJob(report.jobId);

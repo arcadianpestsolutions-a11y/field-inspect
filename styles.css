@@ -681,6 +681,17 @@ input:focus, textarea:focus {
 }
 .bulk-zone-card h2 { margin: 0; font-size: 1.1rem; }
 
+.job-readonly-notice {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: #3b2f05;
+  border: 1px solid #6b5608;
+  border-radius: 10px;
+  color: #ffe9a3;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 .ai-accuracy {
   margin: 16px 0 4px;
   padding: 10px 12px;

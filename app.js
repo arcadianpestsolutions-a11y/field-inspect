@@ -201,6 +201,34 @@
   // flow behind one of them (deleting a job, reassigning it) silently
   // nowhere. The native call is kept only as the fallback for dialog.js
   // itself being absent, which a stale cached index.html could cause.
+  // Demo and test mode have no session and no server enforcing anything, so
+  // they show the whole app — a restriction simulated there would be theatre.
+  // Everywhere else this mirrors public.user_roles (migration 016). It is a
+  // courtesy, not a lock: the policies in Postgres are what actually stop a
+  // technician invoicing or deleting, and they hold whatever this returns.
+  // No session means no server enforcing anything, so there is nothing to
+  // mirror and the full app shows: demo mode, and any local-only build where
+  // Supabase was never configured. Deliberately NOT special-cased on
+  // IS_TEST — a flag that forces admin makes the whole rule untestable, and
+  // test mode already reaches the same answer honestly by having no Sync.
+  function isAdminUser() {
+    if (window.IS_DEMO) return true;
+    if (!window.Sync || typeof window.Sync.isAdmin !== 'function') return true;
+    return window.Sync.isAdmin();
+  }
+
+  // A technician may edit their own jobs and unassigned ones; everything else
+  // is theirs to read. Matches public.owns_job() in migration 016 — if these
+  // two ever disagree, the database wins and the app looks broken, so they
+  // are deliberately the same rule written the same way.
+  function canEditJob(job) {
+    if (isAdminUser()) return true;
+    const assigned = (job && job.assignedTo) || '';
+    if (!assigned) return true;
+    const me = (window.Sync && window.Sync.currentUser && window.Sync.currentUser()) || null;
+    return !!me && assigned.toLowerCase() === (me.email || '').toLowerCase();
+  }
+
   const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
   const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
 
@@ -387,6 +415,7 @@
     jobTitleEl.textContent = job.name;
     jobSubtitleEl.textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
     await renderAssignedToButton(job);
+    renderJobPermissions(job);
     activeZoneFilter = null;
     selectMode = false;
     selectedCaptureIds.clear();
@@ -405,6 +434,29 @@
   // Same "invisible until it matters" rule as the job list's technician tag
   // and filter — no button, no name, nothing, until a second technician's
   // email has actually shown up in the data.
+  // Says plainly that a job belongs to someone else, rather than letting a
+  // technician fill in a report that the database will refuse to store. The
+  // notice is built here rather than in index.html for the same reason
+  // dialog.js builds its own: a stale cached index.html paired with a fresh
+  // script would otherwise silently drop the one warning that explains why
+  // nothing is saving.
+  function renderJobPermissions(job) {
+    const existing = document.getElementById('job-readonly-notice');
+    if (existing) existing.remove();
+
+    if (deleteJobBtn) deleteJobBtn.classList.toggle('hidden', !isAdminUser());
+    if (canEditJob(job)) return;
+
+    const notice = document.createElement('p');
+    notice.id = 'job-readonly-notice';
+    notice.className = 'job-readonly-notice';
+    const who = window.technicianDisplayName ? window.technicianDisplayName(job.assignedTo) : job.assignedTo;
+    notice.textContent = `Read only — this job is assigned to ${who}. You can look at everything here, `
+      + 'but changes you make will not be saved. Ask for it to be reassigned to you first.';
+    const jobMain = viewJob.querySelector('.content') || viewJob;
+    jobMain.insertBefore(notice, jobMain.firstChild);
+  }
+
   async function renderAssignedToButton(job) {
     if (!assignedToBtn) return;
     const allJobs = await DB.getJobs();
@@ -544,9 +596,11 @@
     }
 
     // Invoicing only makes sense once there's work to bill for, so it appears
-    // at the same point the report does.
+    // at the same point the report does — and only for an admin, since
+    // migration 016 makes invoices unreadable to a technician outright. The
+    // button would open an empty screen rather than fail loudly.
     if (viewInvoiceBtn) {
-      const billable = job.status === 'review' || job.status === 'completed';
+      const billable = (job.status === 'review' || job.status === 'completed') && isAdminUser();
       viewInvoiceBtn.classList.toggle('hidden', !billable);
       if (billable) {
         DB.getInvoicesForJob(job.id).then((invoices) => {
@@ -1149,6 +1203,10 @@
   function updateSelectionCount() {
     selectionCountEl.textContent = `${selectedCaptureIds.size} selected`;
     selectionZoneBtn.disabled = selectedCaptureIds.size === 0;
+    // Deleting a capture takes the only copy of what was on site with it, so
+    // it is admin-only (migration 016) — hidden rather than disabled, since a
+    // disabled button with no explanation just reads as broken.
+    selectionDeleteBtn.classList.toggle('hidden', !isAdminUser());
     selectionDeleteBtn.disabled = selectedCaptureIds.size === 0;
   }
 
@@ -1888,6 +1946,7 @@
     const capture = currentCaptures.find((c) => c.id === captureId) || await findCaptureById(captureId);
     if (!capture) return;
     currentDetailCaptureId = captureId;
+    if (detailDeleteBtn) detailDeleteBtn.classList.toggle('hidden', !isAdminUser());
 
     const list = getVisibleCaptures();
     currentDetailIndex = list.findIndex((c) => c.id === captureId);

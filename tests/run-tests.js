@@ -3252,6 +3252,92 @@
     assert(!doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'the feed panel should be the one showing');
   });
 
+  // ---------- Roles and permissions ----------
+  // The database is what actually enforces this (migration 016). These cover
+  // the app's side: that it does not offer a technician buttons the server
+  // will refuse, and that a refused write is never mistaken for a saved one.
+
+  // Puts the app into "signed in as a technician" for the duration of one
+  // test. Sync does not exist in test mode (sync.js short-circuits before
+  // defining it), so this is a stand-in with the same shape app.js reads.
+  async function asTechnician(win, email, fn) {
+    const original = win.Sync;
+    win.Sync = {
+      isAdmin: () => false,
+      role: () => 'technician',
+      currentUser: () => ({ id: 'tech-1', email }),
+      pushJob: () => {}, pushReport: () => {}, pushCapture: () => {},
+    };
+    try { await fn(); } finally { win.Sync = original; }
+  }
+
+  test('Permissions: a technician is not offered delete, or the whole-business export', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Perms Own Job' });
+    await win.DB.updateJob(job.id, { assignedTo: 'tech@example.com' });
+
+    await asTechnician(win, 'tech@example.com', async () => {
+      await win.showJobViewById(job.id);
+      await wait(200);
+      assert(doc.getElementById('delete-job-btn').classList.contains('hidden'),
+        'deleting a job takes its photos with it and cannot be undone — admin only');
+
+      await win.ReportUI.openArchive();
+      await wait(250);
+      assert(doc.getElementById('export-data-btn').classList.contains('hidden'),
+        'one tap on export hands over every job, report and invoice in the business');
+    });
+  });
+
+  test('Permissions: a technician can still open and read a job that belongs to someone else', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Perms Other Job' });
+    await win.DB.updateJob(job.id, { assignedTo: 'someone.else@example.com' });
+
+    await asTechnician(win, 'tech@example.com', async () => {
+      await win.showJobViewById(job.id);
+      await wait(200);
+      // Reading stays open on purpose: covering a job, or answering a client
+      // who rang, should not require a reassignment first.
+      assert(!doc.getElementById('view-job').classList.contains('hidden'), 'the job still opens');
+      const notice = doc.getElementById('job-readonly-notice');
+      assert(notice, 'but it must say plainly that edits will not be kept');
+      assert(/read only/i.test(notice.textContent), `got: ${notice && notice.textContent}`);
+      assert(/reassign/i.test(notice.textContent), 'and what to do about it');
+    });
+  });
+
+  test('Permissions: an unassigned job is editable, so historical work does not lock up', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // Every job created before migration 013 has no assigned_to, which is
+    // most of the existing database. Treating those as off-limits would make
+    // a technician's app refuse to save against years of real work.
+    const job = await win.DB.addJob({ name: 'Perms Unassigned Job' });
+    await win.DB.updateJob(job.id, { assignedTo: '' });
+
+    await asTechnician(win, 'tech@example.com', async () => {
+      await win.showJobViewById(job.id);
+      await wait(200);
+      assert(!doc.getElementById('job-readonly-notice'),
+        'an unassigned job belongs to nobody yet, so anyone may take it');
+    });
+  });
+
+  test('Permissions: an admin sees everything, on any job', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Perms Admin Job' });
+    await win.DB.updateJob(job.id, { assignedTo: 'someone.else@example.com' });
+
+    await win.showJobViewById(job.id); // no Sync stub: test mode reads as admin
+    await wait(200);
+    assert(!doc.getElementById('job-readonly-notice'), 'an admin is never read-only');
+    assert(!doc.getElementById('delete-job-btn').classList.contains('hidden'), 'and keeps delete');
+  });
+
   // ---------- Is the AI any good? (report.js aiReview) ----------
 
   test('AI accuracy: counts nothing until the AI has actually been used', () => {
