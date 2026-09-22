@@ -42,6 +42,9 @@
   const toast = (msg) => (window.appToast ? window.appToast(msg) : console.log(msg));
   const show = (e) => e.classList.remove('hidden');
   const hide = (e) => e.classList.add('hidden');
+  // See app.js — native confirm never renders in an installed iOS app, and
+  // both uses here guard something that costs money to get wrong.
+  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
 
   function escapeHtml(str) {
     const d = document.createElement('div');
@@ -321,9 +324,10 @@
 
     // Pushing into a real accounting system is not undoable from here, so it
     // is always an explicit confirmation naming the amount and the client.
-    const ok = confirm(
-      `Create a DRAFT invoice in Xero?\n\n${current.number}\n${current.clientName}\n${I.formatMoney(totals.totalCents)} incl GST\n\n` +
-      `It will not be sent to the client — you review and send it from Xero.`
+    const ok = await askConfirm(
+      `${current.number}\n${current.clientName}\n${I.formatMoney(totals.totalCents)} incl GST\n\n` +
+      `It will not be sent to the client — you review and send it from Xero.`,
+      { title: 'Create a DRAFT invoice in Xero?', okLabel: 'Send to Xero' }
     );
     if (!ok) return;
 
@@ -349,7 +353,8 @@
     const to = (current.clientEmail || '').trim();
     if (!to) { toast('Add the client email address first.'); return; }
     const totals = I.computeTotals(current);
-    if (!confirm(`Email ${current.number} for ${I.formatMoney(totals.totalCents)} to ${to}?`)) return;
+    if (!await askConfirm(`Email ${current.number} for ${I.formatMoney(totals.totalCents)} to ${to}?`,
+      { title: 'Send this invoice?', okLabel: 'Send' })) return;
 
     await save();
     emailBtn.disabled = true;

@@ -151,7 +151,10 @@
   });
 
   regenerateBtn.addEventListener('click', async () => {
-    if (!window.confirm('This replaces the current link. Any calendar already subscribed to the old one will stop updating. Continue?')) return;
+    // See app.js — native confirm never renders in an installed iOS app.
+    const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+    if (!await askConfirm('This replaces the current link. Any calendar already subscribed to the old one will stop updating.',
+      { title: 'Replace the calendar link?', okLabel: 'Replace link', danger: true })) return;
     regenerateBtn.disabled = true;
     try {
       const token = randomToken();

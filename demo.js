@@ -736,7 +736,9 @@
     reset.className = 'link-btn';
     reset.textContent = 'Reset demo';
     reset.addEventListener('click', async () => {
-      if (!confirm('Clear the demo data and start again?')) return;
+      const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+      if (!await askConfirm('Clear the demo data and start again?',
+        { title: 'Reset demo', okLabel: 'Reset' })) return;
       for (const j of await DB.getJobs()) await DB.deleteJob(j.id);
       for (const inv of await DB.getAllInvoices()) await DB.deleteInvoice(inv.id);
       location.reload();

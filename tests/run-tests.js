@@ -20,6 +20,26 @@
   }
   function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+  // Waits for a condition instead of guessing a duration. A fixed wait() has
+  // to be long enough for the slowest machine that will ever run it, and the
+  // returning-client tests proved what happens when it is not: a 400ms
+  // debounce plus a full-table IndexedDB scan against a 600ms wait passes
+  // alone and fails when the machine is busy. Polling turns "probably long
+  // enough" into "as long as it actually takes, and no longer".
+  async function waitFor(predicate, message, timeoutMs) {
+    const limit = timeoutMs || 4000;
+    const startedAt = Date.now();
+    for (;;) {
+      let ok = false;
+      try { ok = await predicate(); } catch (e) { ok = false; }
+      if (ok) return;
+      if (Date.now() - startedAt > limit) {
+        throw new Error((message || 'condition never became true') + ` (waited ${limit}ms)`);
+      }
+      await wait(30);
+    }
+  }
+
   // Scheduler tests must not share a day, or one test's bookings show up in
   // another's hour totals. Day-of-month is fixed per test (and kept <= 28 so
   // it is valid in February) rather than offset from today, which would make
@@ -123,6 +143,33 @@
     await wait(300); // let initAuth() settle
     frame.contentWindow.showJobListView(); // bypass login for testing — never touches credentials
     await wait(150);
+    installDialogDouble(frame.contentWindow);
+  }
+
+  // The app asks its questions through dialog.js now, not window.confirm —
+  // native dialogs never render in an installed iOS home-screen app, which
+  // is where this actually runs. Driving a real modal (find the button,
+  // click it, wait) in every flow test would be a lot of churn to assert
+  // the same thing those tests already assert: that the app ASKS before
+  // doing something destructive, and honours the answer.
+  //
+  // So Dialog is doubled here to delegate straight to window.confirm /
+  // window.prompt, which keeps every existing `win.confirm = () => true`
+  // stub meaningful. The real dialog.js is tested on its own terms further
+  // down ("Dialog:" tests) — this double stands in for it, it does not
+  // excuse it from being tested.
+  function installDialogDouble(win) {
+    win.__realDialog = win.Dialog; // the "Dialog:" tests below drive the real one
+    // A title and a message are two elements on screen but one piece of text
+    // to the person reading it — and that is what assertions here care
+    // about. Joining them is what keeps "the prompt names the job it
+    // clashes with" true regardless of which of the two carries the name.
+    const fullText = (msg, opts) => ((opts && opts.title) ? opts.title + '\n\n' + msg : msg);
+    win.Dialog = {
+      confirm: (msg, opts) => Promise.resolve(win.confirm(fullText(msg, opts))),
+      prompt: (msg, def, opts) => Promise.resolve(win.prompt(fullText(msg, opts), def)),
+      alert: (msg, opts) => Promise.resolve(win.alert(fullText(msg, opts))),
+    };
   }
 
   // =====================================================================
@@ -3054,6 +3101,135 @@
       'declining must stop the job being created at all, not just leave it unscheduled');
   });
 
+  // ---------- In-app dialogs (dialog.js) ----------
+  // The real thing, not the test double installed by installDialogDouble —
+  // these are what stop "the app asks before deleting" from quietly meaning
+  // "the app calls a function that no longer shows anything on iOS".
+
+  function dialogCard(doc) { return doc.querySelector('.app-dialog .app-dialog-card'); }
+  function dialogButton(doc, label) {
+    return Array.from(doc.querySelectorAll('.app-dialog .app-dialog-actions button'))
+      .find((b) => b.textContent.trim() === label);
+  }
+
+  test('Dialog: confirm puts a real element on screen and resolves true when accepted', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const answer = win.__realDialog.confirm('Delete the thing?', { okLabel: 'Delete', danger: true });
+    await wait(50);
+
+    assert(dialogCard(doc), 'a confirm must actually render — this is the whole point of not using window.confirm');
+    assert(/Delete the thing\?/.test(dialogCard(doc).textContent), 'the question must be readable on screen');
+    const okBtn = dialogButton(doc, 'Delete');
+    assert(okBtn, 'the accepting button uses the label it was given, not a generic OK');
+    assert(okBtn.classList.contains('btn-danger'), 'a destructive confirm should look destructive');
+
+    okBtn.click();
+    assertEqual(await answer, true, 'accepting resolves true, same contract as window.confirm');
+    await wait(50);
+    assert(!dialogCard(doc), 'and the dialog is gone afterwards');
+  });
+
+  test('Dialog: confirm resolves false when cancelled, and on Escape', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const cancelled = win.__realDialog.confirm('Sure?');
+    await wait(50);
+    dialogButton(doc, 'Cancel').click();
+    assertEqual(await cancelled, false, 'Cancel resolves false');
+
+    const escaped = win.__realDialog.confirm('Sure?');
+    await wait(50);
+    doc.querySelector('.app-dialog').dispatchEvent(
+      new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assertEqual(await escaped, false, 'Escape means no, the same as Cancel');
+    await wait(50);
+    assert(!dialogCard(doc), 'Escape also closes it');
+  });
+
+  test('Dialog: prompt returns what was typed, and null when cancelled', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const typed = win.__realDialog.prompt('Reason?', 'starting value');
+    await wait(50);
+    const input = doc.querySelector('.app-dialog .app-dialog-input');
+    assert(input, 'a prompt needs somewhere to type');
+    assertEqual(input.value, 'starting value', 'the default value is prefilled, same as window.prompt');
+    input.value = 'Corrected after the client called';
+    dialogButton(doc, 'OK').click();
+    assertEqual(await typed, 'Corrected after the client called', 'resolves the entered text');
+
+    const cancelled = win.__realDialog.prompt('Reason?', '');
+    await wait(50);
+    dialogButton(doc, 'Cancel').click();
+    assertEqual(await cancelled, null,
+      'cancelling resolves null, not empty string — callers distinguish "no reason given" from "cancelled"');
+  });
+
+  test('Dialog: message text is never treated as markup', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // These strings interpolate client and job names straight off the record.
+    const answer = win.__realDialog.confirm('Delete "<img src=x onerror=alert(1)>"?');
+    await wait(50);
+    const card = dialogCard(doc);
+    assert(!card.querySelector('img'), 'a job name containing markup must not become markup');
+    assert(/<img src=x/.test(card.textContent), 'it shows as the literal text it is');
+    dialogButton(doc, 'Cancel').click();
+    await answer;
+  });
+
+  // ---------- iOS "add to home screen" notice (ios-install.js) ----------
+
+  test('iOS notice: stays out of the way when the app is already installed, or not on iOS', () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // The suite runs in a desktop test browser, so this is the real answer
+    // to both questions rather than a stubbed one.
+    assertEqual(win.IosInstallNotice.isIOS(), false, 'a desktop test browser is not an iPhone');
+    assertEqual(win.IosInstallNotice.isStandalone(), false, 'and the test frame is not an installed app');
+    win.IosInstallNotice.maybeShow();
+    assert(!doc.getElementById('ios-install-notice'),
+      'maybeShow must render nothing when the platform checks say it does not apply');
+  });
+
+  test('iOS notice: explains that uninstalled means iPhone can delete saved work', () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      win.IosInstallNotice.render();
+      const bar = doc.getElementById('ios-install-notice');
+      assert(bar, 'the notice renders when asked to');
+      assert(/Home Screen/i.test(bar.textContent), 'it says what to do');
+      assert(/7 days/.test(bar.textContent) && /delete/i.test(bar.textContent),
+        'and why it matters — without the consequence it reads as an ad for installing the app');
+    } finally {
+      const bar = doc.getElementById('ios-install-notice');
+      if (bar) bar.remove();
+    }
+  });
+
+  test('iOS notice: dismissing it sticks, so it never becomes a nag', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      win.localStorage.removeItem(win.IosInstallNotice.DISMISS_KEY);
+      win.IosInstallNotice.render();
+      Array.from(doc.querySelectorAll('#ios-install-notice button'))
+        .find((b) => /dismiss/i.test(b.textContent)).click();
+      await wait(50);
+      assert(!doc.getElementById('ios-install-notice'), 'dismissing removes it right away');
+      assertEqual(win.localStorage.getItem(win.IosInstallNotice.DISMISS_KEY), '1',
+        'and it is remembered, so the next launch does not ask again');
+    } finally {
+      win.localStorage.removeItem(win.IosInstallNotice.DISMISS_KEY);
+      const bar = doc.getElementById('ios-install-notice');
+      if (bar) bar.remove();
+    }
+  });
+
   test('Calendar feed: the panel exists and starts hidden', () => {
     const doc = frame.contentDocument;
     assert(doc.getElementById('calendar-feed-open'), 'the scheduler offers a way to open the feed panel');
@@ -3168,10 +3344,10 @@
     doc.getElementById('new-job-btn').click();
     await wait(200);
     setTextInput(win, doc.getElementById('job-phone'), '0433222111');
-    await wait(600);
 
     const panel = doc.getElementById('returning-client-panel');
-    assert(!panel.classList.contains('hidden'), 'a matching phone must surface the panel, not stay hidden');
+    await waitFor(() => !panel.classList.contains('hidden'),
+      'a matching phone must surface the panel, not stay hidden');
     assert(panel.textContent.includes('Panel Test Prior Job'), 'it names the actual previous job, not just a count');
   });
 
@@ -3183,13 +3359,12 @@
     doc.getElementById('new-job-btn').click();
     await wait(200);
     const phoneInput = doc.getElementById('job-phone');
+    const panel = doc.getElementById('returning-client-panel');
     setTextInput(win, phoneInput, '0477888999');
-    await wait(600);
-    assert(!doc.getElementById('returning-client-panel').classList.contains('hidden'), 'sanity check: it showed up first');
+    await waitFor(() => !panel.classList.contains('hidden'), 'sanity check: it showed up first');
 
     setTextInput(win, phoneInput, '');
-    await wait(600);
-    assert(doc.getElementById('returning-client-panel').classList.contains('hidden'),
+    await waitFor(() => panel.classList.contains('hidden'),
       'clearing the field must hide it again, not leave a stale match showing');
   });
 

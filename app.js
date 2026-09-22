@@ -196,6 +196,14 @@
   }
   window.appToast = toast;
 
+  // dialog.js replaces the native dialogs, which on an installed iOS
+  // home-screen app return instantly with nothing on screen — taking every
+  // flow behind one of them (deleting a job, reassigning it) silently
+  // nowhere. The native call is kept only as the fallback for dialog.js
+  // itself being absent, which a stale cached index.html could cause.
+  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+  const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
+
   function fmtDate(ts) {
     const d = new Date(ts);
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -415,11 +423,13 @@
     const technicians = Array.from(new Set(allJobs.map((j) => j.assignedTo).filter(Boolean))).sort();
     const list = technicians.map((email, i) => `${i + 1}. ${window.technicianDisplayName ? window.technicianDisplayName(email) : email}`).join('\n');
     // A prompt rather than a custom picker UI — reassigning a job is rare
-    // enough that a small modal would be more code than the interaction is
-    // worth; typing a number (or a new email nobody's used yet) is enough.
-    const answer = (window.prompt(
+    // enough that a dedicated picker would be more code than the
+    // interaction is worth; typing a number (or a new email nobody's used
+    // yet) is enough.
+    const answer = (await askPrompt(
       `Reassign "${job.name}" to:\n${list}\n\nType a number above, or type a different email:`,
-      job.assignedTo || ''
+      job.assignedTo || '',
+      { title: 'Reassign job', okLabel: 'Reassign' }
     ) || '').trim();
     if (!answer) return;
     const index = parseInt(answer, 10);
@@ -954,7 +964,8 @@
 
   deleteJobBtn.addEventListener('click', async () => {
     if (!currentJobId) return;
-    if (!confirm('Delete this job and all its photos and voice memos? This cannot be undone.')) return;
+    if (!await askConfirm('Delete this job and all its photos and voice memos? This cannot be undone.',
+      { title: 'Delete job', okLabel: 'Delete', danger: true })) return;
     await DB.deleteJob(currentJobId);
     toast('Job deleted');
     showJobListView();
@@ -1172,7 +1183,8 @@
   selectionDeleteBtn.addEventListener('click', async () => {
     const n = selectedCaptureIds.size;
     if (!n) return;
-    if (!confirm(`Delete ${n} selected capture${n === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    if (!await askConfirm(`Delete ${n} selected capture${n === 1 ? '' : 's'}? This cannot be undone.`,
+      { title: 'Delete captures', okLabel: 'Delete', danger: true })) return;
     for (const id of selectedCaptureIds) {
       await DB.deleteCapture(id);
     }
@@ -2059,7 +2071,7 @@
 
   detailDeleteBtn.addEventListener('click', async () => {
     if (!currentDetailCaptureId) return;
-    if (!confirm('Delete this capture?')) return;
+    if (!await askConfirm('Delete this capture?', { title: 'Delete capture', okLabel: 'Delete', danger: true })) return;
     await DB.deleteCapture(currentDetailCaptureId);
     hide(detailModal);
     currentDetailCaptureId = null;

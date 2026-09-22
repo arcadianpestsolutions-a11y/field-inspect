@@ -681,6 +681,81 @@ input:focus, textarea:focus {
 }
 .bulk-zone-card h2 { margin: 0; font-size: 1.1rem; }
 
+/* ---------- iOS "add to home screen" notice (ios-install.js) ---------- */
+.ios-install-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px calc(10px + var(--safe-bottom, 0px));
+  background: #3b2f05;
+  border-bottom: 1px solid #6b5608;
+  color: #ffe9a3;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.ios-install-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.ios-install-text strong { color: #ffd34d; }
+.ios-install-dismiss { flex-shrink: 0; color: #ffe9a3; }
+
+/* ---------- In-app confirm / prompt / alert (dialog.js) ---------- */
+/* Sits above every other modal: these can be raised from inside one (the
+   capture detail view asks before deleting, for instance), and a question
+   that appears underneath the thing that asked it cannot be answered. */
+.app-dialog {
+  background: rgba(0,0,0,0.6);
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 200;
+}
+.app-dialog-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+.app-dialog-card h2 { margin: 0; font-size: 1.1rem; }
+/* pre-wrap: several of these messages are deliberately multi-line, and read
+   as one run-on sentence without it. */
+.app-dialog-message {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.app-dialog-input {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem; /* 16px minimum, or iOS Safari zooms the page on focus */
+}
+.app-dialog-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+textarea.app-dialog-input { min-height: 90px; resize: vertical; }
+/* Pinned to the bottom of the card: a long message (the amendment reason
+   names every field being changed) scrolls the card, and on a phone in
+   landscape that scrolled Cancel/OK clean off the bottom — a dialog you
+   cannot answer. Sticky keeps them reachable without restructuring. */
+.app-dialog-actions {
+  position: sticky;
+  bottom: 0;
+  background: var(--card);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+body.dialog-open { overflow: hidden; }
+
 /* ---------- Action bar (bottom) ---------- */
 .action-bar {
   display: flex;

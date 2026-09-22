@@ -49,6 +49,10 @@
   const pickerCancel = el('slot-picker-cancel');
 
   const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
+  // See app.js — native confirm never renders in an installed iOS app, and
+  // this one is the only thing standing between a technician and a
+  // double-booking they never saw.
+  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
 
   // All calendar maths is on local calendar days. Going through UTC here would
   // shift every booking by the timezone offset.
@@ -437,9 +441,10 @@
     const clashes = await DB.getOverlappingJobs(scheduledAt, durationMins, jobId);
     if (!clashes.length) return true;
     const names = clashes.map((j) => `${j.name} at ${fmtTime(j.scheduledAt)}`).join(', ');
-    return window.confirm(
+    return askConfirm(
       `This clashes with ${clashes.length === 1 ? 'a job already booked' : `${clashes.length} jobs already booked`}: `
-      + `${names}.\n\nBook it anyway?`
+      + `${names}.\n\nBook it anyway?`,
+      { title: 'Already booked at that time', okLabel: 'Book anyway' }
     );
   }
 

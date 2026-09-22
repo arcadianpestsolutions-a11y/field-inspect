@@ -194,6 +194,13 @@
     console.log(msg);
   }
 
+  // See the same pair in app.js. Native confirm/prompt never render in an
+  // installed iOS home-screen app, which silently took out Finalize Report,
+  // sending a report, and the mandatory reason for amending a finalized one
+  // — the three flows in this file that most need to work.
+  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+  const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
+
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str == null ? '' : String(str);
@@ -1153,7 +1160,9 @@
 
   finalizeBtn.addEventListener('click', async () => {
     if (finalizeBtn.disabled) return;
-    if (!confirm('Finalize this report? You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.')) return;
+    if (!await askConfirm(
+      'You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.',
+      { title: 'Finalize this report?', okLabel: 'Finalize' })) return;
     // Recorded before finalizedAt is set, so the event itself is correctly
     // stamped afterFinalize: false — this is the moment of sign-off, not an
     // amendment to an already-signed document.
@@ -1231,9 +1240,10 @@
     try {
       const job = await DB.getJob(jobId);
       const defaultEmail = job.clientEmail || '';
-      const recipientEmail = window.prompt(
-        'Send the finalized report to the client.\n\nEnter their email address (or Cancel to skip):',
-        defaultEmail
+      const recipientEmail = await askPrompt(
+        'Enter their email address, or Cancel to skip.',
+        defaultEmail,
+        { title: 'Send the report to the client', okLabel: 'Send', inputType: 'email', placeholder: 'client@example.com' }
       );
       if (!recipientEmail || !recipientEmail.trim()) return;
 
@@ -1300,7 +1310,8 @@
 
       const job = await DB.getJob(jobId);
       const who = job.clientEmail || job.clientPhone || job.name;
-      if (!confirm(`Also add a Foreman task to send this report to ${who}?`)) return;
+      if (!await askConfirm(`Also add a Foreman task to send this report to ${who}?`,
+        { title: 'Add a Foreman task?', okLabel: 'Add task' })) return;
 
       await window.supabaseClient.schema('foreman').from('tasks').insert({
         org_id: membership.org_id,
@@ -1506,9 +1517,10 @@
     const draft = await DB.getSectionDraft(currentReport.jobId, sectionId).catch(() => null);
     if (draft && draft.values && draftDiffersFromCommitted(section, currentReport.sections[sectionId], draft.values)) {
       const when = new Date(draft.savedAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' });
-      if (window.confirm(
+      if (await askConfirm(
         `This section has unsaved work from ${when} that was never saved — the app closed or was interrupted before you finished. `
-        + 'Restore it and pick up where you left off?'
+        + 'Restore it and pick up where you left off?',
+        { title: 'Unsaved work found', okLabel: 'Restore it' }
       )) {
         pendingSectionValues = { ...pendingSectionValues, ...draft.values };
       } else {
@@ -1887,8 +1899,9 @@
     allClearBtn.type = 'button';
     allClearBtn.className = 'btn btn-secondary flex1';
     allClearBtn.textContent = 'All checked, no activity';
-    allClearBtn.addEventListener('click', () => {
-      const count = Number(window.prompt('How many stations are on this property?', String(stations.length || 8)));
+    allClearBtn.addEventListener('click', async () => {
+      const count = Number(await askPrompt('How many stations are on this property?', String(stations.length || 8),
+        { title: 'All checked, no activity', okLabel: 'Add stations', inputType: 'number' }));
       if (!Number.isFinite(count) || count < 1 || count > 100) return;
       stations.length = 0;
       for (let i = 1; i <= count; i++) {
@@ -2681,8 +2694,13 @@
       if (mode === 'corners') { startCornerEdit(e); return; }
       if (mode === 'label') {
         const p = pos(e);
-        const text = window.prompt('Label for this spot (e.g. Kitchen, High moisture, Damage):', '');
-        if (text) {
+        // Both of these have to happen before the dialog is awaited:
+        // preventDefault does nothing once the event has finished
+        // dispatching, and pos(e) reads coordinates off the live event.
+        e.preventDefault();
+        askPrompt('Label for this spot (e.g. Kitchen, High moisture, Damage):', '',
+          { title: 'Label this spot', okLabel: 'Add label' }).then((text) => {
+          if (!text) return;
           inkCtx.fillStyle = '#c0552a';
           inkCtx.beginPath();
           inkCtx.arc(p.x, p.y, 4, 0, Math.PI * 2);
@@ -2691,8 +2709,7 @@
           inkCtx.fillText(text, p.x + 8, p.y + 4);
           hasFreehandWork = true;
           commit();
-        }
-        e.preventDefault();
+        });
         return;
       }
       drawing = true;
@@ -3231,17 +3248,17 @@
     });
 
     // ---------- placing and editing markers ----------
-    canvas.addEventListener('click', (e) => {
+    canvas.addEventListener('click', async (e) => {
       if (mode !== 'stamp') return;
       const p = pos(e);
       const hit = markerAt(p);
       if (hit >= 0) {
         const m = markers[hit];
         const spec = STAMPS[m.kind];
-        const answer = window.prompt(
-          spec.short + (typeof m.n === 'number' ? ' ' + m.n : '')
-          + '\n\nType a note for this one, or type DELETE to remove it.',
-          m.note || ''
+        const answer = await askPrompt(
+          'Type a note for this one, or type DELETE to remove it.',
+          m.note || '',
+          { title: spec.short + (typeof m.n === 'number' ? ' ' + m.n : ''), okLabel: 'Save note' }
         );
         if (answer === null) return;
         if (answer.trim().toUpperCase() === 'DELETE') markers.splice(hit, 1);
@@ -3403,11 +3420,13 @@
     let reason = '';
     if (currentReport.finalizedAt && changes.length) {
       const summary = changes.slice(0, 3).map((c) => c.label).join(', ');
-      reason = (window.prompt(
+      reason = (await askPrompt(
         `This report was finalized on ${fmtDate(currentReport.finalizedAt)}.\n\n`
         + `You are amending: ${summary}${changes.length > 3 ? ` and ${changes.length - 3} more` : ''}.\n\n`
         + 'Give a brief reason for the amendment (recorded in the report\'s audit trail):',
-        ''
+        '',
+        { title: 'Reason for amendment', okLabel: 'Record amendment', multiline: true,
+          placeholder: 'e.g. Corrected unit number after the client called' }
       ) || '').trim();
       if (!reason) {
         toast('Amendment cancelled — a reason is required to change a finalized report.');
@@ -3445,12 +3464,13 @@
   // them with no sign anything had gone wrong. Now it only discards after
   // confirming there's actually something to lose, and lets them cancel
   // back into the editor rather than lose work to a habitual tap.
-  sectionBackBtn.addEventListener('click', () => {
+  sectionBackBtn.addEventListener('click', async () => {
     const section = findSection(currentSectionId);
     const changes = diffSection(section, currentReport.sections[currentSectionId], pendingSectionValues);
-    if (changes.length && !window.confirm(
+    if (changes.length && !await askConfirm(
       `Discard ${changes.length} unsaved change${changes.length === 1 ? '' : 's'} to this section? `
-      + 'Tap Cancel to go back and use "Save & Back to Report" instead.'
+      + 'Tap Cancel to go back and use "Save & Back to Report" instead.',
+      { title: 'Discard unsaved work?', okLabel: 'Discard', danger: true }
     )) {
       return;
     }
