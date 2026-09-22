@@ -502,7 +502,14 @@ function defaultValuesForSection(section) {
 //       Conditions, for the AI tree-species/termite-susceptibility identifier
 //   6 — termite: added generalPhotos to Client Details, a catch-all AI
 //       sorts into the right section/field on Generate Form
-const SCHEMA_VERSION = 6;
+//   7 — termite action plan: added termiteSpecies and standardApplied to the
+//       basis, and optionsConsidered, systemLimitations, expectedServiceLife,
+//       occupantRequirements and durableNoticeCommitted to proposed works.
+//       All AS 3660 expectations the plan recorded nowhere: which termite
+//       (the method cannot be justified without it), what else was offered,
+//       what the system does NOT protect against, and the service life of
+//       the treated zone as a fact separate from the commercial warranty
+const SCHEMA_VERSION = 7;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;

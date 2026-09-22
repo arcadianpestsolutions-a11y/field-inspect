@@ -76,9 +76,26 @@
           id: 'termiteActivity', label: 'Live activity present at inspection?', type: 'yesno',
           required: true, aiFillable: true,
         },
+        // Which termite it is decides what will work. Coptotermes,
+        // Schedorhinotermes and Nasutitermes do not respond the same way to
+        // the same system, so a plan that names a method without naming the
+        // species cannot show why that method was the right one. Carried
+        // here rather than left back in the inspection because this is the
+        // document the client and any later assessor actually reads.
+        {
+          id: 'termiteSpecies', label: 'Termite species (genus/species, or "not determinable")',
+          type: 'text', required: true, aiFillable: true,
+          showIf: { field: 'termiteActivity', equals: 'Yes' },
+        },
         {
           id: 'riskLevel', label: 'Risk of further attack', type: 'select', required: true,
           options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true,
+        },
+        {
+          id: 'standardApplied', label: 'Part of AS 3660 this plan is written under',
+          type: 'select', required: true,
+          options: ['AS 3660.2 — in and around existing buildings', 'AS 3660.1 — new building work'],
+          default: 'AS 3660.2 — in and around existing buildings',
         },
       ],
     },
@@ -119,11 +136,61 @@
         },
         { id: 'productsProposed', label: 'Products proposed', type: 'productList', required: true },
         { id: 'estimatedDuration', label: 'Estimated time on site', type: 'text' },
+        // AS 3660 expects the client to be told what else was possible, not
+        // just what is being sold to them. It is also the technician's best
+        // protection when someone asks later why baiting was not used.
+        {
+          id: 'optionsConsidered', label: 'Other management options considered, and why this one was chosen',
+          type: 'textarea', required: true,
+        },
+        // Distinct from untreatableAreas above, which is about places. This
+        // is about the system itself: what it does not do even where it is
+        // installed correctly. A treated zone deters concealed entry, it does
+        // not stop termites crossing an exposed surface in the open; baiting
+        // depends on foraging termites finding the stations. Neither is a
+        // guarantee against future attack, and saying so here is what stops
+        // the plan being read as one.
+        {
+          id: 'systemLimitations', label: 'Limitations of the proposed system (what it does not protect against)',
+          type: 'textarea', required: true,
+        },
+        // Not the same thing as the commercial warranty in the next section,
+        // and conflating the two is a real compliance error: the expected
+        // service life of a treated zone is a property of the chemical and
+        // the soil it goes into, not of what the business chooses to
+        // guarantee. Both belong in the document, separately.
+        {
+          id: 'expectedServiceLife', label: 'Expected service life of the treated zone / system',
+          type: 'select',
+          options: ['Not applicable — no treated zone proposed', 'Up to 3 years', 'Up to 5 years',
+            'Up to 8 years', 'Up to 10 years', 'Per product label — stated in the attached label'],
+          required: true,
+        },
+        // Chemical goes into someone's home. Who has to be out, for how
+        // long, and what has to be covered or moved is part of the proposal,
+        // not a conversation on the day.
+        {
+          id: 'occupantRequirements', label: 'What the occupants must do on the day (vacating, pets, fish tanks, covering food)',
+          type: 'textarea', required: true,
+        },
+        // AS 3660 requires a durable notice recording what was installed to
+        // be fixed at the property. Promising it in the plan is what makes it
+        // happen; the Certificate of Installation then records where it went.
+        {
+          id: 'durableNoticeCommitted', label: 'A durable notice will be installed on completion',
+          type: 'yesno', required: true, default: 'Yes',
+        },
       ],
     },
     {
       id: 'warranty', number: 4, title: 'Warranty & Ongoing Requirements',
-      subtitle: 'What is guaranteed, for how long, and what the client must do to keep it.',
+      // "What we guarantee" is a commercial promise and is not the same as
+      // how long the chemical is expected to last, which is recorded up in
+      // Proposed Management. A client reading a 12-month warranty against an
+      // 8-year treated zone should be seeing two different facts, not one
+      // contradictory one.
+      subtitle: 'What is guaranteed, for how long, and what the client must do to keep it. '
+        + 'Separate from the expected service life of the system itself.',
       icon: '📜', color: '#166534',
       fields: [
         { id: 'warrantyOffered', label: 'Warranty offered?', type: 'yesno', required: true, default: 'Yes' },
