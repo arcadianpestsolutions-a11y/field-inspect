@@ -70,6 +70,66 @@
 
   const durationOf = (job) => job.scheduledDurationMins || 60;
 
+  // ---------- Travel between jobs ----------
+  // The scheduler has always known WHEN jobs are and nothing about WHERE,
+  // so booking 9am at Camden and 10am at Oakdale looked perfectly fine. The
+  // driving between them is the cost that never appeared anywhere: unpaid,
+  // every day, and invisible until the second client is rung to say you are
+  // running late.
+  //
+  // This is an estimate and is presented as one. Straight-line distance
+  // scaled for the fact roads do not go in straight lines, at an average
+  // door-to-door speed for suburban Macarthur running — which is well below
+  // any speed limit because it includes lights, roundabouts, finding the
+  // place, and parking. Rounded to five minutes so it never reads as more
+  // precise than it is.
+  //
+  // A real routing API would be more accurate and would also mean another
+  // key, another bill, another thing that fails with no signal in a subfloor.
+  // Worth doing only if these estimates turn out to be wrong in practice.
+  const ROAD_WINDING_FACTOR = 1.3;   // straight line -> actual road distance
+  const AVERAGE_SPEED_KMH = 40;      // door to door, not open-road speed
+  const GEAR_MINUTES = 10;           // packing up and unpacking at each end
+
+  function haversineKm(lat1, lng1, lat2, lng2) {
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const EARTH_RADIUS_KM = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
+  function hasCoords(job) {
+    return !!job && typeof job.addressLat === 'number' && typeof job.addressLng === 'number';
+  }
+
+  // Null, not zero, when either end has no coordinates. Coordinates are only
+  // saved when the address was picked from the suggestion list rather than
+  // typed freehand, so plenty of real jobs have none — and a missing
+  // estimate must never be mistaken for "no travel needed".
+  function travelMinutesBetween(fromJob, toJob) {
+    if (!hasCoords(fromJob) || !hasCoords(toJob)) return null;
+    const km = haversineKm(fromJob.addressLat, fromJob.addressLng, toJob.addressLat, toJob.addressLng);
+    const minutes = ((km * ROAD_WINDING_FACTOR) / AVERAGE_SPEED_KMH) * 60 + GEAR_MINUTES;
+    return Math.max(5, Math.round(minutes / 5) * 5);
+  }
+
+  // The job immediately before this one on the same day, by start time.
+  function previousJobBefore(dayJobs, job) {
+    return dayJobs
+      .filter((j) => j.id !== job.id && j.scheduledAt < job.scheduledAt)
+      .sort((a, b) => b.scheduledAt - a.scheduledAt)[0] || null;
+  }
+
+  function fmtTravel(minutes) {
+    if (minutes < 60) return `${minutes} min`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m ? `${h}h ${m}min` : `${h}h`;
+  }
+
   function fmtHour(h) {
     const ampm = h < 12 ? 'am' : 'pm';
     const h12 = h % 12 === 0 ? 12 : h % 12;
@@ -240,6 +300,28 @@
           if (window.showJobViewById) window.showJobViewById(entry.job.id);
         });
         row.appendChild(btn);
+
+        // The drive to get here from the previous job, and whether the day
+        // actually allows for it. Shown on the arriving job rather than the
+        // leaving one because that is the appointment that gets missed.
+        const previous = previousJobBefore(list, entry.job);
+        const travel = travelMinutesBetween(previous, entry.job);
+        if (travel !== null) {
+          const gap = Math.round(
+            (entry.job.scheduledAt - (previous.scheduledAt + durationOf(previous) * 60000)) / 60000
+          );
+          const tooTight = gap < travel;
+          const note = document.createElement('span');
+          note.className = 'slot-travel' + (tooTight ? ' slot-travel-tight' : '');
+          note.textContent = tooTight
+            ? `⚠ ~${fmtTravel(travel)} drive from ${previous.name}, but only ${fmtTravel(Math.max(0, gap))} between them`
+            : `🚗 ~${fmtTravel(travel)} drive from ${previous.name}`;
+          // Inside the job block, not beside it: .slot-row is a flex row, so
+          // a sibling would sit alongside the job and squeeze it. .slot-job
+          // is already a column, so this stacks under the address where it
+          // reads as belonging to this arrival.
+          btn.appendChild(note);
+        }
       } else if (entry) {
         const cont = document.createElement('span');
         cont.className = 'slot-continued';
@@ -439,12 +521,60 @@
   // it first.
   async function confirmNoOverlap(jobId, scheduledAt, durationMins) {
     const clashes = await DB.getOverlappingJobs(scheduledAt, durationMins, jobId);
-    if (!clashes.length) return true;
-    const names = clashes.map((j) => `${j.name} at ${fmtTime(j.scheduledAt)}`).join(', ');
+    if (clashes.length) {
+      const names = clashes.map((j) => `${j.name} at ${fmtTime(j.scheduledAt)}`).join(', ');
+      return askConfirm(
+        `This clashes with ${clashes.length === 1 ? 'a job already booked' : `${clashes.length} jobs already booked`}: `
+        + `${names}.\n\nBook it anyway?`,
+        { title: 'Already booked at that time', okLabel: 'Book anyway' }
+      );
+    }
+    // Nothing overlaps, but the day still has to be physically possible.
+    // Two jobs half an hour apart on the clock and forty minutes apart on
+    // the road is not a clash by any check this file had before — it is
+    // simply a promise that cannot be kept, discovered on the drive.
+    return confirmEnoughTravelTime(jobId, scheduledAt, durationMins);
+  }
+
+  async function confirmEnoughTravelTime(jobId, scheduledAt, durationMins) {
+    // Every path out of here that is not a genuine warning returns true.
+    // This is an advisory built on an estimate; it must never be the reason
+    // a real booking cannot be made. The rebooking flow calls in with a null
+    // jobId because the follow-up job does not exist yet, and an unguarded
+    // DB.getJob(null) throwing here took the whole rebooking down with it.
+    if (!jobId) return true;
+    let candidate = null;
+    try {
+      candidate = await DB.getJob(jobId);
+    } catch (e) {
+      return true;
+    }
+    if (!hasCoords(candidate)) return true; // no coordinates, nothing to estimate
+
+    const sameDayJobs = (await DB.getJobs()).filter((j) =>
+      j.id !== jobId && j.scheduledAt && sameDay(j.scheduledAt, scheduledAt));
+
+    const endsAt = scheduledAt + durationMins * 60000;
+    const problems = [];
+    for (const other of sameDayJobs) {
+      const travel = travelMinutesBetween(other, candidate);
+      if (travel === null) continue;
+      const otherEnds = other.scheduledAt + durationOf(other) * 60000;
+      // Whichever side of the candidate this job sits, the gap between them
+      // has to cover the drive.
+      const gapMins = other.scheduledAt >= endsAt
+        ? Math.round((other.scheduledAt - endsAt) / 60000)
+        : Math.round((scheduledAt - otherEnds) / 60000);
+      if (gapMins >= 0 && gapMins < travel) {
+        problems.push(`${other.name} at ${fmtTime(other.scheduledAt)} — about ${fmtTravel(travel)} away, `
+          + `with ${fmtTravel(Math.max(0, gapMins))} between them`);
+      }
+    }
+    if (!problems.length) return true;
+
     return askConfirm(
-      `This clashes with ${clashes.length === 1 ? 'a job already booked' : `${clashes.length} jobs already booked`}: `
-      + `${names}.\n\nBook it anyway?`,
-      { title: 'Already booked at that time', okLabel: 'Book anyway' }
+      `${problems.join('\n')}\n\nThese are estimates from the addresses, not live traffic.`,
+      { title: 'Not enough time to get there', okLabel: 'Book anyway' }
     );
   }
 
@@ -489,5 +619,8 @@
     // asks the same question with the same wording, instead of each writing
     // its own half of a conflict check.
     confirmNoOverlap,
+    // Exposed so the estimate itself can be tested against known distances,
+    // rather than only through the booking flow that consumes it.
+    travelMinutesBetween,
   };
 })();

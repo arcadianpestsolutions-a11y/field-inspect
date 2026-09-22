@@ -681,6 +681,19 @@ input:focus, textarea:focus {
 }
 .bulk-zone-card h2 { margin: 0; font-size: 1.1rem; }
 
+/* Drive time between consecutive jobs, shown on the arriving job. Quiet by
+   default — it is background information most of the time — and loud only
+   when the day does not actually allow for it. */
+.slot-travel {
+  display: block;
+  margin-top: 4px;
+  padding-left: 2px;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  line-height: 1.3;
+}
+.slot-travel-tight { color: #ffb4a2; }
+
 .job-readonly-notice {
   margin: 0 0 12px;
   padding: 10px 12px;

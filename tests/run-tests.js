@@ -3252,6 +3252,102 @@
     assert(!doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'the feed panel should be the one showing');
   });
 
+  // ---------- Travel time between jobs ----------
+
+  test('Travel: the estimate is in the right ballpark for a real Macarthur run', () => {
+    const win = frame.contentWindow;
+    // Campbelltown to Camden — about 12km by road, a known quantity.
+    const campbelltown = { addressLat: -34.0650, addressLng: 150.8140 };
+    const camden = { addressLat: -34.0547, addressLng: 150.6967 };
+    const mins = win.Scheduler.travelMinutesBetween(campbelltown, camden);
+    assert(mins >= 15 && mins <= 45,
+      `a cross-Macarthur drive should read as a real trip, got ${mins} min`);
+
+    // Two jobs in the same street are still a trip — gear in, gear out.
+    const nextDoor = { addressLat: -34.0650, addressLng: 150.8142 };
+    const short = win.Scheduler.travelMinutesBetween(campbelltown, nextDoor);
+    assert(short > 0 && short < mins, `next door must be quicker than across the region, got ${short}`);
+  });
+
+  test('Travel: no coordinates means no estimate, never a zero', () => {
+    const win = frame.contentWindow;
+    const withCoords = { addressLat: -34.06, addressLng: 150.81 };
+    // Coordinates are only saved when the address was picked from the
+    // suggestion list, so plenty of real jobs have none. Returning 0 would
+    // read as "no travel needed" and quietly approve an impossible day.
+    assertEqual(win.Scheduler.travelMinutesBetween(withCoords, { address: '1 Typed St' }), null);
+    assertEqual(win.Scheduler.travelMinutesBetween({ address: '2 Typed St' }, withCoords), null);
+    assertEqual(win.Scheduler.travelMinutesBetween(null, withCoords), null);
+  });
+
+  test('Travel: booking somewhere unreachable in the gap asks before accepting it', async () => {
+    const win = frame.contentWindow;
+    const day = dayThisMonth(11, 9);
+    // Campbelltown at 9am for an hour, then Camden at 10:05 — five minutes
+    // to cover a drive of roughly half an hour. Nothing overlaps, so no
+    // clash check would ever have caught this.
+    await win.DB.addJob({
+      name: 'Travel First Job', scheduledAt: day.getTime(), scheduledDurationMins: 60,
+      addressLat: -34.0650, addressLng: 150.8140,
+    });
+    const second = await win.DB.addJob({
+      name: 'Travel Second Job', addressLat: -34.0547, addressLng: 150.6967,
+    });
+
+    const tooSoon = new Date(day);
+    tooSoon.setHours(10, 5, 0, 0);
+    let asked = null;
+    const origConfirm = win.confirm;
+    win.confirm = (msg) => { asked = msg; return false; };
+    let allowed;
+    try {
+      allowed = await win.Scheduler.confirmNoOverlap(second.id, tooSoon.getTime(), 60);
+    } finally {
+      win.confirm = origConfirm;
+    }
+
+    assert(asked, 'a day that cannot physically be driven must be questioned');
+    assert(/Travel First Job/.test(asked), `it names the job you would be coming from, got: ${asked}`);
+    assert(/estimate/i.test(asked), 'and is honest that it is an estimate, not live traffic');
+    assertEqual(allowed, false, 'declining must stop the booking');
+  });
+
+  test('Travel: a job that does not exist yet is not blocked by a travel estimate', async () => {
+    const win = frame.contentWindow;
+    // Rebooking calls the gate with a null id, because the follow-up job is
+    // created only after the time is agreed. A travel estimate is advisory;
+    // it must never be the thing that stops a real booking being made.
+    const day = dayThisMonth(13, 9);
+    const clear = await win.Scheduler.confirmNoOverlap(null, day.getTime(), 60);
+    assertEqual(clear, true, 'no job yet means nothing to estimate from, so nothing to warn about');
+  });
+
+  test('Travel: a sensible gap books without comment', async () => {
+    const win = frame.contentWindow;
+    const day = dayThisMonth(12, 9);
+    await win.DB.addJob({
+      name: 'Roomy First Job', scheduledAt: day.getTime(), scheduledDurationMins: 60,
+      addressLat: -34.0650, addressLng: 150.8140,
+    });
+    const second = await win.DB.addJob({
+      name: 'Roomy Second Job', addressLat: -34.0547, addressLng: 150.6967,
+    });
+
+    const later = new Date(day);
+    later.setHours(12, 0, 0, 0); // two hours after the first ends — ample
+    let asked = false;
+    const origConfirm = win.confirm;
+    win.confirm = () => { asked = true; return true; };
+    let allowed;
+    try {
+      allowed = await win.Scheduler.confirmNoOverlap(second.id, later.getTime(), 60);
+    } finally {
+      win.confirm = origConfirm;
+    }
+    assert(!asked, 'a day that works must not be second-guessed');
+    assertEqual(allowed, true);
+  });
+
   // ---------- Roles and permissions ----------
   // The database is what actually enforces this (migration 016). These cover
   // the app's side: that it does not offer a technician buttons the server
