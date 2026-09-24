@@ -1,6 +1,6 @@
-// Serves Field Inspect's booked jobs as a live iCalendar (.ics) feed —
+// Serves Scope's booked jobs as a live iCalendar (.ics) feed —
 // standard enough that Google Calendar, Outlook and Apple Calendar can all
-// subscribe to the URL directly, with no knowledge of Field Inspect at all.
+// subscribe to the URL directly, with no knowledge of Scope at all.
 //
 // DELIBERATELY NOT BEHIND SUPABASE AUTH. Every other function in this
 // project requires a signed-in user's bearer token (see analyze-inspection,
@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const token = url.searchParams.get('token');
 
-  if (!token) return textResponse('Missing ?token= — copy the full link from Field Inspect’s calendar feed panel.', 400);
+  if (!token) return textResponse('Missing ?token= — copy the full link from Scope’s calendar feed panel.', 400);
 
   const { data: feed, error: feedError } = await admin
     .from('calendar_feed')
@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
     return textResponse('Calendar feed is not set up yet (run supabase-migration-010-calendar-feed.sql).', 500);
   }
   if (!feed || feed.token !== token) {
-    return textResponse('Invalid or revoked calendar feed link. Generate a new one in Field Inspect.', 403);
+    return textResponse('Invalid or revoked calendar feed link. Generate a new one in Scope.', 403);
   }
 
   // A year each way is generous for a pest-control diary and keeps the feed
@@ -125,12 +125,12 @@ Deno.serve(async (req) => {
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Field Inspect//Calendar Feed//EN',
+    'PRODID:-//Scope//Calendar Feed//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     // A descriptive name — shows up as the calendar's display name in most
     // apps that support subscribed calendars (Google, Apple).
-    'X-WR-CALNAME:Field Inspect Bookings',
+    'X-WR-CALNAME:Scope Bookings',
     'X-WR-TIMEZONE:UTC',
   ];
 

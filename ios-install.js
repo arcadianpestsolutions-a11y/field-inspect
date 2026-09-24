@@ -52,7 +52,7 @@
     const text = document.createElement('div');
     text.className = 'ios-install-text';
     const strong = document.createElement('strong');
-    strong.textContent = 'Add Field Inspect to your Home Screen';
+    strong.textContent = 'Add Scope to your Home Screen';
     text.appendChild(strong);
     const detail = document.createElement('span');
     detail.textContent = 'Tap Share, then "Add to Home Screen". Until you do, iPhone can delete saved jobs, photos and unfinished reports after 7 days of not opening it.';

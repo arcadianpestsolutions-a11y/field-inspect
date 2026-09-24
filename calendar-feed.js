@@ -1,4 +1,4 @@
-// Calendar feed — lets Field Inspect's bookings show up on any external
+// Calendar feed — lets Scope's bookings show up on any external
 // calendar (Google Calendar, Outlook, Apple Calendar) without knowing or
 // caring which one, by publishing a standard iCalendar (.ics) subscription
 // URL. The URL is generated and shown here; it's actually served by the

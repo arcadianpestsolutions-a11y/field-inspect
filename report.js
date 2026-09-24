@@ -1415,7 +1415,7 @@
   // is the join between them, not leftover scaffolding. It looks dormant
   // because it no-ops unless the technician has a Foreman workspace.
   //
-  // Cross-app hook (optional, non-blocking): Foreman and Field Inspect now
+  // Cross-app hook (optional, non-blocking): Foreman and Scope now
   // share one Supabase project (own `foreman` schema, same login) — see the
   // plan's "shared login + cross-app talk" addendum. If this technician
   // also has a Foreman workspace, offer to drop a follow-up task there.

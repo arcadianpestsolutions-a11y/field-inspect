@@ -1,6 +1,6 @@
 {
-  "name": "Field Inspect",
-  "short_name": "FieldInspect",
+  "name": "Scope",
+  "short_name": "Scope",
   "description": "Building/pest inspection field capture — photos, voice memos, zone tags per job.",
   "start_url": "./index.html",
   "scope": "./",
