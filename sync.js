@@ -459,6 +459,39 @@
     invoices: (id) => DB.deleteInvoiceLocalOnly(id),
   };
 
+  // A tombstone is only a defence if every device honours it. An older
+  // client that has not been updated yet does not know about them, so it
+  // still pushes its local copies up — and the pull branch would then
+  // happily download the resurrected rows again on every other device.
+  //
+  // So a tombstone also ENFORCES: if a record is back on the server but a
+  // tombstone says it was deleted, and nothing has touched it since, it is
+  // deleted from the server again. That is what makes a deletion stick
+  // permanently rather than only until the next stale device wakes up.
+  //
+  // updated_at NEWER than the tombstone is left alone, deliberately. That is
+  // not a resurrection — somebody deliberately created or edited a record
+  // with that id after the deletion, and their work outranks an old delete.
+  async function enforceTombstones(table, remoteRows) {
+    if (!isReady() || deletionsTableMissing) return new Set();
+    const suppressed = new Set();
+    for (const row of remoteRows || []) {
+      const id = table === 'reports' ? row.job_id : row.id;
+      const tomb = await DB.getDeletionRecord(table, id);
+      if (!tomb) continue;
+      if ((row.updated_at || 0) > (tomb.deletedAt || 0)) continue; // genuinely newer
+      suppressed.add(id);
+      try {
+        const column = table === 'reports' ? 'job_id' : 'id';
+        await supabaseClient.from(table).delete().eq(column, id);
+        console.info(`[sync] re-deleted ${table} ${id} — a stale device had pushed it back`);
+      } catch (e) {
+        console.warn('[sync] could not enforce deletion:', e.message || e);
+      }
+    }
+    return suppressed;
+  }
+
   async function applyRemoteTombstones() {
     if (!isReady() || deletionsTableMissing) return 0;
     try {
@@ -868,8 +901,13 @@
       const remoteJobs = jobsRes.data || [];
       const remoteJobsById = new Map(remoteJobs.map((rj) => [rj.id, rj]));
       const localJobsById = new Map(localJobs.map((lj) => [lj.id, lj]));
+      // Anything the server still holds but a tombstone condemns is
+      // re-deleted there and skipped here, so a stale device pushing its
+      // old copy back cannot spread it to everyone else.
+      const deadJobs = await enforceTombstones('jobs', remoteJobs);
 
       for (const rj of remoteJobs) {
+        if (deadJobs.has(rj.id)) continue;
         const local = localJobsById.get(rj.id);
         if (!local || (rj.updated_at || 0) > (local.updatedAt || 0)) {
           await DB.putJobRaw(remoteJobToLocal(rj));
@@ -891,8 +929,10 @@
       const remoteReports = reportsRes.data || [];
       const remoteReportsByJobId = new Map(remoteReports.map((rr) => [rr.job_id, rr]));
       const localReportsByJobId = new Map(localReports.map((lr) => [lr.jobId, lr]));
+      const deadReports = await enforceTombstones('reports', remoteReports);
 
       for (const rr of remoteReports) {
+        if (deadReports.has(rr.job_id)) continue;
         const local = localReportsByJobId.get(rr.job_id);
         if (!local || (rr.updated_at || 0) > (local.updatedAt || 0)) {
           await DB.putReportRaw(remoteReportToLocal(rr, local));

@@ -941,10 +941,14 @@
     try {
       win.navigator.mediaDevices.getUserMedia = () =>
         Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
+      // Clear it first, and wait for the RIGHT toast rather than whatever
+      // happens to be on screen. Report drafting fires autoPopulateSiteFields
+      // without awaiting it, on purpose, so its "Filled ..." toast can land
+      // here from a test that finished several steps ago.
+      doc.getElementById('toast').textContent = '';
       btn.click();
-      await wait(400);
-      const toastText = doc.getElementById('toast').textContent;
-      assert(/blocked|permission/i.test(toastText), `expected a permission message, got: "${toastText}"`);
+      await waitFor(() => /blocked|permission/i.test(doc.getElementById('toast').textContent),
+        'Start Inspection must say why the camera did not open');
       assert(!btn.disabled, 'button must be usable again after a failed start');
     } finally {
       win.navigator.mediaDevices.getUserMedia = original;
@@ -3326,6 +3330,23 @@
     const pending = await win.DB.getUnsyncedDeletions();
     assert(!pending.some((d) => d.recordId === job.id),
       'applying somebody else\u2019s deletion must not queue it for sending back');
+  });
+
+  test('Deletions: a tombstone keeps the exact time, so newer work can outrank it', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Tombstone Timing Job' });
+    await win.DB.deleteJob(job.id);
+
+    const tomb = await win.DB.getDeletionRecord('jobs', job.id);
+    assert(tomb, 'the tombstone is retrievable, not just a yes/no');
+    assert(typeof tomb.deletedAt === 'number' && tomb.deletedAt > 0,
+      'and carries when — enforcement compares it against the row\u2019s updated_at, so a '
+      + 'record deliberately recreated later is left alone instead of being deleted again');
+    assertEqual(tomb.table, 'jobs');
+    assertEqual(tomb.recordId, job.id);
+
+    assertEqual(await win.DB.getDeletionRecord('jobs', 'never-deleted-id'), undefined,
+      'and nothing is invented for a record that was never deleted');
   });
 
   // ---------- Recurring service plans ----------

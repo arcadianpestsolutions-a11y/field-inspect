@@ -245,6 +245,14 @@ const DB = {
     }));
   },
 
+
+  // The tombstone itself, not just whether one exists — sync.js needs
+  // deletedAt to decide whether a record that reappeared on the server is a
+  // stale resurrection or genuinely newer work.
+  async getDeletionRecord(table, recordId) {
+    const store = await tx('deletions', 'readonly');
+    return reqToPromise(store.get(`${table}:${recordId}`)) || null;
+  },
   async isDeleted(table, recordId) {
     const store = await tx('deletions', 'readonly');
     return !!(await reqToPromise(store.get(`${table}:${recordId}`)));
