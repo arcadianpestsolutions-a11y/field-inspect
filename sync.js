@@ -78,6 +78,74 @@
 
   window.SyncMessages = { syncFailureText, fatalSyncText };
 
+  // ---------- Reading a whole table ----------
+  // Above the test/demo guard below, for the same reason the message builders
+  // are: this is the one piece of sync that can be tested without a live
+  // Supabase session, and an off-by-one in a page window is exactly the kind
+  // of bug that hides for months and then loses records.
+  //
+  // PostgREST answers a plain select('*') with at most max-rows rows — 1000 on
+  // a default Supabase project — and says nothing at all about having
+  // truncated the answer. No error, no flag, no header this client reads. You
+  // simply get fewer rows than exist.
+  //
+  // On a two-way sync that silence is not merely incomplete, it is
+  // destructive, in three separate ways:
+  //
+  //   1. Every row past the cap looks ABSENT FROM THE SERVER to the push-back
+  //      branches in pullAll, so this device re-uploads all of them, forever,
+  //      on every single sync.
+  //   2. A tombstone past the cap is never read, so the record it condemns is
+  //      never deleted locally and gets pushed straight back up — the exact
+  //      resurrection bug tombstones were built to stop.
+  //   3. enforceTombstones only ever sees the truncated page, so it cannot
+  //      re-delete a resurrected row it was never shown.
+  //
+  // So nothing here asks for "everything" in one request. Paging needs a
+  // deterministic order or pages silently overlap and skip rows, and
+  // updated_at is not unique, so each table is paged by its primary key.
+  //
+  // A row another device inserts WHILE this is paging can still shift a later
+  // page by one and skip a row. That is accepted and self-healing: the next
+  // sync picks it up. Truncation was neither.
+  const PAGE_ROWS = 1000;
+  // A stop, not a limit. If a server ever ignored .range() every page would
+  // come back full and the loop would never end; 100k rows is far past
+  // anything this business will hold, so hitting it means something is wrong.
+  const MAX_PAGES = 100;
+
+  const TABLE_KEYS = {
+    jobs: ['id'],
+    reports: ['job_id'],
+    captures: ['id'],
+    footage: ['id'],
+    invoices: ['id'],
+    deletions: ['table_name', 'record_id'], // composite — neither half is unique alone
+  };
+
+  // Takes the client rather than closing over it, so the suite can hand it a
+  // double. Throws on error instead of returning one: a half-read table must
+  // not be mistaken for a complete one by the caller.
+  async function fetchAllRows(client, table) {
+    const keys = TABLE_KEYS[table] || ['id'];
+    const rows = [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let query = client.from(table).select('*');
+      for (const key of keys) query = query.order(key, { ascending: true });
+      const from = page * PAGE_ROWS;
+      const { data, error } = await query.range(from, from + PAGE_ROWS - 1);
+      if (error) throw error;
+      const batch = data || [];
+      for (const row of batch) rows.push(row);
+      // A short page is the end of the table. A full one might not be.
+      if (batch.length < PAGE_ROWS) return rows;
+    }
+    console.warn(`[sync] stopped reading ${table} at ${rows.length} rows after ${MAX_PAGES} pages.`);
+    return rows;
+  }
+
+  window.SyncPaging = { fetchAllRows, PAGE_ROWS, MAX_PAGES, TABLE_KEYS };
+
   // Test and demo modes never touch the cloud. Syncing from a browser that
   // holds a real session would pull production records into the sandbox and
   // push every fixture back up to the live database.
@@ -495,16 +563,11 @@
   async function applyRemoteTombstones() {
     if (!isReady() || deletionsTableMissing) return 0;
     try {
-      const { data, error } = await supabaseClient.from('deletions').select('*');
-      if (error) {
-        if (/relation .* does not exist|could not find the table|schema cache/i.test(error.message || '')) {
-          deletionsTableMissing = true;
-          return 0;
-        }
-        throw error;
-      }
+      // Paged, not select('*') — see fetchAllRows. A tombstone this device
+      // never reads is a record it will push straight back up.
+      const rows = await fetchAllRows(supabaseClient, 'deletions');
       let applied = 0;
-      for (const row of data || []) {
+      for (const row of rows) {
         const known = await DB.isDeleted(row.table_name, row.record_id);
         await DB.recordRemoteDeletion(row.table_name, row.record_id, row.deleted_at);
         if (known) continue;
@@ -513,6 +576,12 @@
       }
       return applied;
     } catch (e) {
+      // fetchAllRows throws rather than handing back an error object, so the
+      // "migration 018 has not been run yet" case is recognised here now.
+      if (/relation .* does not exist|could not find the table|schema cache/i.test(e.message || '')) {
+        deletionsTableMissing = true;
+        return 0;
+      }
       console.warn('[sync] could not read deletions:', e.message || e);
       return 0;
     }
@@ -806,9 +875,7 @@
   // reports predate this and keep their own bespoke passes; captures and
   // footage share this one so the two can't drift apart.
   async function syncCollection({ table, localAll, toLocal, putRaw, push }) {
-    const res = await supabaseClient.from(table).select('*');
-    if (res.error) throw res.error;
-    const remote = res.data || [];
+    const remote = await fetchAllRows(supabaseClient, table);
     const remoteById = new Map(remote.map((r) => [r.id, r]));
     const localById = new Map(localAll.map((l) => [l.id, l]));
 
@@ -893,12 +960,10 @@
       await applyRemoteTombstones();
     } catch (e) { console.warn('[sync] tombstone pass failed:', e.message || e); }
     try {
-      const [jobsRes, localJobs] = await Promise.all([
-        supabaseClient.from('jobs').select('*'),
+      const [remoteJobs, localJobs] = await Promise.all([
+        fetchAllRows(supabaseClient, 'jobs'),
         DB.getJobs(),
       ]);
-      if (jobsRes.error) throw jobsRes.error;
-      const remoteJobs = jobsRes.data || [];
       const remoteJobsById = new Map(remoteJobs.map((rj) => [rj.id, rj]));
       const localJobsById = new Map(localJobs.map((lj) => [lj.id, lj]));
       // Anything the server still holds but a tombstone condemns is
@@ -921,12 +986,10 @@
         }
       }
 
-      const [reportsRes, localReports] = await Promise.all([
-        supabaseClient.from('reports').select('*'),
+      const [remoteReports, localReports] = await Promise.all([
+        fetchAllRows(supabaseClient, 'reports'),
         DB.getAllReports(),
       ]);
-      if (reportsRes.error) throw reportsRes.error;
-      const remoteReports = reportsRes.data || [];
       const remoteReportsByJobId = new Map(remoteReports.map((rr) => [rr.job_id, rr]));
       const localReportsByJobId = new Map(localReports.map((lr) => [lr.jobId, lr]));
       const deadReports = await enforceTombstones('reports', remoteReports);

@@ -2704,6 +2704,143 @@
       'and if none was fixed, that needs explaining');
   });
 
+  // ---------- Reading a whole table (pagination) ----------
+  // PostgREST truncates a select('*') at max-rows (1000 by default) without
+  // saying so. On a two-way sync that is not "some rows missing": every row
+  // past the cap looks absent from the server, so the push-back branch
+  // re-uploads it forever, and a tombstone past the cap never gets read, so
+  // the record it condemns comes back. These tests exist because that failure
+  // is completely silent — no error, no warning, just quietly wrong.
+
+  // Stands in for supabase-js's query builder. Records every page window it
+  // was asked for, so a test can assert the windows are contiguous rather
+  // than only that the row count came out right.
+  function fakeSupabase(rowsByTable, opts = {}) {
+    const calls = [];
+    const client = {
+      calls,
+      from(table) {
+        const orders = [];
+        const q = {
+          select: () => q,
+          order: (col) => { orders.push(col); return q; },
+          async range(from, to) {
+            calls.push({ table, from, to, orders: orders.slice() });
+            if (opts.error) return { data: null, error: opts.error };
+            const all = rowsByTable[table] || [];
+            // A server that ignores range: always answers with a full page.
+            if (opts.ignoreRange) return { data: all.slice(0, opts.ignoreRange), error: null };
+            return { data: all.slice(from, to + 1), error: null };
+          },
+        };
+        return q;
+      },
+    };
+    return client;
+  }
+
+  function fakeRows(n, key = 'id') {
+    // Padded so a lexical sort and a numeric one agree — the double slices in
+    // insertion order, and a test should not depend on which that is.
+    return Array.from({ length: n }, (_, i) => ({ [key]: `r${String(i).padStart(6, '0')}` }));
+  }
+
+  test('Sync: a table larger than one page is read completely, not truncated', async () => {
+    const win = frame.contentWindow;
+    const { fetchAllRows, PAGE_ROWS } = win.SyncPaging;
+    const total = PAGE_ROWS * 2 + 500;
+    const client = fakeSupabase({ jobs: fakeRows(total) });
+
+    const rows = await fetchAllRows(client, 'jobs');
+    assert(rows.length === total,
+      `every row must come back, not just the first page — got ${rows.length} of ${total}`);
+
+    const ids = new Set(rows.map((r) => r.id));
+    assert(ids.size === total, 'no row is fetched twice by overlapping pages');
+    assert(client.calls.length === 3, `three pages for ${total} rows, got ${client.calls.length}`);
+  });
+
+  test('Sync: page windows are contiguous, so no row falls between them', async () => {
+    const win = frame.contentWindow;
+    const { fetchAllRows, PAGE_ROWS } = win.SyncPaging;
+    const client = fakeSupabase({ jobs: fakeRows(PAGE_ROWS * 2 + 1) });
+    await fetchAllRows(client, 'jobs');
+
+    // range() is inclusive at both ends. An off-by-one here drops exactly one
+    // record per page, which is the kind of loss nobody notices for months.
+    client.calls.forEach((call, i) => {
+      assert(call.from === i * PAGE_ROWS, `page ${i} starts at ${i * PAGE_ROWS}, got ${call.from}`);
+      assert(call.to === (i + 1) * PAGE_ROWS - 1,
+        `page ${i} ends at ${(i + 1) * PAGE_ROWS - 1}, got ${call.to}`);
+    });
+  });
+
+  test('Sync: a table of exactly one page is read without losing the last page', async () => {
+    // The boundary case. A full page cannot be assumed to be the last one, so
+    // this must ask again and get nothing, rather than stopping at a full page
+    // and missing a real second page.
+    const win = frame.contentWindow;
+    const { fetchAllRows, PAGE_ROWS } = win.SyncPaging;
+    const client = fakeSupabase({ jobs: fakeRows(PAGE_ROWS) });
+
+    const rows = await fetchAllRows(client, 'jobs');
+    assert(rows.length === PAGE_ROWS, `exactly one page of rows, got ${rows.length}`);
+    assert(client.calls.length === 2, 'a full page is followed by one more request, which comes back empty');
+  });
+
+  test('Sync: an empty table costs one request and returns nothing', async () => {
+    const win = frame.contentWindow;
+    const { fetchAllRows } = win.SyncPaging;
+    const client = fakeSupabase({ jobs: [] });
+
+    const rows = await fetchAllRows(client, 'jobs');
+    assert(rows.length === 0, 'no rows');
+    assert(client.calls.length === 1, 'and it does not keep asking');
+  });
+
+  test('Sync: every table is paged by a unique key, never by updated_at', async () => {
+    // Paging without a deterministic order lets pages overlap and skip rows.
+    // updated_at is not unique, so ordering by it would reintroduce the exact
+    // silent loss this whole helper exists to prevent.
+    const win = frame.contentWindow;
+    const { fetchAllRows, TABLE_KEYS } = win.SyncPaging;
+
+    for (const [table, keys] of Object.entries(TABLE_KEYS)) {
+      const client = fakeSupabase({ [table]: fakeRows(3, keys[0]) });
+      await fetchAllRows(client, table);
+      const ordered = client.calls[0].orders;
+      assert(ordered.join(',') === keys.join(','),
+        `${table} must be ordered by ${keys.join(' + ')}, got ${ordered.join(' + ') || 'nothing'}`);
+      assert(!ordered.includes('updated_at'), `${table} must not be paged by a non-unique column`);
+    }
+    assert(TABLE_KEYS.reports[0] === 'job_id', 'reports are keyed by job_id, not id');
+    assert(TABLE_KEYS.deletions.length === 2, 'deletions have a composite key, so both halves order it');
+  });
+
+  test('Sync: a failed page throws instead of passing off a half-read table as complete', async () => {
+    // The dangerous shape: swallow the error, return the rows fetched so far,
+    // and pullAll treats every missing row as "the server does not have this"
+    // and uploads it back. Better to fail the sync loudly.
+    const win = frame.contentWindow;
+    const { fetchAllRows } = win.SyncPaging;
+    const client = fakeSupabase({ jobs: fakeRows(10) }, { error: { message: 'permission denied' } });
+
+    let threw = null;
+    try { await fetchAllRows(client, 'jobs'); } catch (e) { threw = e; }
+    assert(threw, 'the error is raised, not absorbed into a short page');
+    assert(/permission denied/.test(threw.message || ''), 'and it carries the real reason');
+  });
+
+  test('Sync: a server that ignores paging cannot spin forever', async () => {
+    const win = frame.contentWindow;
+    const { fetchAllRows, PAGE_ROWS, MAX_PAGES } = win.SyncPaging;
+    const client = fakeSupabase({ jobs: fakeRows(PAGE_ROWS) }, { ignoreRange: PAGE_ROWS });
+
+    const rows = await fetchAllRows(client, 'jobs');
+    assert(client.calls.length === MAX_PAGES, `it stops at ${MAX_PAGES} pages, not never`);
+    assert(rows.length === PAGE_ROWS * MAX_PAGES, 'and hands back what it did read');
+  });
+
   // ---------- Sync failure wording ----------
   // These lock in a promise to the person holding the phone, not an
   // implementation detail: whatever went wrong upstream, the message must
