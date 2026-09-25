@@ -36,7 +36,9 @@
 -- database, which is the one failure here that would be unrecoverable from
 -- the app.
 --
--- Run once against the live project. Idempotent.
+-- Run once against the live project. Genuinely idempotent: every policy is
+-- dropped by its own name before being created, so a re-run cannot fail with
+-- "policy already exists" partway through and leave the table half-governed.
 
 -- ---------------------------------------------------------------- roles ---
 
@@ -106,11 +108,13 @@ drop policy if exists "team can insert jobs" on public.jobs;
 drop policy if exists "team can update jobs" on public.jobs;
 drop policy if exists "team can delete jobs" on public.jobs;
 
+drop policy if exists "signed in can read jobs" on public.jobs;
 create policy "signed in can read jobs" on public.jobs
   for select to authenticated using (true);
 
 -- Anyone may create a job. db.js stamps assigned_to with the creator, so a
 -- technician's new job is theirs immediately.
+drop policy if exists "signed in can insert jobs" on public.jobs;
 create policy "signed in can insert jobs" on public.jobs
   for insert to authenticated with check (true);
 
@@ -118,11 +122,13 @@ create policy "signed in can insert jobs" on public.jobs
 -- be updated to. Both are needed: without WITH CHECK a technician could
 -- reassign one of their jobs to somebody else and keep editing it through
 -- the row they no longer own.
+drop policy if exists "own or admin can update jobs" on public.jobs;
 create policy "own or admin can update jobs" on public.jobs
   for update to authenticated
   using (public.is_admin() or public.owns_job(assigned_to))
   with check (public.is_admin() or public.owns_job(assigned_to));
 
+drop policy if exists "admin can delete jobs" on public.jobs;
 create policy "admin can delete jobs" on public.jobs
   for delete to authenticated using (public.is_admin());
 
@@ -137,9 +143,11 @@ drop policy if exists "team can insert reports" on public.reports;
 drop policy if exists "team can update reports" on public.reports;
 drop policy if exists "team can delete reports" on public.reports;
 
+drop policy if exists "signed in can read reports" on public.reports;
 create policy "signed in can read reports" on public.reports
   for select to authenticated using (true);
 
+drop policy if exists "own or admin can insert reports" on public.reports;
 create policy "own or admin can insert reports" on public.reports
   for insert to authenticated
   with check (
@@ -147,6 +155,7 @@ create policy "own or admin can insert reports" on public.reports
     or exists (select 1 from public.jobs j where j.id = reports.job_id and public.owns_job(j.assigned_to))
   );
 
+drop policy if exists "own or admin can update reports" on public.reports;
 create policy "own or admin can update reports" on public.reports
   for update to authenticated
   using (
@@ -158,6 +167,7 @@ create policy "own or admin can update reports" on public.reports
     or exists (select 1 from public.jobs j where j.id = reports.job_id and public.owns_job(j.assigned_to))
   );
 
+drop policy if exists "admin can delete reports" on public.reports;
 create policy "admin can delete reports" on public.reports
   for delete to authenticated using (public.is_admin());
 
@@ -171,9 +181,11 @@ drop policy if exists "team can write captures" on public.captures;
 drop policy if exists "team can read footage"   on public.footage;
 drop policy if exists "team can write footage"  on public.footage;
 
+drop policy if exists "signed in can read captures" on public.captures;
 create policy "signed in can read captures" on public.captures
   for select to authenticated using (true);
 
+drop policy if exists "own or admin can insert captures" on public.captures;
 create policy "own or admin can insert captures" on public.captures
   for insert to authenticated
   with check (
@@ -181,6 +193,7 @@ create policy "own or admin can insert captures" on public.captures
     or exists (select 1 from public.jobs j where j.id = captures.job_id and public.owns_job(j.assigned_to))
   );
 
+drop policy if exists "own or admin can update captures" on public.captures;
 create policy "own or admin can update captures" on public.captures
   for update to authenticated
   using (
@@ -192,12 +205,15 @@ create policy "own or admin can update captures" on public.captures
     or exists (select 1 from public.jobs j where j.id = captures.job_id and public.owns_job(j.assigned_to))
   );
 
+drop policy if exists "admin can delete captures" on public.captures;
 create policy "admin can delete captures" on public.captures
   for delete to authenticated using (public.is_admin());
 
+drop policy if exists "signed in can read footage" on public.footage;
 create policy "signed in can read footage" on public.footage
   for select to authenticated using (true);
 
+drop policy if exists "own or admin can write footage" on public.footage;
 create policy "own or admin can write footage" on public.footage
   for all to authenticated
   using (
@@ -216,9 +232,11 @@ create policy "own or admin can write footage" on public.footage
 drop policy if exists "team can read invoices"  on public.invoices;
 drop policy if exists "team can write invoices" on public.invoices;
 
+drop policy if exists "admin can read invoices" on public.invoices;
 create policy "admin can read invoices" on public.invoices
   for select to authenticated using (public.is_admin());
 
+drop policy if exists "admin can write invoices" on public.invoices;
 create policy "admin can write invoices" on public.invoices
   for all to authenticated
   using (public.is_admin())
