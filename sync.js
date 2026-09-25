@@ -404,6 +404,87 @@
     return merged.sort((a, b) => (a.at || 0) - (b.at || 0));
   }
 
+  // ---------- Tombstones ----------
+  // The other half of a delete. Without one, pullAll's push-back branch sees
+  // a local record the cloud lacks and helpfully re-uploads it, so deleting
+  // anything only lasts until the next device syncs. See migration 018.
+  let deletionsTableMissing = false;
+
+  async function pushTombstone(table, recordId) {
+    if (!isReady() || deletionsTableMissing) return false;
+    try {
+      const { error } = await supabaseClient.from('deletions').upsert({
+        table_name: table,
+        record_id: recordId,
+        deleted_at: Date.now(),
+        deleted_by: currentUserId(),
+      });
+      if (error) {
+        if (/relation .* does not exist|could not find the table|schema cache/i.test(error.message || '')) {
+          deletionsTableMissing = true;
+          console.warn('[sync] deletions table not in the database yet — run supabase-migration-018-deletions.sql. '
+            + 'Until then a delete will not stick across devices.');
+          return false;
+        }
+        throw error;
+      }
+      await DB.markDeletionSynced(`${table}:${recordId}`);
+      return true;
+    } catch (e) {
+      // Left unsynced on purpose — flushPendingTombstones retries it.
+      console.warn('[sync] could not record deletion, will retry:', e.message || e);
+      return false;
+    }
+  }
+
+  // Deletes made while offline never reached the server. Without this they
+  // stay local-only, and the next pull cheerfully downloads the record again
+  // — a delete that undoes itself as soon as you have signal.
+  async function flushPendingTombstones() {
+    if (!isReady() || deletionsTableMissing) return;
+    const pending = await DB.getUnsyncedDeletions().catch(() => []);
+    for (const t of pending) {
+      await pushTombstone(t.table, t.recordId);
+    }
+  }
+
+  // Applies tombstones from other devices: anything deleted elsewhere is
+  // removed here too, and recorded locally so the push-back branch below
+  // knows not to re-upload it.
+  const LOCAL_DELETERS = {
+    jobs: (id) => DB.deleteJobLocalOnly(id),
+    reports: (id) => DB.deleteReportLocalOnly(id),
+    captures: (id) => DB.deleteCaptureLocalOnly(id),
+    footage: (id) => DB.deleteFootageLocalOnly(id),
+    invoices: (id) => DB.deleteInvoiceLocalOnly(id),
+  };
+
+  async function applyRemoteTombstones() {
+    if (!isReady() || deletionsTableMissing) return 0;
+    try {
+      const { data, error } = await supabaseClient.from('deletions').select('*');
+      if (error) {
+        if (/relation .* does not exist|could not find the table|schema cache/i.test(error.message || '')) {
+          deletionsTableMissing = true;
+          return 0;
+        }
+        throw error;
+      }
+      let applied = 0;
+      for (const row of data || []) {
+        const known = await DB.isDeleted(row.table_name, row.record_id);
+        await DB.recordRemoteDeletion(row.table_name, row.record_id, row.deleted_at);
+        if (known) continue;
+        const remove = LOCAL_DELETERS[row.table_name];
+        if (remove) { await remove(row.record_id).catch(() => {}); applied++; }
+      }
+      return applied;
+    } catch (e) {
+      console.warn('[sync] could not read deletions:', e.message || e);
+      return 0;
+    }
+  }
+
   // ---------- Push (best effort, called from db.js after every local write) ----------
 
   // A row-level policy that refuses an UPDATE does not raise an error.
@@ -585,12 +666,14 @@
     if (!isReady()) return;
     try { await supabaseClient.from('captures').delete().eq('id', id); }
     catch (e) { console.warn('[sync] delete capture remote failed:', e.message || e); }
+    await pushTombstone('captures', id);
   }
 
   async function deleteFootageRemote(id) {
     if (!isReady()) return;
     try { await supabaseClient.from('footage').delete().eq('id', id); }
     catch (e) { console.warn('[sync] delete footage remote failed:', e.message || e); }
+    await pushTombstone('footage', id);
   }
 
   // Same reasoning as reportAuditColumnsMissing/jobExtraColumnsMissing —
@@ -669,6 +752,7 @@
     if (!isReady()) return;
     try { await supabaseClient.from('invoices').delete().eq('id', id); }
     catch (e) { console.warn('[sync] delete invoice remote failed:', e.message || e); }
+    await pushTombstone('invoices', id);
   }
 
   async function deleteJobRemote(id) {
@@ -679,6 +763,10 @@
     } catch (e) {
       console.warn('[sync] delete job remote failed:', e.message || e);
     }
+    // The job cascades server-side, but other devices hold their own
+    // copies of the children and would push them back as orphans.
+    await pushTombstone('jobs', id);
+    await pushTombstone('reports', id);
   }
 
   // Generic last-write-wins reconcile for the id-keyed collections. Jobs and
@@ -698,6 +786,10 @@
       }
     }
     for (const l of localAll) {
+      // A record the server does not have is either new here, or
+      // deleted there. Only a tombstone can tell the two apart —
+      // without this check the push below resurrects it.
+      if (await DB.isDeleted(table, l.id)) continue;
       const r = remoteById.get(l.id);
       if (!r || (l.updatedAt || 0) > (r.updated_at || 0)) {
         await push(l);
@@ -760,6 +852,14 @@
     pulling = true;
     setStatus({ state: 'syncing' });
     try {
+      // Before anything else: send deletions this device made while
+      // offline, then apply deletions made elsewhere. Doing this first
+      // means the push-back branches below already know what is gone,
+      // instead of dutifully re-uploading it.
+      await flushPendingTombstones();
+      await applyRemoteTombstones();
+    } catch (e) { console.warn('[sync] tombstone pass failed:', e.message || e); }
+    try {
       const [jobsRes, localJobs] = await Promise.all([
         supabaseClient.from('jobs').select('*'),
         DB.getJobs(),
@@ -776,6 +876,7 @@
         }
       }
       for (const lj of localJobs) {
+        if (await DB.isDeleted('jobs', lj.id)) continue;
         const remote = remoteJobsById.get(lj.id);
         if (!remote || (lj.updatedAt || 0) > (remote.updated_at || 0)) {
           await pushJob(lj);
@@ -798,6 +899,7 @@
         }
       }
       for (const lr of localReports) {
+        if (await DB.isDeleted('reports', lr.jobId)) continue;
         const remote = remoteReportsByJobId.get(lr.jobId);
         if (!remote || (lr.updatedAt || 0) > (remote.updated_at || 0)) {
           await pushReport(lr);

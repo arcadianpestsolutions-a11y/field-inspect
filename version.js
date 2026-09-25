@@ -2,7 +2,7 @@
 // "BUILD vN" label on the login screen so testers can tell at a glance
 // whether they're looking at the current build or a stale cached one,
 // instead of having to dig into devtools to check.
-window.APP_VERSION = 'v66';
+window.APP_VERSION = 'v67';
 
 (() => {
   function hashToHue(str) {

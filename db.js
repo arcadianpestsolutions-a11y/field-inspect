@@ -39,10 +39,11 @@ window.IS_TEST = !!__params.get('test') || location.pathname.includes('/tests/')
 const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
   : window.IS_DEMO ? 'field-inspect-db-demo'
   : 'field-inspect-db';
-// v4 adds the `sectionDrafts` store. onupgradeneeded below is written so each
+// v5 adds the `deletions` store — see recordDeletion below for why a delete
+// has to leave something behind. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbPromise = null;
 
@@ -73,6 +74,12 @@ function openDB() {
       if (!db.objectStoreNames.contains('sectionDrafts')) {
         const store = db.createObjectStore('sectionDrafts', { keyPath: 'id' });
         store.createIndex('jobId', 'jobId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('deletions')) {
+        // What was deleted, so the next sync can say so out loud. Keyed
+        // "table:id" because a job and its report share an id.
+        const store = db.createObjectStore('deletions', { keyPath: 'key' });
+        store.createIndex('syncedAt', 'syncedAt', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -172,6 +179,121 @@ const DB = {
     return job;
   },
 
+
+  // ---------- Deletions (tombstones) ----------
+  // A delete has to leave something behind, or it does not survive contact
+  // with a second device.
+  //
+  // sync.js pushes any local record the cloud does not have. That rule
+  // cannot tell "this was deleted" from "the cloud has not seen this yet" —
+  // both are simply absent — so it re-uploaded deleted rows, and a job
+  // deleted on the phone came back from the laptop on the next sync. A
+  // tombstone is the missing half of the information: it says the absence
+  // was deliberate.
+  //
+  // Kept forever rather than pruned. They are a few dozen bytes each, and
+  // the failure mode of pruning too early is the bug coming back — a device
+  // that was offline longer than the retention window resurrects everything
+  // it still holds.
+  async recordDeletion(table, recordId) {
+    const store = await tx('deletions', 'readwrite');
+    await reqToPromise(store.put({
+      key: `${table}:${recordId}`,
+      table,
+      recordId,
+      deletedAt: Date.now(),
+      // Null until sync.js has told the server. Anything still null is a
+      // delete this device made while it had no signal.
+      syncedAt: null,
+    }));
+  },
+
+  async getDeletions() {
+    const store = await tx('deletions', 'readonly');
+    return reqToPromise(store.getAll());
+  },
+
+  async getUnsyncedDeletions() {
+    return (await this.getDeletions()).filter((d) => !d.syncedAt);
+  },
+
+  async markDeletionSynced(key) {
+    // Two separate transactions on purpose. tx() hands back a store from
+    // a NEW transaction each call, and an IndexedDB transaction commits
+    // as soon as control leaves the event loop with nothing pending — so
+    // a get and a put with an await between them run against a
+    // transaction that has already closed, and the write is silently
+    // lost. The tests caught exactly that.
+    const readStore = await tx('deletions', 'readonly');
+    const existing = await reqToPromise(readStore.get(key));
+    if (!existing) return;
+    existing.syncedAt = Date.now();
+    const writeStore = await tx('deletions', 'readwrite');
+    await reqToPromise(writeStore.put(existing));
+  },
+
+  // Used by the pull side: a tombstone that arrived from another device.
+  // Already-synced by definition — it came from the server.
+  async recordRemoteDeletion(table, recordId, deletedAt) {
+    const store = await tx('deletions', 'readwrite');
+    await reqToPromise(store.put({
+      key: `${table}:${recordId}`,
+      table,
+      recordId,
+      deletedAt: deletedAt || Date.now(),
+      syncedAt: Date.now(),
+    }));
+  },
+
+  async isDeleted(table, recordId) {
+    const store = await tx('deletions', 'readonly');
+    return !!(await reqToPromise(store.get(`${table}:${recordId}`)));
+  },
+
+  // ---------- Local-only deletes ----------
+  // Used when applying a tombstone that arrived from another device. The
+  // record is already gone from the server and already has a tombstone, so
+  // these must NOT call back into Sync or record a second one — that would
+  // be a device echoing a deletion back at the network that told it.
+  async deleteJobLocalOnly(id) {
+    for (const c of await this.getCaptures(id)) {
+      const s = await tx('captures', 'readwrite');
+      await reqToPromise(s.delete(c.id));
+    }
+    for (const f of await this.getFootage(id)) {
+      const s = await tx('footage', 'readwrite');
+      await reqToPromise(s.delete(f.id));
+    }
+    for (const i of await this.getInvoicesForJob(id)) {
+      const s = await tx('invoices', 'readwrite');
+      await reqToPromise(s.delete(i.id));
+    }
+    const rstore = await tx('reports', 'readwrite');
+    await reqToPromise(rstore.delete(id)).catch(() => {});
+    await this.deleteAllSectionDraftsForJob(id).catch(() => {});
+    const jstore = await tx('jobs', 'readwrite');
+    await reqToPromise(jstore.delete(id));
+  },
+
+  async deleteReportLocalOnly(jobId) {
+    const store = await tx('reports', 'readwrite');
+    await reqToPromise(store.delete(jobId));
+  },
+
+  async deleteCaptureLocalOnly(id) {
+    const store = await tx('captures', 'readwrite');
+    await reqToPromise(store.delete(id));
+  },
+
+  async deleteFootageLocalOnly(id) {
+    const store = await tx('footage', 'readwrite');
+    await reqToPromise(store.delete(id));
+  },
+
+  async deleteInvoiceLocalOnly(id) {
+    const store = await tx('invoices', 'readwrite');
+    await reqToPromise(store.delete(id));
+  },
   // ---------- Recurring service plans ----------
   // Raises the next visit for a property on a standing plan. Idempotent on
   // purpose: it is safe to call on every completion, and safe to call again
@@ -350,6 +472,15 @@ const DB = {
 
     await this.deleteAllSectionDraftsForJob(id).catch(() => {});
 
+    // A tombstone for the job AND for everything that went with it. The
+    // cloud cascades children off the job row, but other devices hold their
+    // own copies and would otherwise push the orphans straight back.
+    await this.recordDeletion('jobs', id);
+    await this.recordDeletion('reports', id);
+    for (const c of captures) await this.recordDeletion('captures', c.id);
+    for (const f of footage) await this.recordDeletion('footage', f.id);
+    for (const i of invoices) await this.recordDeletion('invoices', i.id);
+
     const jstore = await tx('jobs', 'readwrite');
     await reqToPromise(jstore.delete(id));
 
@@ -408,6 +539,7 @@ const DB = {
   async deleteCapture(id) {
     const store = await tx('captures', 'readwrite');
     await reqToPromise(store.delete(id));
+    await this.recordDeletion('captures', id);
     if (window.Sync) window.Sync.deleteCaptureRemote(id);
   },
 
@@ -466,6 +598,7 @@ const DB = {
   async deleteFootage(id) {
     const store = await tx('footage', 'readwrite');
     await reqToPromise(store.delete(id));
+    await this.recordDeletion('footage', id);
     if (window.Sync) window.Sync.deleteFootageRemote(id);
   },
 
@@ -493,6 +626,7 @@ const DB = {
   async deleteReport(jobId) {
     const store = await tx('reports', 'readwrite');
     await reqToPromise(store.delete(jobId));
+    await this.recordDeletion('reports', jobId);
   },
 
   // ---------- Invoices ----------
@@ -532,6 +666,7 @@ const DB = {
   async deleteInvoice(id) {
     const store = await tx('invoices', 'readwrite');
     await reqToPromise(store.delete(id));
+    await this.recordDeletion('invoices', id);
     if (window.Sync) window.Sync.deleteInvoiceRemote(id);
   },
 

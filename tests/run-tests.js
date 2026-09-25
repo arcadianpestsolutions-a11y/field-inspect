@@ -3252,6 +3252,82 @@
     assert(!doc.getElementById('calendar-feed-panel').classList.contains('hidden'), 'the feed panel should be the one showing');
   });
 
+  // ---------- Deletions that stick (tombstones) ----------
+  // The bug these exist to stop: sync pushes any local record the cloud does
+  // not have, which cannot tell "deleted" from "not uploaded yet". A job
+  // deleted on the phone came back from the laptop, and 64 rows from a test
+  // run five weeks earlier reappeared minutes after the table was cleared.
+
+  test('Deletions: deleting a job leaves a tombstone for it and everything under it', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Tombstone Job' });
+    await win.DB.addCapture({ jobId: job.id, zone: 'Front', type: 'photo', photoBlob: new win.Blob(['x'], { type: 'image/jpeg' }) });
+    await win.DB.saveReport({ jobId: job.id, sections: {}, finalizedAt: null });
+
+    await win.DB.deleteJob(job.id);
+
+    assert(await win.DB.isDeleted('jobs', job.id), 'the job itself');
+    assert(await win.DB.isDeleted('reports', job.id),
+      'and its report — another device holds its own copy and would push it back as an orphan');
+  });
+
+  test('Deletions: a tombstone is what stops a delete being undone by the next sync', async () => {
+    const win = frame.contentWindow;
+    // This is the exact shape of the bug. A record exists locally and not on
+    // the server. Without a tombstone that reads as "needs uploading".
+    const job = await win.DB.addJob({ name: 'Resurrection Job' });
+    assert(!(await win.DB.isDeleted('jobs', job.id)),
+      'a brand new job must be pushable — it is absent from the server because it is new');
+
+    await win.DB.deleteJob(job.id);
+    assert(await win.DB.isDeleted('jobs', job.id),
+      'once deleted, the same absence must read as deliberate instead');
+  });
+
+  test('Deletions: a delete made with no signal is remembered until it can be sent', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Offline Delete Job' });
+    await win.DB.deleteJob(job.id);
+
+    // Sync never runs in test mode, so nothing has been able to tell the
+    // server — which is exactly the offline case.
+    const pending = await win.DB.getUnsyncedDeletions();
+    assert(pending.some((d) => d.recordId === job.id && d.table === 'jobs'),
+      'an unsent deletion has to stay queued, or the next pull downloads the job again');
+
+    await win.DB.markDeletionSynced('jobs:' + job.id);
+    const after = await win.DB.getUnsyncedDeletions();
+    assert(!after.some((d) => d.recordId === job.id && d.table === 'jobs'),
+      'and stop being queued once it has actually been sent');
+  });
+
+  test('Deletions: a tombstone from another device is not echoed back as a new one', async () => {
+    const win = frame.contentWindow;
+    // Applying a deletion that arrived from the server must not queue it for
+    // re-sending — two devices would bounce it between them forever.
+    await win.DB.recordRemoteDeletion('jobs', 'came-from-elsewhere', Date.now());
+    const pending = await win.DB.getUnsyncedDeletions();
+    assert(!pending.some((d) => d.recordId === 'came-from-elsewhere'),
+      'a deletion the server told us about is already synced by definition');
+    assert(await win.DB.isDeleted('jobs', 'came-from-elsewhere'), 'but it still counts as deleted here');
+  });
+
+  test('Deletions: applying one removes the local copy without re-triggering a delete', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Remote Delete Target' });
+    await win.DB.addCapture({ jobId: job.id, zone: 'Rear', type: 'photo', photoBlob: new win.Blob(['x'], { type: 'image/jpeg' }) });
+
+    await win.DB.deleteJobLocalOnly(job.id);
+
+    assert(!(await win.DB.getJob(job.id)), 'the job is gone locally');
+    assertEqual((await win.DB.getCaptures(job.id)).length, 0, 'and so are its photos');
+    // The local-only path must not manufacture a tombstone: the deletion
+    // already has one, and this device did not make the decision.
+    const pending = await win.DB.getUnsyncedDeletions();
+    assert(!pending.some((d) => d.recordId === job.id),
+      'applying somebody else\u2019s deletion must not queue it for sending back');
+  });
+
   // ---------- Recurring service plans ----------
   // The failure these exist to stop: a property that quietly leaves the
   // schedule forever because one visit's paperwork never got finished.
