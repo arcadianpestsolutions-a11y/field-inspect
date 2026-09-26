@@ -416,6 +416,7 @@
     jobSubtitleEl.textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
     await renderAssignedToButton(job);
     renderJobPermissions(job);
+    renderCommsRow(job);
     renderPlanRow(job);
     activeZoneFilter = null;
     selectMode = false;
@@ -456,6 +457,61 @@
       + 'but changes you make will not be saved. Ask for it to be reassigned to you first.';
     const jobMain = viewJob.querySelector('.content') || viewJob;
     jobMain.insertBefore(notice, jobMain.firstChild);
+  }
+
+  // Whether this client gets automated email, and a way to turn it off in one
+  // tap when they ask. Invisible until it matters, the same rule the
+  // technician tag follows: a job with no email address on it has nothing to
+  // opt out of, so it says nothing at all.
+  //
+  // Built here rather than in index.html for the reason renderJobPermissions
+  // gives — a stale cached shell must not be able to hide the one control
+  // that stops a client being emailed after they asked you to stop.
+  //
+  // This toggle is a convenience, not the enforcement. The server checks
+  // comms_opt_out itself before every send, so an old build that has never
+  // heard of this control still cannot email someone who opted out.
+  function renderCommsRow(job) {
+    const existing = document.getElementById('job-comms-row');
+    if (existing) existing.remove();
+    if (!job || !job.clientEmail) return;
+
+    const row = document.createElement('div');
+    row.id = 'job-comms-row';
+    row.className = job.commsOptOut ? 'comms-row opted-out' : 'comms-row';
+
+    const label = document.createElement('span');
+    label.className = 'comms-state';
+    label.textContent = job.commsOptOut
+      ? 'Automated emails off for this client'
+      : 'Automated emails on';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'comms-toggle';
+    btn.textContent = job.commsOptOut ? 'Turn back on' : 'Turn off';
+    btn.disabled = !canEditJob(job);
+    btn.addEventListener('click', async () => {
+      const turningOff = !job.commsOptOut;
+      if (turningOff) {
+        const ok = await askConfirm(
+          'Stop sending this client automated emails? They will still get '
+          + 'anything you send them yourself, and you can turn this back on '
+          + 'at any time.',
+          { title: 'Turn off automated emails', okLabel: 'Turn off', cancelLabel: 'Keep them on' },
+        );
+        if (!ok) return;
+      }
+      await DB.updateJob(job.id, { commsOptOut: turningOff });
+      toast(turningOff
+        ? 'Automated emails turned off for this client'
+        : 'Automated emails turned back on');
+      showJobView(job.id);
+    });
+
+    row.append(label, btn);
+    const jobMain = viewJob.querySelector('.content') || viewJob;
+    jobMain.insertBefore(row, jobMain.firstChild);
   }
 
   async function renderAssignedToButton(job) {
@@ -950,7 +1006,28 @@
     hide(jobForm);
     await renderJobList();
     showJobView(job.id);
+    confirmBookingByEmail(job);
   });
+
+  // Emails the client that their appointment is booked. Deliberately fired
+  // after the screen has already moved on, and never awaited by the save:
+  // an email problem must not be able to fail, delay or undo saving a job.
+  //
+  // The job is pushed first because the Edge Function reads the client's
+  // address out of the job row itself rather than trusting anything sent to
+  // it, so the row has to exist in the cloud before there is anything to
+  // read. A job that never gets there is reported as such rather than
+  // silently doing nothing.
+  async function confirmBookingByEmail(job) {
+    if (!job || !job.scheduledAt || !job.clientEmail) return;
+    if (!window.CommsService) return;
+    try {
+      if (window.Sync && window.Sync.pushJob) await window.Sync.pushJob(job);
+    } catch (e) { /* reported below as job-not-found */ }
+    const result = await window.CommsService.sendBookingConfirmation(job.id);
+    if (result.sent) toast('Booking confirmation emailed to the client');
+    else if (result.message) toast(result.message);
+  }
 
   // Combines the two form inputs into an epoch ms. Built from local calendar
   // parts rather than Date.parse on a string, so the booking lands at the

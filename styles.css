@@ -2220,3 +2220,49 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
     radial-gradient(80% 60% at 80% 100%, rgba(255, 176, 0, 0.05), transparent 70%),
     var(--bg);
 }
+
+/* Whether this client gets automated email. Quiet when everything is normal —
+   "on" is the expected state and does not need to shout — and clearly marked
+   when a client has asked to be left alone, because that is the state a
+   technician needs to notice before they wonder why nothing was sent. */
+.comms-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.comms-state {
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.comms-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.comms-toggle:disabled {
+  color: var(--text-dim);
+  cursor: default;
+  text-decoration: none;
+}
+
+/* Opted out: amber, the same caution the rest of the instrument panel uses,
+   never red — a client choosing not to get email is not a fault. */
+.comms-row.opted-out {
+  background: #3b2f05;
+  border-color: #6b5608;
+}
+.comms-row.opted-out .comms-state { color: #ffe9a3; }

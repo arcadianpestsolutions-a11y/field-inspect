@@ -270,6 +270,11 @@
       row.reminder_sent_for_due_at = job.reminderSentForDueAt || null;
       row.assigned_to = job.assignedTo || '';
       row.recurrence_months = job.recurrenceMonths || null;
+      // Migration 019. Pushed because a technician ticks it in the app; the
+      // two "sent" stamps beside it in Postgres are written only by the
+      // Edge Function and are deliberately never pushed from here, or a
+      // stale device could clear one and cause a second email.
+      row.comms_opt_out = !!job.commsOptOut;
     }
     return row;
   }
@@ -294,6 +299,7 @@
       nextDueAt: rj.next_due_at || null,
       reinspectionIntervalMonths: rj.reinspection_interval_months || null,
       recurrenceMonths: rj.recurrence_months || null,
+      commsOptOut: !!rj.comms_opt_out,
       // Only ever written server-side, by send-due-reminders — the app
       // itself never sets this locally, it only reads it back to decide
       // whether an overdue job in the backlog has already had its email

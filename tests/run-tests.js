@@ -2841,6 +2841,105 @@
     assert(rows.length === PAGE_ROWS * MAX_PAGES, 'and hands back what it did read');
   });
 
+  // ---------- Automated client email ----------
+  // Automated comms takes the technician out of the loop, so the wording has
+  // to carry what the person would otherwise have known by looking: whether
+  // anything was sent, and whether the job they were actually doing is safe.
+
+  test('Comms: every refusal says nothing was sent and what to do about it', () => {
+    const win = frame.contentWindow;
+    const { REFUSALS, refusalText } = win.CommsMessages;
+
+    for (const [reason, msg] of Object.entries(REFUSALS)) {
+      assert(msg && msg.length > 30, `${reason} has a real message`);
+      assert(/not sent|already sent/i.test(msg),
+        `${reason} must state plainly whether anything went out: ${msg}`);
+      // A dead end is worse than a problem. Each one names the next move,
+      // or says explicitly that there is nothing to do.
+      assert(/add one|check it|schedule it|syncs|phone them|changing the/i.test(msg),
+        `${reason} must tell the technician what happens next: ${msg}`);
+    }
+
+    assert(refusalText('something-new-from-the-server').length > 20,
+      'an unrecognised reason still produces a sentence rather than "undefined"');
+  });
+
+  test('Comms: an opted-out client is explained as a choice, not a fault', () => {
+    const win = frame.contentWindow;
+    const msg = win.CommsMessages.REFUSALS['opted-out'];
+    assert(/asked not to/i.test(msg), 'it says the client asked, rather than blaming the system');
+    assert(/phone them|send a report yourself/i.test(msg),
+      'and it names what the technician can still do');
+    assert(!/error|fail/i.test(msg), 'an opt-out is never phrased as a failure');
+  });
+
+  test('Comms: a failure to email never implies the job was lost', () => {
+    const win = frame.contentWindow;
+    const cases = [
+      win.CommsMessages.failureText('Requested function was not found (404)'),
+      win.CommsMessages.failureText('Not authenticated'),
+      win.CommsMessages.failureText('Failed to fetch'),
+      win.CommsMessages.failureText('something odd happened'),
+    ];
+    for (const msg of cases) {
+      assert(msg && msg.length > 25, `every path produces a real message, got: ${msg}`);
+      assert(/job( itself)? is saved|nothing was lost|saved on this device/i.test(msg),
+        `saving the job and sending the email are separate — say so: ${msg}`);
+    }
+  });
+
+  test('Comms: an undeployed function is named as setup, not as a bug', () => {
+    const win = frame.contentWindow;
+    const msg = win.CommsMessages.failureText('Requested function was not found (404)');
+    assert(/not been deployed|not switched on/i.test(msg),
+      'it says the feature is not turned on yet');
+    assert(/send-client-message/.test(msg),
+      'and names the function, so whoever deploys it knows which one');
+  });
+
+  test('Comms: the opt-out control stays hidden until there is an email to stop', async () => {
+    // Same "invisible until it matters" rule as the technician tag. A job
+    // with no client email has nothing to opt out of, and a control that
+    // does nothing is worse than no control.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const noEmail = await win.DB.addJob({ name: 'Comms no-email', address: '1 Quiet St' });
+    await win.showJobViewById(noEmail.id);
+    assert(!doc.getElementById('job-comms-row'),
+      'no email on the job, so no automated-email row at all');
+
+    const withEmail = await win.DB.addJob({
+      name: 'Comms with-email', address: '2 Loud St', clientEmail: 'someone@example.com',
+    });
+    await win.showJobViewById(withEmail.id);
+    const row = doc.getElementById('job-comms-row');
+    assert(row, 'a job with a client email shows the row');
+    assert(/automated emails on/i.test(row.textContent),
+      `a new client starts opted in: ${row.textContent}`);
+  });
+
+  test('Comms: turning the client off is recorded on the job, not just on screen', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({
+      name: 'Comms opt-out', address: '3 Quiet Way', clientEmail: 'stop@example.com',
+    });
+    assert(job.commsOptOut === false, 'a new job starts with the client opted in');
+
+    await win.DB.updateJob(job.id, { commsOptOut: true });
+    const after = await win.DB.getJob(job.id);
+    assert(after.commsOptOut === true, 'the opt-out is stored on the job record');
+
+    await win.showJobViewById(job.id);
+    const row = doc.getElementById('job-comms-row');
+    assert(row && /off for this client/i.test(row.textContent),
+      `the job view reflects the stored state: ${row && row.textContent}`);
+    assert(row.classList.contains('opted-out'),
+      'and is marked visually, so it is noticed before someone wonders why nothing sent');
+  });
+
   // ---------- Sync failure wording ----------
   // These lock in a promise to the person holding the phone, not an
   // implementation detail: whatever went wrong upstream, the message must

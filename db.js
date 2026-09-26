@@ -138,6 +138,11 @@ const DB = {
       notes: notes || '',
       clientPhone: clientPhone || '',
       clientEmail: clientEmail || '',
+      // Client has asked not to receive automated email. False is the right
+      // starting state for a client who just booked a job. The server checks
+      // this too, and the server's copy is the one that decides — this is
+      // here so the app can show the state and let a technician set it.
+      commsOptOut: false,
       status: 'new',
       inspectionDate: null,
       inspectionTime: null,
