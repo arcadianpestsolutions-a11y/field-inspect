@@ -225,6 +225,26 @@ const REPORT_SCHEMA = [
       { id: 'treatmentComments', label: 'Treatment Comments', type: 'textarea', showIf: { field: 'treatmentRecommended', equals: 'Yes' }, aiFillable: true },
       { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'existingManagementSystem', label: 'Existing termite management system present, type & condition', type: 'textarea', aiFillable: true },
+      // The gate for the action-plan half of this report. Answering "adequate"
+      // ends the document here; any other answer opens the proposed-works and
+      // warranty sections below, because a system that is absent, inadequate
+      // or failed is a recommendation waiting to be written down.
+      //
+      // Deliberately a separate question from existingManagementSystem above.
+      // That field describes what is there; this one is the professional
+      // judgement about it, and judgement is what the rest of the document
+      // hangs off.
+      {
+        id: 'managementSystemStatus',
+        label: 'Is the existing termite management system adequate for this property?',
+        type: 'select', required: true, aiFillable: true, confirmBeforeUse: true,
+        options: [
+          'Adequate — no further works proposed',
+          'None present — management plan proposed',
+          'Present but inadequate — management plan proposed',
+          'Present but failed or compromised — management plan proposed',
+        ],
+      },
       { id: 'durableNoticeFound', label: 'Was a durable Notice found at the time of this inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       // A durable notice or treatment sticker (commonly in the meter box or
       // subfloor) is evidence, not just a checkbox — the photo is what a
@@ -294,9 +314,116 @@ const REPORT_SCHEMA = [
       { id: 'weepHolesClear', label: 'Weep holes are clear and visible', type: 'yesno', aiFillable: true, default: 'Yes' },
     ],
   },
+  // ---------- The action-plan half, shown only when it is needed ----------
+  //
+  // These two sections carry a section-level showIf, which names a field in
+  // ANOTHER section (unlike a field's showIf, which names one of its own
+  // siblings). When the technician answers that the existing management
+  // system is adequate, they are not on screen at all.
+  //
+  // Hidden rather than merely optional, on purpose. An empty section sitting
+  // in the list reads as work somebody forgot to do, and a timber pest
+  // inspection on a property that needs nothing should end cleanly rather
+  // than trail a blank proposal behind it.
+  {
+    id: 'proposedWorks',
+    number: 9,
+    title: 'Proposed Termite Management',
+    subtitle: 'What you propose to do about what the inspection found.',
+    icon: '🛠️',
+    color: '#b45309',
+    showIf: {
+      section: 'findings',
+      field: 'managementSystemStatus',
+      oneOf: [
+        'None present — management plan proposed',
+        'Present but inadequate — management plan proposed',
+        'Present but failed or compromised — management plan proposed',
+      ],
+    },
+    fields: [
+      // A different drawing from the Site Sketch in section 5. That one marks
+      // what was FOUND; this one marks what is PROPOSED — the treated zone,
+      // drill lines, where stations go. Sharing one sketch between the two
+      // would mean either losing the findings or drawing the proposal on top
+      // of them.
+      { id: 'worksSketch', label: 'Proposed works — mark the treated zone, drill lines and station positions', type: 'sketch' },
+      { id: 'worksSketchData', label: 'Proposed works marker data', type: 'sketchData' },
+      {
+        id: 'managementMethod', label: 'Management method proposed', type: 'multiselect', required: true, aiFillable: true,
+        options: ['Chemical soil treated zone (AS 3660.2)', 'Reticulation system', 'Termite baiting system',
+          'Physical barrier', 'Combination — see notes'],
+      },
+      {
+        id: 'treatmentExtent', label: 'Extent of treatment', type: 'select', required: true, aiFillable: true,
+        options: ['Complete perimeter', 'Partial — see limitations below', 'Localised / spot treatment only'],
+      },
+      {
+        id: 'areasToTreat', label: 'Areas to be treated', type: 'multiselect', required: true, aiFillable: true,
+        options: ['External perimeter', 'Internal perimeter', 'Subfloor', 'Slab penetrations', 'Garage',
+          'Patio / paved areas', 'Landscaping timbers', 'Trees and stumps'],
+      },
+      { id: 'drillingRequired', label: 'Will drilling of hard surfaces be required?', type: 'yesno', required: true },
+      {
+        id: 'drillingDetail', label: 'What will be drilled, and how it will be made good',
+        type: 'textarea', required: true, showIf: { field: 'drillingRequired', equals: 'Yes' },
+      },
+      { id: 'productsProposed', label: 'Products proposed', type: 'productList', required: true },
+      {
+        id: 'untreatableAreas', label: 'Areas that cannot be treated, and why',
+        type: 'textarea', aiFillable: true,
+      },
+      {
+        id: 'systemLimitations', label: 'Limitations of the proposed system (what it does not protect against)',
+        type: 'textarea', required: true,
+      },
+      { id: 'estimatedDuration', label: 'Estimated time on site', type: 'text' },
+      {
+        id: 'occupantRequirements',
+        label: 'What the occupants must do on the day (vacating, pets, fish tanks, covering food)',
+        type: 'textarea', required: true,
+      },
+    ],
+  },
+  {
+    id: 'worksWarranty',
+    number: 10,
+    title: 'Warranty & Ongoing Requirements',
+    subtitle: 'What is guaranteed, for how long, and what the client must do to keep it.',
+    icon: '📜',
+    color: '#166534',
+    showIf: {
+      section: 'findings',
+      field: 'managementSystemStatus',
+      oneOf: [
+        'None present — management plan proposed',
+        'Present but inadequate — management plan proposed',
+        'Present but failed or compromised — management plan proposed',
+      ],
+    },
+    fields: [
+      {
+        id: 'warrantyPeriod', label: 'Warranty period offered', type: 'select', required: true,
+        options: ['No warranty offered', '12 months', '2 years', '3 years', '5 years',
+          'For the service life of the system, subject to annual inspection'],
+      },
+      {
+        id: 'warrantyConditions', label: 'What the client must do to keep the warranty valid',
+        type: 'multiselect', required: true,
+        options: ['Annual inspection by a licensed technician', 'Do not disturb the treated zone',
+          'Keep stations clear of mulch and debris', 'Repair identified moisture problems',
+          'Remove timber in contact with soil', 'Notify us of any building works near the treated zone'],
+      },
+      {
+        id: 'reinspectionAfterWorks', label: 'First inspection after the works is due', type: 'select',
+        required: true, options: ['3 months', '6 months', '12 months'], default: '12 months',
+      },
+      { id: 'worksNotes', label: 'Anything else the client should know', type: 'textarea', aiFillable: true },
+    ],
+  },
   {
     id: 'terms',
-    number: 9,
+    number: 11,
     title: 'Terms & Conditions',
     subtitle: 'Terms and condition details related to the Inspection undertaken and Report provided.',
     icon: '📖',
@@ -306,7 +433,7 @@ const REPORT_SCHEMA = [
   },
   {
     id: 'inspector',
-    number: 10,
+    number: 12,
     title: 'Inspector Details',
     subtitle: 'Contact details of the Inspection Provider and the Inspector that undertook the Inspection.',
     icon: '🧑‍🔧',
@@ -323,7 +450,7 @@ const REPORT_SCHEMA = [
   },
   {
     id: 'acknowledgement',
-    number: 11,
+    number: 13,
     title: 'Client Acknowledgement',
     subtitle: 'Acknowledgement and acceptance of the Report to be completed by the Client.',
     icon: '✅',

@@ -135,6 +135,37 @@
     return schemaFor(currentJob && currentJob.jobType, currentReport);
   }
 
+  // Section-level visibility.
+  //
+  // A FIELD's showIf names a sibling in its own section. A SECTION's names a
+  // field in a different one, so it carries that section's id too — which is
+  // the whole point: the action-plan half of a timber pest inspection is
+  // decided by an answer given back in Findings.
+  //
+  // A condition that names nothing is treated as hidden rather than shown.
+  // These sections appear because somebody said works are needed; appearing
+  // by default, before the question has been answered, would put a blank
+  // proposal in front of every inspection.
+  function isSectionVisible(section, report) {
+    const cond = section && section.showIf;
+    if (!cond) return true;
+    const values = (report && report.sections && report.sections[cond.section]) || {};
+    const value = values[cond.field];
+    if (Array.isArray(cond.oneOf)) return cond.oneOf.includes(value);
+    if (Object.prototype.hasOwnProperty.call(cond, 'equals')) return value === cond.equals;
+    if (Object.prototype.hasOwnProperty.call(cond, 'notEquals')) {
+      return value !== undefined && value !== '' && value !== cond.notEquals;
+    }
+    return false;
+  }
+
+  // The schema as the technician actually sees it. Everything that counts
+  // sections — the list, the finalize check, validation and the PDF — works
+  // from this, so a hidden section cannot block finalizing or print blank.
+  function visibleSchema(schema, report) {
+    return (schema || []).filter((s) => isSectionVisible(s, report));
+  }
+
   function currentDocumentType() {
     return documentTypeOf(currentReport, currentJob);
   }
@@ -1257,7 +1288,7 @@
     const schema = currentSchema();
     const utils = window.ReportSchemaUtils;
     if (!utils || !utils.reportValidationErrors) return [];
-    const errors = utils.reportValidationErrors(schema, currentReport.sections || {});
+    const errors = utils.reportValidationErrors(visibleSchema(schema, currentReport), currentReport.sections || {});
     return errors
       .map((error) => ({
         ...error,
@@ -1402,7 +1433,13 @@
     reportSectionList.innerHTML = '';
     let allRequiredGreen = true;
 
-    for (const section of currentSchema()) {
+    // Numbered by position among the sections actually on screen, not by the
+    // static number in the schema. With the action-plan sections hidden those
+    // numbers skip, and a list reading 1-8 then 11 looks like three sections
+    // went missing rather than three that were never needed.
+    let displayNumber = 0;
+    for (const section of visibleSchema(currentSchema(), currentReport)) {
+      displayNumber++;
       const values = currentReport.sections[section.id] || {};
       const status = computeSectionStatus(section, values);
       if (status !== 'green' && !section.softRequired) allRequiredGreen = false;
@@ -1412,7 +1449,7 @@
       li.innerHTML = `
         <span class="section-icon" style="background:${section.color}">${section.icon}</span>
         <span class="section-info">
-          <span class="section-name">${section.number}. ${escapeHtml(section.title)}</span>
+          <span class="section-name">${displayNumber}. ${escapeHtml(section.title)}</span>
         </span>
         <span class="section-status ${status === 'green' ? 'status-dot-green' : 'status-dot-yellow'}">
           ${status === 'green' ? '✓' : '✎'}
@@ -3933,9 +3970,13 @@
       <h1>${escapeHtml(reportTitleFor(job && job.jobType, report))}</h1>
       <p>${standardLine}<br>${escapeHtml(job ? job.address : '')}</p>`;
 
-    for (const section of schemaFor(job && job.jobType, report)) {
+    // Same running number as the on-screen list: a printed report must not
+    // number its sections 1-8 then 11 because two were never needed.
+    let printNumber = 0;
+    for (const section of visibleSchema(schemaFor(job && job.jobType, report), report)) {
+      printNumber++;
       const values = report.sections[section.id] || {};
-      html += `<div class="section"><div class="section-head" style="background:${section.color}"><h2>${section.number}. ${escapeHtml(section.title)}</h2></div>`;
+      html += `<div class="section"><div class="section-head" style="background:${section.color}"><h2>${printNumber}. ${escapeHtml(section.title)}</h2></div>`;
 
       if (section.id === 'summary') {
         html += isPestTreatment

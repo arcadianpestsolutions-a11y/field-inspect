@@ -3097,6 +3097,93 @@
     assert(!filed || !filed.length, 'an unticked proposal files nothing');
   });
 
+  // ---------- The action-plan half of an inspection ----------
+  // A timber pest inspection on a property whose management system is fine
+  // should end cleanly. One where it is absent, inadequate or failed carries
+  // a proposal. The answer in Findings decides which, and the sections are
+  // hidden rather than merely optional — a blank proposal in the list reads
+  // as work somebody forgot to do.
+
+  test('Inspection: the action plan stays out of the way until it is needed', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'No works needed', jobType: 'termite' });
+    await win.DB.saveReport({
+      jobId: job.id, documentType: 'timber_pest_inspection', finalizedAt: null,
+      sections: { findings: { managementSystemStatus: 'Adequate — no further works proposed' } },
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+
+    const titles = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .map((el) => el.textContent.replace(/\s+/g, ' ').trim());
+    assert(!titles.some((t) => /Proposed Termite Management/.test(t)),
+      'an adequate system means no proposal section');
+    assert(!titles.some((t) => /Warranty & Ongoing/.test(t)),
+      'and no warranty section either');
+
+    // The numbering must not give away that something was skipped.
+    const numbers = titles.map((t) => parseInt((t.match(/(\d+)\./) || [])[1], 10)).filter(Number.isFinite);
+    assertEqual(numbers.join(','), numbers.map((_, i) => i + 1).join(','),
+      `sections are numbered 1..n with no gaps: ${numbers.join(',')}`);
+  });
+
+  test('Inspection: saying the system is inadequate opens the proposal', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'Works needed', jobType: 'termite' });
+    await win.DB.saveReport({
+      jobId: job.id, documentType: 'timber_pest_inspection', finalizedAt: null,
+      sections: { findings: { managementSystemStatus: 'Present but inadequate — management plan proposed' } },
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+
+    const titles = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .map((el) => el.textContent.replace(/\s+/g, ' ').trim());
+    assert(titles.some((t) => /Proposed Termite Management/.test(t)), 'the proposal section appears');
+    assert(titles.some((t) => /Warranty & Ongoing/.test(t)), 'as does the warranty section');
+
+    const numbers = titles.map((t) => parseInt((t.match(/(\d+)\./) || [])[1], 10)).filter(Number.isFinite);
+    assertEqual(numbers.join(','), numbers.map((_, i) => i + 1).join(','),
+      'still numbered without gaps');
+  });
+
+  test('Inspection: an unanswered gate hides the proposal rather than showing it blank', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'Gate unanswered', jobType: 'termite' });
+    await win.DB.saveReport({
+      jobId: job.id, documentType: 'timber_pest_inspection', sections: {}, finalizedAt: null,
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+
+    const titles = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .map((el) => el.textContent);
+    assert(!titles.some((t) => /Proposed Termite Management/.test(t)),
+      'before the question is answered there is no proposal to show');
+  });
+
+  test('Inspection: the proposal has its own sketch, separate from the findings mud map', () => {
+    // Two different drawings. The site sketch marks what was FOUND; the works
+    // sketch marks what is PROPOSED — treated zone, drill lines, station
+    // positions. Sharing one would mean drawing the proposal over the
+    // findings.
+    const win = frame.contentWindow;
+    const siteSketch = win.REPORT_SCHEMA.find((s) => s.id === 'siteSketch');
+    const works = win.REPORT_SCHEMA.find((s) => s.id === 'proposedWorks');
+    assert(siteSketch && siteSketch.fields.some((f) => f.id === 'sketchImage'),
+      'the inspection keeps its own mud map');
+    assert(works && works.fields.some((f) => f.id === 'worksSketch' && f.type === 'sketch'),
+      'and the proposal has a sketch of its own');
+    assert(works.showIf && works.showIf.section === 'findings',
+      'the proposal is gated on an answer given back in Findings');
+  });
+
   // ---------- Booking a monitoring visit ----------
   // Termite work is several documents off one job type: an inspection and a
   // monitoring station visit are both 'termite'. The job type alone cannot
