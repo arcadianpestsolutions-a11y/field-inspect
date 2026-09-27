@@ -18,9 +18,17 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
+
+// See the note in send-report-email: a non-null assertion on an env var
+// checks nothing at runtime, so an unset secret fails wherever it is first
+// touched rather than where it can be explained.
+function missingSecrets(): string[] {
+  return Object.entries({ RESEND_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY })
+    .filter(([, v]) => !v).map(([k]) => k);
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -37,6 +45,10 @@ function json(body: unknown, status = 200) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS_HEADERS });
+  const missing = missingSecrets();
+  if (missing.length) {
+    return json({ error: `Not configured — these secrets are not set: ${missing.join(', ')}` }, 500);
+  }
 
   try {
     const authHeader = req.headers.get('Authorization') || '';

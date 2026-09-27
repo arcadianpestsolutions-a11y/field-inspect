@@ -17,10 +17,21 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const RESEND_FROM_ADDRESS = Deno.env.get('RESEND_FROM_ADDRESS')!;
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
+const RESEND_FROM_ADDRESS = Deno.env.get('RESEND_FROM_ADDRESS') || '';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
+
+// A non-null assertion checks nothing at runtime — it only quiets the
+// compiler. Reading these as "string or empty" and naming what is missing
+// turns an unset secret from a null dereference deep inside the send into a
+// sentence saying which secret to set. RESEND_API_KEY and RESEND_FROM_ADDRESS
+// were both unset on this project for months, and this function reported it
+// as an opaque failure every time.
+function missingSecrets(): string[] {
+  return Object.entries({ RESEND_API_KEY, RESEND_FROM_ADDRESS, SUPABASE_URL, SUPABASE_ANON_KEY })
+    .filter(([, v]) => !v).map(([k]) => k);
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -40,6 +51,10 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  const missing = missingSecrets();
+  if (missing.length) {
+    return json({ error: `Not configured — these secrets are not set: ${missing.join(', ')}` }, 500);
+  }
 
   try {
     const authHeader = req.headers.get('Authorization') || '';
