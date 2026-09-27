@@ -209,23 +209,23 @@ const REPORT_SCHEMA = [
     color: '#154a8a',
     fields: [
       { id: 'findingsPhotos', label: 'Findings Photos', type: 'photos', triggersAiFill: true },
-      { id: 'liveTermitesFound', label: 'Were live termites found at the time of the inspection?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'liveTermitesFound', label: 'Were live termites found at the time of the inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'termiteSpecies', label: 'Termite species (genus/species), if determinable', type: 'text', showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'riskOfAssociatedDamage', label: 'Potential for associated damage arising from this activity', type: 'select', options: ['Low', 'Moderate', 'High'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
-      { id: 'nestFound', label: 'Was a termite nest found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'nestFound', label: 'Was a termite nest found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'nestLocation', label: 'Nest Location(s)', type: 'textarea', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
       { id: 'nestPhotos', label: 'Nest Photos', type: 'photos', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
-      { id: 'workingsFound', label: 'Was evidence of termite workings or damage found?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'workingsFound', label: 'Was evidence of termite workings or damage found?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'workingsAreas', label: 'Areas where workings/damage were found', type: 'multiselect', options: ['The Exterior', 'The Interior', 'The Site', 'Landscaping Timbers', 'Trees', 'Subfloor', 'Roof Void'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'evidenceDetails', label: 'Details of the nature of the evidence found', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'damagePhotos', label: 'Damage Photos', type: 'photos', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'damageSeverity', label: 'Damage appears to be', type: 'select', options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'findingsAdditionalComments', label: 'Additional Comments', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
-      { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'treatmentComments', label: 'Treatment Comments', type: 'textarea', showIf: { field: 'treatmentRecommended', equals: 'Yes' }, aiFillable: true },
-      { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'existingManagementSystem', label: 'Existing termite management system present, type & condition', type: 'textarea', aiFillable: true },
-      { id: 'durableNoticeFound', label: 'Was a durable Notice found at the time of this inspection?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'durableNoticeFound', label: 'Was a durable Notice found at the time of this inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       // A durable notice or treatment sticker (commonly in the meter box or
       // subfloor) is evidence, not just a checkbox — the photo is what a
       // client or a later inspector actually needs to see.
@@ -236,7 +236,7 @@ const REPORT_SCHEMA = [
       // were reachable only through the free-text note below, which meant a
       // borer inspection could be skipped entirely without the completion
       // gate ever showing the section as incomplete.
-      { id: 'borersFound', label: 'Was evidence of borers of seasoned timber found?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'borersFound', label: 'Was evidence of borers of seasoned timber found?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       {
         id: 'borerType', label: 'Borer type, if determinable', type: 'select',
         options: ['Lyctid (powderpost) borer', 'Anobium (furniture) borer', 'Queensland pine beetle',
@@ -261,7 +261,7 @@ const REPORT_SCHEMA = [
       { id: 'borerPhotos', label: 'Borer Damage Photos', type: 'photos', showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true },
       { id: 'otherTimberPestsObserved', label: 'Evidence of other timber pests observed (e.g. drywood termites) — outside the scope of this Standard but noted as a duty to warn', type: 'textarea', aiFillable: true },
       { id: 'reinspectionInterval', label: 'A full inspection and written report should be conducted at this property every', type: 'select', options: ['3 months', '6 months', '12 months'], default: '12 months' },
-      { id: 'susceptibility', label: 'In our opinion, the susceptibility of this property to termites is considered to be', type: 'select', required: true, options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true },
+      { id: 'susceptibility', label: 'In our opinion, the susceptibility of this property to termites is considered to be', type: 'select', required: true, options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true, confirmBeforeUse: true },
     ],
   },
   {

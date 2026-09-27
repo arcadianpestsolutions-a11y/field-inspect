@@ -117,6 +117,24 @@
     });
   }
 
+  // Splits a data URL into the shape the Edge Function wants.
+  //
+  // Throws rather than substituting an empty string, which is what the three
+  // photo call sites below used to do. An empty base64 travels all the way to
+  // Anthropic and comes back as "image cannot be empty" — a 400 naming
+  // nothing the technician can act on and nothing a developer can locate. It
+  // only happens when a blob is not really an image, which is a bug worth
+  // surfacing where it occurs rather than three layers downstream.
+  function imagePart(dataUrl) {
+    const text = String(dataUrl || '');
+    const match = /^data:(image\/\w+);base64,(.+)$/.exec(text);
+    if (!match) {
+      throw new Error('That photo is not in a format the AI can read '
+        + `(${text.slice(0, 24) || 'empty'}…). Try retaking it.`);
+    }
+    return { mediaType: match[1], base64: match[2] };
+  }
+
   // Builds the compact field-schema description the Edge Function's prompt
   // needs, straight from the single source of truth in report-schema.js (or
   // pest-treatment-schema.js for jobType 'pest_treatment') — never
@@ -319,8 +337,7 @@
     if (!usable.length) throw new Error('No photo to identify.');
     const images = await Promise.all(usable.map(async (blob) => {
       const dataUrl = await blobToDataUrl(blob);
-      const match = /^data:(image\/\w+);base64,(.+)$/.exec(dataUrl);
-      return { mediaType: match ? match[1] : 'image/jpeg', base64: match ? match[2] : '' };
+      return imagePart(dataUrl);
     }));
     return invoke({ action: 'identify-pest', images, targetPestOptions: targetPestOptions || [] });
   }
@@ -335,8 +352,7 @@
     if (!usable.length) throw new Error('No photo to identify.');
     const images = await Promise.all(usable.map(async (blob) => {
       const dataUrl = await blobToDataUrl(blob);
-      const match = /^data:(image\/\w+);base64,(.+)$/.exec(dataUrl);
-      return { mediaType: match ? match[1] : 'image/jpeg', base64: match ? match[2] : '' };
+      return imagePart(dataUrl);
     }));
     return invoke({ action: 'identify-tree', images });
   }
@@ -354,8 +370,7 @@
     if (!usable.length) return { assignments: [] };
     const images = await Promise.all(usable.map(async (blob) => {
       const dataUrl = await blobToDataUrl(blob);
-      const match = /^data:(image\/\w+);base64,(.+)$/.exec(dataUrl);
-      return { mediaType: match ? match[1] : 'image/jpeg', base64: match ? match[2] : '' };
+      return imagePart(dataUrl);
     }));
     return invoke({ action: 'sort-photos', images, targets: targets || [] });
   }

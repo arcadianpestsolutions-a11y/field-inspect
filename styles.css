@@ -2266,3 +2266,36 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   border-color: #6b5608;
 }
 .comms-row.opted-out .comms-state { color: #ffe9a3; }
+
+/* ---------- AI suggestion that has NOT been applied ----------
+   For the fields that assert something about the property — live termites
+   found, evidence of workings, susceptibility, treatment recommended. The
+   blind trial in ai-trial/FINDINGS.md is the reason these are offered rather
+   than filled in: on photographs of rot the model answered "yes" to termite
+   workings about a quarter of the time, with confident reasoning attached.
+   Amber, not green: this is a caution, not a result. */
+.ai-offer {
+  margin: 6px 0 2px;
+  padding: 10px 12px;
+  background: rgba(255, 176, 32, 0.07);
+  border: 1px dashed #8a5a00;
+  border-left-width: 3px;
+  border-radius: 10px;
+}
+.ai-offer-text {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.ai-offer-text strong { color: #ffb627; }
+.ai-offer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ai-offer-accept {
+  padding: 8px 14px;
+  font-size: 0.8rem;
+}

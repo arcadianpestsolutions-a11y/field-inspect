@@ -2841,6 +2841,122 @@
     assert(rows.length === PAGE_ROWS * MAX_PAGES, 'and hands back what it did read');
   });
 
+  // ---------- AI suggestions that assert something ----------
+  // A blind trial of 110 reference photographs (ai-trial/FINDINGS.md) found
+  // the model reliable at naming an insect and unreliable at reading damage:
+  // on photographs of fungal and brown rot it answered "yes" to evidence of
+  // termite workings about a quarter of the time, then assigned a severity,
+  // a HIGH susceptibility and a recommendation to treat. These tests hold the
+  // line that came out of that: a claim about the property is offered, never
+  // filled in, so an unreviewed draft cannot finalize as though a human
+  // decided it.
+
+  test('Report: every field that asserts something about the property needs confirming', () => {
+    const win = frame.contentWindow;
+    const findings = win.REPORT_SCHEMA.find((s) => s.id === 'findings');
+    assert(findings, 'the termite schema has a findings section');
+
+    // The specific fields the trial showed the model getting wrong, plus the
+    // one it got right every time and still must not answer on its own.
+    for (const id of ['liveTermitesFound', 'workingsFound', 'nestFound', 'borersFound',
+      'treatmentRecommended', 'susceptibility']) {
+      const f = findings.fields.find((x) => x.id === id);
+      assert(f, `findings has ${id}`);
+      assert(f.confirmBeforeUse === true,
+        `${id} asserts something about the property and must be confirmed, not pre-filled`);
+    }
+
+    // Descriptive text is still pre-filled — the point is to save typing, and
+    // free text is read before it is signed. Gating everything would make the
+    // feature pointless.
+    const details = findings.fields.find((x) => x.id === 'evidenceDetails');
+    assert(details && !details.confirmBeforeUse,
+      'descriptive text stays pre-filled; only the assertions are gated');
+  });
+
+  test('Report: an AI answer about termite workings is offered, not filled in', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'AI offer test', address: '9 Gallery Rd' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: {},
+      finalizedAt: null,
+      // Exactly the shape the trial produced from a photograph of dry rot.
+      aiDraft: {
+        draftFields: { findings: { workingsFound: 'Yes', damageSeverity: 'Extensive' } },
+        fieldReasons: { findings: { workingsFound: 'Galleried, honeycombed timber consistent with termite workings.' } },
+        frameNotes: [],
+      },
+    });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => /findings/i.test(el.textContent));
+    assert(li, 'the findings section is listed');
+    li.click();
+    await wait(250);
+
+    const offer = doc.querySelector('.ai-offer[data-field="workingsFound"]');
+    assert(offer, 'the suggestion is shown as an offer');
+    assert(/would answer/i.test(offer.textContent),
+      `it is phrased as a proposal, not a result: ${offer.textContent.slice(0, 80)}`);
+    assert(/Galleried/i.test(offer.textContent), 'and it shows the reasoning so it can be checked');
+
+    // The answer itself must still be unanswered.
+    const row = offer.closest('.field-row');
+    const chosen = row.querySelector('.yesno-btn.active, .yesno-btn.selected');
+    assert(!chosen, 'no answer is selected until a human picks one');
+
+    // And the dependent fields stay out of sight, so the wrong paragraph that
+    // would have followed is never written either.
+    const severity = doc.querySelector('[data-field-id="damageSeverity"]') ||
+      Array.from(doc.querySelectorAll('.field-row')).find((r) => /Damage appears to be/i.test(r.textContent));
+    assert(!severity || severity.classList.contains('hidden'),
+      'damage severity stays hidden until the workings question is answered');
+  });
+
+  test('Report: accepting an AI answer fills it in; declining leaves it blank', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'AI accept test', address: '11 Gallery Rd' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: {},
+      finalizedAt: null,
+      aiDraft: {
+        draftFields: { findings: { workingsFound: 'Yes' } },
+        fieldReasons: { findings: {} },
+        frameNotes: [],
+      },
+    });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => /findings/i.test(el.textContent)).click();
+    await wait(250);
+
+    const offer = doc.querySelector('.ai-offer[data-field="workingsFound"]');
+    assert(offer, 'the offer is on screen');
+    const accept = offer.querySelector('.ai-offer-accept');
+    assert(accept && /Use "Yes"/.test(accept.textContent),
+      `the accept button names the answer it will set: ${accept && accept.textContent}`);
+
+    accept.click();
+    await wait(200);
+
+    assert(!doc.querySelector('.ai-offer[data-field="workingsFound"]'),
+      'once accepted, the offer is gone');
+    const row = Array.from(doc.querySelectorAll('.field-row'))
+      .find((r) => /evidence of termite workings/i.test(r.textContent));
+    assert(row, 'the workings question is still on screen');
+    assert(/Yes/.test(row.textContent), 'and now carries the accepted answer');
+  });
+
   // ---------- Automated client email ----------
   // Automated comms takes the technician out of the loop, so the wording has
   // to carry what the person would otherwise have known by looking: whether
@@ -3224,7 +3340,12 @@
 
     const ta = doc.querySelectorAll('#view-report-section textarea')[0];
     assertEqual(ta.value, '', 'declining must not leave the discarded draft visible');
-    assert(!(await win.DB.getSectionDraft(job.id, 'conducive')), 'and the draft itself must actually be gone, not just hidden');
+    // Polled, not assumed. Discarding the draft is a separate IndexedDB write
+    // that the click does not wait for, so a fixed wait() only passes while
+    // the machine is quick — this failed once on a busy run for exactly that
+    // reason and proved nothing when it did.
+    await waitFor(async () => !(await win.DB.getSectionDraft(job.id, 'conducive')),
+      'the declined draft must actually be gone, not just hidden');
   });
 
   test('Autosave: saving the section for real clears the draft behind it', async () => {

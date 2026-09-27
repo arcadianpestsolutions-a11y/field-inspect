@@ -186,6 +186,11 @@
   // survives to save time, which is the only point where it can be known
   // whether a suggestion was kept or corrected — see recordAiReview().
   let aiSuggestedValues = {};
+  // Suggestions for confirmBeforeUse fields: offered on screen, deliberately
+  // NOT written into pendingSectionValues until the technician accepts one.
+  // See applyDraftFieldsToPending for why these fields are treated differently
+  // from the rest.
+  let aiPendingSuggestions = {};
   let aiDraftInProgress = false;
   const objectUrls = [];
 
@@ -349,6 +354,7 @@
     // twice — a technician who saves, reopens and saves again has still
     // only been offered that suggestion once.
     aiSuggestedValues = {};
+    aiPendingSuggestions = {};
   }
 
   // Totals across every report on the device, for the readout in Saved
@@ -1488,6 +1494,28 @@
         (Array.isArray(current) && current.length === 0);
       const isUntouchedDefault = fieldDef && fieldDef.default !== undefined && current === fieldDef.default;
       if ((isEmpty || isUntouchedDefault) && suggestedValue !== undefined && suggestedValue !== null && suggestedValue !== '') {
+        // confirmBeforeUse fields are OFFERED, never filled in.
+        //
+        // A blind trial of 110 reference photographs (see ai-trial/FINDINGS.md)
+        // found the model excellent at naming an insect — 29 of 29, and it
+        // never once wrongly said live termites were found — and unreliable at
+        // reading damage: on photographs of fungal and brown rot it answered
+        // "yes" to evidence of termite workings roughly a quarter of the time,
+        // then went on to assign a damage severity, a HIGH susceptibility and
+        // a recommendation to treat, with fluent and entirely wrong reasoning
+        // attached.
+        //
+        // A pre-filled answer that nobody touches is indistinguishable, in the
+        // finished report, from one the technician decided. So for the fields
+        // that assert something about the property, the suggestion is shown
+        // and the value is left unset. Two things then follow for free: every
+        // dependent field stays hidden behind its showIf until the question is
+        // actually answered, and because these fields are all required,
+        // finalizing is already blocked until a human answers them.
+        if (fieldDef && fieldDef.confirmBeforeUse) {
+          aiPendingSuggestions[fieldId] = suggestedValue;
+          continue;
+        }
         pendingSectionValues[fieldId] = suggestedValue;
         aiAppliedFieldIds.add(fieldId);
         aiSuggestedValues[fieldId] = suggestedValue;
@@ -1672,6 +1700,7 @@
     // the moment the technician actually touches that field.
     aiAppliedFieldIds = new Set();
     aiSuggestedValues = {};
+    aiPendingSuggestions = {};
     const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
     applyDraftFieldsToPending(section, aiFieldsForSection);
 
@@ -1730,6 +1759,55 @@
       row.addEventListener('input', clearMark, { once: true });
       row.addEventListener('change', clearMark, { once: true });
       row.addEventListener('click', (e) => { if (e.target.closest('button, input[type="checkbox"]')) clearMark(); });
+    }
+
+    // An offered-but-unapplied suggestion, for the fields that assert
+    // something about the property. Shown as what the AI would answer and why,
+    // with the answer still blank until somebody agrees with it. Declining
+    // leaves the field empty rather than filling in the opposite — the AI
+    // being wrong about "yes" is not evidence for "no".
+    if (Object.prototype.hasOwnProperty.call(aiPendingSuggestions, field.id)) {
+      const suggested = aiPendingSuggestions[field.id];
+      const offer = document.createElement('div');
+      offer.className = 'ai-offer';
+      offer.setAttribute('data-field', field.id);
+
+      const reasons = (currentReport.aiDraft && currentReport.aiDraft.fieldReasons
+        && currentReport.aiDraft.fieldReasons[currentSectionId]) || {};
+      const why = reasons[field.id];
+
+      const text = document.createElement('p');
+      text.className = 'ai-offer-text';
+      text.innerHTML = `✨ AI would answer <strong>${escapeHtml(String(suggested))}</strong>`
+        + (why ? ` — ${escapeHtml(why)}` : '');
+      offer.appendChild(text);
+
+      const actions = document.createElement('div');
+      actions.className = 'ai-offer-actions';
+
+      const accept = document.createElement('button');
+      accept.type = 'button';
+      accept.className = 'btn btn-secondary ai-offer-accept';
+      accept.textContent = `Use "${String(suggested)}"`;
+      accept.addEventListener('click', () => {
+        pendingSectionValues[field.id] = suggested;
+        aiSuggestedValues[field.id] = suggested;   // so recordAiReview still scores it
+        delete aiPendingSuggestions[field.id];
+        renderCurrentSectionFields();
+      });
+
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.className = 'link-btn';
+      dismiss.textContent = 'Answer it myself';
+      dismiss.addEventListener('click', () => {
+        delete aiPendingSuggestions[field.id];
+        renderCurrentSectionFields();
+      });
+
+      actions.append(accept, dismiss);
+      offer.appendChild(actions);
+      row.appendChild(offer);
     }
 
     return row;
