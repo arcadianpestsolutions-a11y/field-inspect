@@ -169,6 +169,11 @@
       confirm: (msg, opts) => Promise.resolve(win.confirm(fullText(msg, opts))),
       prompt: (msg, def, opts) => Promise.resolve(win.prompt(fullText(msg, opts), def)),
       alert: (msg, opts) => Promise.resolve(win.alert(fullText(msg, opts))),
+      // Not doubled — passed straight through to the real one. There is no
+      // native window.* equivalent to delegate a photo-filing review to, and
+      // the thing worth asserting about it (a photograph, where it would go,
+      // and a tick the technician controls) only exists in the real modal.
+      photoFiling: (rows) => win.__realDialog.photoFiling(rows),
     };
   }
 
@@ -2029,9 +2034,22 @@
       'the cover/property photo fields are excluded as sort targets');
     assert(!sentTargets.some((t) => t.fieldId === 'treePhotos'), 'the specialized tree field is excluded as a sort target');
 
+    // Since v73 these are PROPOSED rather than filed — the trial found this
+    // path putting rot photographs into termite fields, so the routing is
+    // still what is being asserted here, it just has to be agreed to first.
     const report = await win.DB.getReport(job.id);
-    assertEqual((report.sections.access.obstructionPhotos || []).length, 1, 'the general-bucket photo lands in obstructionPhotos');
-    assertEqual((report.sections.conducive.conducivePhotos || []).length, 1, 'the unmatched capture lands in conducivePhotos');
+    assert(!(report.sections.access || {}).obstructionPhotos,
+      'nothing is filed without review');
+    assert(!(report.sections.conducive || {}).conducivePhotos,
+      'nothing is filed without review');
+
+    const pending = report.pendingPhotoFiling || [];
+    assertEqual(pending.length, 2, 'both photos are proposed');
+    assert(pending.some((p) => p.fieldId === 'obstructionPhotos'),
+      'the general-bucket photo is proposed for obstructionPhotos');
+    assert(pending.some((p) => p.fieldId === 'conducivePhotos'),
+      'the unmatched capture is proposed for conducivePhotos');
+    assert(pending.every((p) => p.label), 'each proposal names the field in words a technician reads');
   });
 
   // ---------- rendering ----------
@@ -3010,6 +3028,85 @@
     const saved = await win.DB.getReport(job.id);
     assertEqual(saved.aiReview.kept, 0, 'nothing was kept');
     assert(saved.aiReview.corrected >= 1, 'and the rejection was recorded');
+  });
+
+  test('Report: proposed photo filings wait for review instead of filing themselves', async () => {
+    // The trial put a mixed batch through this path and it filed two
+    // photographs of rotted timber into termite fields — one into Nest Photos,
+    // reasoned as a honeycomb nest structure that is not in the picture. v71
+    // stopped the model asserting findings in text; this is the same
+    // misreading arriving through the photo door.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'Photo filing test', address: '15 Gallery Rd' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      sections: {},
+      finalizedAt: null,
+      pendingPhotoFiling: [
+        { sourceId: 'p1', sectionId: 'findings', fieldId: 'nestPhotos', label: 'Nest Photos',
+          reason: 'A visible honeycomb-like nest structure is present beneath the damaged beam.' },
+      ],
+    });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+
+    const banner = doc.getElementById('photo-filing-banner');
+    assert(banner, 'the report says there are photos waiting to be filed');
+    assert(/waiting to be filed/i.test(banner.textContent),
+      `it is phrased as pending, not done: ${banner.textContent}`);
+
+    // Nothing has actually been filed.
+    const saved = await win.DB.getReport(job.id);
+    const filed = (saved.sections.findings || {}).nestPhotos;
+    assert(!filed || !filed.length, 'no photo is in the report until somebody says so');
+    assert(saved.pendingPhotoFiling && saved.pendingPhotoFiling.length === 1,
+      'and the proposal is still waiting');
+  });
+
+  test('Report: the filing review offers a photo with where it would go and why', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'Photo filing review', address: '17 Gallery Rd' });
+    await win.DB.saveReport({
+      jobId: job.id, sections: {}, finalizedAt: null,
+      pendingPhotoFiling: [
+        { sourceId: 'p1', sectionId: 'findings', fieldId: 'nestPhotos', label: 'Nest Photos',
+          reason: 'A visible honeycomb-like nest structure.' },
+      ],
+    });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    doc.getElementById('photo-filing-banner').querySelector('button').click();
+    await waitFor(() => !!doc.querySelector('.photo-filing-list'), 'the review opens');
+
+    const item = doc.querySelector('.photo-filing-item');
+    assert(item, 'each proposal gets a row');
+    assert(/Nest Photos/.test(item.textContent), 'the row names where it would go');
+    assert(/honeycomb/i.test(item.textContent), 'and shows the reasoning, so it can be checked');
+
+    const cb = item.querySelector('input[type="checkbox"]');
+    assert(cb && cb.checked, 'ticked by default — most proposals are right, and an unread review is worse than none');
+
+    // Untick it and file: nothing should be filed.
+    cb.checked = false;
+    const fileBtn = Array.from(doc.querySelectorAll('.app-dialog button'))
+      .find((b) => /file the ticked/i.test(b.textContent));
+    assert(fileBtn, 'there is a button to file the ticked ones');
+    fileBtn.click();
+
+    await waitFor(async () => {
+      const saved = await win.DB.getReport(job.id);
+      return saved && !saved.pendingPhotoFiling;
+    }, 'the decision is recorded so it stops asking');
+
+    const saved = await win.DB.getReport(job.id);
+    const filed = (saved.sections.findings || {}).nestPhotos;
+    assert(!filed || !filed.length, 'an unticked proposal files nothing');
   });
 
   // ---------- Automated client email ----------

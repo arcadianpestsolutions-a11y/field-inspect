@@ -512,6 +512,7 @@
       reportSubtitle.textContent = (job ? job.name : '')
         + (docType && docType.standard ? '  ·  ' + docType.standard : '');
       renderSectionList();
+      renderPhotoFilingBanner();
       updateAiDraftButton();
       hideAllAppViews();
       show(viewReport);
@@ -651,22 +652,45 @@
       const assignments = (result && result.assignments) || [];
       if (!assignments.length) return;
 
-      let changed = false;
+      // Proposed, not filed.
+      //
+      // The blind trial (ai-trial/FINDINGS.md) put a mixed batch through this
+      // exact path. It behaved well on the whole — every ant photograph and
+      // ten of twelve rot photographs were correctly left alone rather than
+      // forced into the nearest-sounding field — but it filed two photographs
+      // of rotted timber into termite fields, and one of those into NEST
+      // PHOTOS, reasoned as "a visible honeycomb-like nest structure". There
+      // is no nest. It is a rotted deck beam.
+      //
+      // v71 stopped the model asserting findings in the text fields for the
+      // same reason. Filing was left applying straight through, which meant
+      // the identical misreading still reached a client report through a
+      // different door: a photograph of rot sitting under "Nest Photos", with
+      // nobody having been asked.
+      const proposals = [];
       for (const a of assignments) {
         const photo = pool[a.photoIndex - 1];
         if (!photo) continue;
-        const section = { ...(report.sections[a.sectionId] || {}) };
-        const existing = Array.isArray(section[a.fieldId]) ? section[a.fieldId] : [];
-        const existingIds = new Set(existing.map((p) => p.sourceId).filter(Boolean));
-        if (existingIds.has(photo.sourceId)) continue;
-        section[a.fieldId] = [...existing, { id: DB.uid(), sourceId: photo.sourceId, blob: photo.blob }];
-        report.sections[a.sectionId] = section;
-        changed = true;
+        const target = targets.find((t) => t.sectionId === a.sectionId && t.fieldId === a.fieldId);
+        if (!target) continue;
+        const existing = Array.isArray((report.sections[a.sectionId] || {})[a.fieldId])
+          ? report.sections[a.sectionId][a.fieldId] : [];
+        if (existing.some((p) => p.sourceId === photo.sourceId)) continue;
+        proposals.push({
+          sourceId: photo.sourceId,
+          sectionId: a.sectionId,
+          fieldId: a.fieldId,
+          label: target.label,
+          reason: a.reasoning || a.reason || '',
+        });
       }
-      if (!changed) return;
+      if (!proposals.length) return;
+
+      report.pendingPhotoFiling = proposals;
       await DB.saveReport(report);
-      if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
-      toast(`AI sorted ${assignments.length} photo${assignments.length === 1 ? '' : 's'} into the right section${assignments.length === 1 ? '' : 's'}.`);
+      if (currentJobId === jobId) { currentReport = report; renderSectionList(); renderPhotoFilingBanner(); }
+      const n = proposals.length;
+      toast(`AI has suggested where ${n} photo${n === 1 ? '' : 's'} belong${n === 1 ? 's' : ''} — review before ${n === 1 ? 'it goes' : 'they go'} in.`);
     },
     documentTypesFor,
     documentTypeOf,
@@ -1254,6 +1278,94 @@
       });
     });
     return items;
+  }
+
+  // Resolves a proposal's sourceId back to its actual image. The proposal
+  // stores only the id, never the blob — duplicating photo bytes into the
+  // report for something that may well be declined is exactly the kind of
+  // waste that fills a phone up on a long day.
+  async function photoFilingPool(jobId, report) {
+    const pool = new Map();
+    for (const p of ((report.sections.clientDetails || {}).generalPhotos || [])) {
+      if (p.id && p.blob) pool.set(p.id, p.blob);
+    }
+    const captures = await DB.getCaptures(jobId).catch(() => []);
+    for (const c of captures) if (c.photoBlob) pool.set(c.id, c.photoBlob);
+    return pool;
+  }
+
+  // A banner on the report view when the AI has proposed filings nobody has
+  // looked at. Built here rather than in index.html for the reason
+  // renderJobPermissions gives: a stale cached shell must not be able to hide
+  // the one control that stops a wrong photograph reaching a client.
+  function renderPhotoFilingBanner() {
+    const existing = document.getElementById('photo-filing-banner');
+    if (existing) existing.remove();
+    const pending = (currentReport && currentReport.pendingPhotoFiling) || [];
+    if (!pending.length) return;
+
+    const bar = document.createElement('div');
+    bar.id = 'photo-filing-banner';
+    bar.className = 'photo-filing-banner';
+
+    const text = document.createElement('span');
+    const n = pending.length;
+    text.className = 'photo-filing-text';
+    text.textContent = `${n} photo${n === 1 ? '' : 's'} waiting to be filed — the AI has suggested where `
+      + `${n === 1 ? 'it belongs' : 'they belong'}.`;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-secondary';
+    btn.textContent = 'Review';
+    btn.addEventListener('click', () => openPhotoFilingReview());
+
+    bar.append(text, btn);
+    reportSectionList.parentNode.insertBefore(bar, reportSectionList);
+  }
+
+  // One row per proposal: the photograph, where it would go, and why. Nothing
+  // is filed until somebody says so, and declining leaves the photo exactly
+  // where it already is rather than moving it somewhere else.
+  async function openPhotoFilingReview() {
+    const pending = (currentReport && currentReport.pendingPhotoFiling) || [];
+    if (!pending.length) return;
+    const pool = await photoFilingPool(currentReport.jobId, currentReport);
+
+    const rows = pending.map((p) => {
+      const blob = pool.get(p.sourceId);
+      return {
+        proposal: p,
+        thumb: blob ? trackUrl(URL.createObjectURL(blob)) : null,
+      };
+    });
+
+    const accepted = await window.Dialog.photoFiling(rows);
+    if (!accepted) return;   // dismissed entirely — proposals stay for next time
+
+    const keep = new Set(accepted);
+    let filed = 0;
+    for (const p of pending) {
+      if (!keep.has(p.sourceId)) continue;
+      const blob = pool.get(p.sourceId);
+      if (!blob) continue;
+      const section = { ...(currentReport.sections[p.sectionId] || {}) };
+      const existing = Array.isArray(section[p.fieldId]) ? section[p.fieldId] : [];
+      if (existing.some((x) => x.sourceId === p.sourceId)) continue;
+      section[p.fieldId] = [...existing, { id: DB.uid(), sourceId: p.sourceId, blob }];
+      currentReport.sections[p.sectionId] = section;
+      filed++;
+    }
+    // Every proposal has now been decided one way or the other, so none of
+    // them should come back and ask again.
+    delete currentReport.pendingPhotoFiling;
+    await DB.saveReport(currentReport);
+    renderSectionList();
+    renderPhotoFilingBanner();
+    const skipped = pending.length - filed;
+    toast(filed
+      ? `Filed ${filed} photo${filed === 1 ? '' : 's'}${skipped ? `, left ${skipped} where ${skipped === 1 ? 'it was' : 'they were'}` : ''}.`
+      : 'Nothing filed — the photos are still where they were.');
   }
 
   function renderSectionList() {

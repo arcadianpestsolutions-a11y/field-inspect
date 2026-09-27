@@ -182,5 +182,79 @@
     });
   }
 
-  window.Dialog = { confirm, prompt, alert };
+  // Review of AI-proposed photo filings. Each row shows the photograph, where
+  // it would be filed and why, with a tick the technician controls.
+  //
+  // Everything starts TICKED. The measured behaviour is that most proposals
+  // are right — in the trial, ten of twelve rot photographs were correctly
+  // left alone and every ant photograph too — so making someone tick twenty
+  // correct rows to catch one wrong one would get the whole review dismissed
+  // unread, which is worse than not having it. The job here is to make the
+  // wrong one easy to SEE and one tap to remove.
+  //
+  // Resolves to an array of accepted sourceIds, or null if dismissed without
+  // a decision, in which case the proposals are left for next time.
+  function photoFiling(rows) {
+    return new Promise((resolve) => {
+      const { overlay, card } = buildOverlay();
+
+      const h = document.createElement('h2');
+      h.textContent = rows.length === 1 ? 'File this photo?' : `File these ${rows.length} photos?`;
+      card.appendChild(h);
+
+      addMessage(card, 'The AI has suggested where each of these belongs. Untick anything '
+        + 'that looks wrong — it stays where it is now.');
+
+      const list = document.createElement('div');
+      list.className = 'photo-filing-list';
+
+      const checkboxes = [];
+      rows.forEach((row, i) => {
+        const item = document.createElement('label');
+        item.className = 'photo-filing-item';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.id = `photo-filing-${i}`;
+        checkboxes.push({ cb, sourceId: row.proposal.sourceId });
+
+        const img = document.createElement('img');
+        img.className = 'photo-filing-thumb';
+        img.alt = '';
+        if (row.thumb) img.src = row.thumb;
+
+        const text = document.createElement('span');
+        text.className = 'photo-filing-detail';
+        const dest = document.createElement('strong');
+        dest.textContent = row.proposal.label;
+        text.appendChild(dest);
+        if (row.proposal.reason) {
+          const why = document.createElement('span');
+          why.className = 'photo-filing-reason';
+          why.textContent = row.proposal.reason;
+          text.appendChild(why);
+        }
+
+        item.append(cb, img, text);
+        list.appendChild(item);
+      });
+      card.appendChild(list);
+
+      const actionRow = addButtonRow(card);
+      const cancelBtn = makeButton('Not now', 'btn-secondary');
+      const okBtn = makeButton('File the ticked ones', 'btn-primary');
+      actionRow.appendChild(cancelBtn);
+      actionRow.appendChild(okBtn);
+
+      const finish = (value) => { dismiss(); resolve(value); };
+      const dismiss = present(overlay, { onCancel: () => finish(null), initialFocus: okBtn });
+      cancelBtn.addEventListener('click', () => finish(null));
+      okBtn.addEventListener('click', () => {
+        finish(checkboxes.filter((c) => c.cb.checked).map((c) => c.sourceId));
+      });
+    });
+  }
+
+  window.Dialog = { confirm, prompt, alert, photoFiling };
 })();
