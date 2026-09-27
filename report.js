@@ -63,14 +63,15 @@
       jobTypes: ['termite'],
       schema: () => window.TERMITE_CERTIFICATE_SCHEMA,
     },
-    termite_service_record: {
-      id: 'termite_service_record',
-      title: 'Termite Management Plan Service Record',
-      short: 'Service Record',
+    termite_monitoring: {
+      id: 'termite_monitoring',
+      title: 'Termite Monitoring Station Report',
+      short: 'Monitoring',
       standard: 'AS 3660.2-2017',
-      blurb: 'A periodic visit to an installed system — this is what keeps the warranty alive.',
+      blurb: 'A periodic visit to the stations — what was in each one, what was replenished, '
+        + 'and what keeps the warranty alive.',
       jobTypes: ['termite'],
-      schema: () => window.TERMITE_SERVICE_RECORD_SCHEMA,
+      schema: () => window.TERMITE_MONITORING_SCHEMA,
     },
     general_pest: {
       id: 'general_pest',
@@ -83,7 +84,18 @@
     },
   };
 
-  function defaultDocumentType(jobType) {
+  // Takes the whole job, not just its type, so the choice made at New Job
+  // carries through. A job booked as a monitoring visit should open a
+  // monitoring report without anyone having to pick it a second time on the
+  // job screen — that picker is for changing your mind, not for stating the
+  // obvious twice.
+  function defaultDocumentType(job) {
+    const jobType = job && typeof job === 'object' ? job.jobType : job;
+    const preferred = job && typeof job === 'object' ? job.preferredDocumentType : null;
+    if (preferred && DOCUMENT_TYPES[preferred]
+      && DOCUMENT_TYPES[preferred].jobTypes.includes(jobType === 'pest_treatment' ? 'pest_treatment' : 'termite')) {
+      return preferred;
+    }
     return jobType === 'pest_treatment' ? 'general_pest' : 'timber_pest_inspection';
   }
 
@@ -95,10 +107,19 @@
   // The document type lives on the report, not the job: one property can need
   // an inspection this year and a service record next, and the job record
   // should not have to be recreated to say so.
+  // Document type ids that were renamed. A report stamped with the old id was
+  // answered against the same questions and must keep opening — silently
+  // falling back to the default would hand somebody a Timber Pest Inspection
+  // where they had written a monitoring visit.
+  const LEGACY_DOCUMENT_TYPE_IDS = {
+    termite_service_record: 'termite_monitoring',
+  };
+
   function documentTypeOf(report, job) {
     const stamped = report && report.documentType;
-    if (stamped && DOCUMENT_TYPES[stamped]) return DOCUMENT_TYPES[stamped];
-    return DOCUMENT_TYPES[defaultDocumentType(job && job.jobType)];
+    const resolved = LEGACY_DOCUMENT_TYPE_IDS[stamped] || stamped;
+    if (resolved && DOCUMENT_TYPES[resolved]) return DOCUMENT_TYPES[resolved];
+    return DOCUMENT_TYPES[defaultDocumentType(job)];
   }
 
   function schemaFor(jobType, report) {
@@ -447,7 +468,7 @@
     const job = await DB.getJob(jobId);
     const documentType = (wantedDocumentType && DOCUMENT_TYPES[wantedDocumentType])
       ? wantedDocumentType
-      : defaultDocumentType(job && job.jobType);
+      : defaultDocumentType(job);
     const sections = {};
     for (const section of schemaFor(job && job.jobType, { documentType })) {
       sections[section.id] = defaultValuesForSection(section);

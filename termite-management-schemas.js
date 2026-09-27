@@ -333,10 +333,10 @@
   // The periodic visit to an installed system. Highest volume of the three
   // (104 submissions), and the one that keeps a warranty alive — a missed
   // service is what voids it.
-  const TERMITE_SERVICE_RECORD_SCHEMA = [
-    clientSection(1, 'Client & Property', 'The property and the system being serviced.'),
+  const TERMITE_MONITORING_SCHEMA = [
+    clientSection(1, 'Client & Property', 'The property and the monitoring system installed on it.'),
     {
-      id: 'systemServiced', number: 2, title: 'System Being Serviced',
+      id: 'systemServiced', number: 2, title: 'The System Being Monitored',
       subtitle: 'What is installed here and when it went in.',
       icon: '🧱', color: '#0369a1',
       fields: [
@@ -346,13 +346,13 @@
             'Physical barrier', 'Combination — see notes'],
         },
         { id: 'installedDate', label: 'Date system installed', type: 'date' },
-        { id: 'serviceNumber', label: 'Which service visit is this? (e.g. 4th)', type: 'text' },
-        { id: 'lastServiceDate', label: 'Date of previous service', type: 'date' },
+        { id: 'serviceNumber', label: 'Which monitoring visit is this? (e.g. 4th)', type: 'text' },
+        { id: 'lastServiceDate', label: 'Date of previous visit', type: 'date' },
       ],
     },
     {
-      id: 'stations', number: 3, title: 'Stations & System Condition',
-      subtitle: 'Every station inspected this visit, and what was in it.',
+      id: 'stations', number: 3, title: 'The Stations',
+      subtitle: 'Every station checked this visit, and what was in it. This is the report.',
       icon: '📍', color: '#7c2d12',
       fields: [
         // The repeatable station record is the heart of this document — a
@@ -376,10 +376,10 @@
     },
     {
       id: 'findings', number: 4, title: 'Activity Found',
-      subtitle: 'What the visit turned up.',
+      subtitle: 'What the stations and the structure turned up this visit.',
       icon: '🔍', color: '#b45309',
       fields: [
-        { id: 'servicePhotos', label: 'Photos from this service', type: 'photos', triggersAiFill: true },
+        { id: 'servicePhotos', label: 'Photos from this visit', type: 'photos', triggersAiFill: true },
         {
           id: 'activityFound', label: 'Termite activity found in any station?', type: 'yesno',
           required: true, aiFillable: true,
@@ -403,8 +403,8 @@
       ],
     },
     {
-      id: 'recommendations', number: 5, title: 'Recommendations & Next Service',
-      subtitle: 'What the client should do, and when you are back.',
+      id: 'recommendations', number: 5, title: 'Recommendations & Next Visit',
+      subtitle: 'What the client should do, and when you are next due.',
       icon: '📝', color: '#166534',
       fields: [
         {
@@ -417,16 +417,16 @@
         {
           id: 'warrantyStatus', label: 'Warranty status', type: 'select', required: true,
           options: ['Current — maintained by this service', 'At risk — client actions outstanding',
-            'Lapsed — service overdue'],
+            'Lapsed — monitoring overdue'],
           default: 'Current — maintained by this service',
         },
-        { id: 'nextServiceDue', label: 'Next service due', type: 'date', required: true },
+        { id: 'nextServiceDue', label: 'Next monitoring visit due', type: 'date', required: true },
         { id: 'serviceNotes', label: 'Notes', type: 'textarea', aiFillable: true },
       ],
     },
     {
       id: 'terms', number: 6, title: 'Terms & Conditions',
-      subtitle: 'Terms applying to this service.', icon: '📖', color: '#475569', fixed: true, fields: [],
+      subtitle: 'Terms applying to this monitoring visit.', icon: '📖', color: '#475569', fixed: true, fields: [],
     },
     inspectorSection(7),
     {
@@ -443,5 +443,9 @@
 
   window.TERMITE_ACTION_PLAN_SCHEMA = TERMITE_ACTION_PLAN_SCHEMA;
   window.TERMITE_CERTIFICATE_SCHEMA = TERMITE_CERTIFICATE_SCHEMA;
-  window.TERMITE_SERVICE_RECORD_SCHEMA = TERMITE_SERVICE_RECORD_SCHEMA;
+  window.TERMITE_MONITORING_SCHEMA = TERMITE_MONITORING_SCHEMA;
+  // Old name kept pointing at the same schema: a report stamped
+  // 'termite_service_record' resolves to the monitoring type now, and this
+  // stops anything else that reached for the old global getting undefined.
+  window.TERMITE_SERVICE_RECORD_SCHEMA = TERMITE_MONITORING_SCHEMA;
 })();

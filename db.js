@@ -119,7 +119,7 @@ const DB = {
   JOB_STATUS_LABELS,
 
   // ---------- Jobs ----------
-  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, recurringFromId, scheduledAt, scheduledDurationMins, recurrenceMonths }) {
+  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, preferredDocumentType, recurringFromId, scheduledAt, scheduledDurationMins, recurrenceMonths }) {
     const store = await tx('jobs', 'readwrite');
     const now = Date.now();
     const job = {
@@ -130,6 +130,13 @@ const DB = {
       // which report schema report.js uses for this job. Never changed
       // after creation, so it's safe for report.js to treat it as fixed.
       jobType: jobType === 'pest_treatment' ? 'pest_treatment' : 'termite',
+      // Which document this job was booked to produce, chosen at New Job.
+      // Termite work is several different documents off the same job type —
+      // an inspection and a monitoring visit are both 'termite' — so this is
+      // what lets the report open as the right one without being picked a
+      // second time. A preference, not a lock: the document picker on the job
+      // screen still changes it.
+      preferredDocumentType: preferredDocumentType || '',
       address: address || '',
       // Geocoded once at address-selection time (see app.js's Nominatim
       // suggestion handler) so the aerial mud-map backdrop never needs a

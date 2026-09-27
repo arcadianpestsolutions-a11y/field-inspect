@@ -274,6 +274,8 @@
       // Edge Function and are deliberately never pushed from here, or a
       // stale device could clear one and cause a second email.
       row.comms_opt_out = !!job.commsOptOut;
+      // Migration 021.
+      row.preferred_document_type = job.preferredDocumentType || '';
     }
     return row;
   }
@@ -299,6 +301,7 @@
       reinspectionIntervalMonths: rj.reinspection_interval_months || null,
       recurrenceMonths: rj.recurrence_months || null,
       commsOptOut: !!rj.comms_opt_out,
+      preferredDocumentType: rj.preferred_document_type || '',
       // Only ever written server-side, by send-due-reminders — the app
       // itself never sets this locally, it only reads it back to decide
       // whether an overdue job in the backlog has already had its email

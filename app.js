@@ -920,9 +920,10 @@
     if (schedTime) schedTime.value = '09:00';
     selectedAddressCoords = null;
     selectedJobType = 'termite';
+    selectedDocType = 'timber_pest_inspection';
     if (jobTypePicker) {
       jobTypePicker.querySelectorAll('.job-type-chip').forEach((chip) => {
-        chip.classList.toggle('active', chip.dataset.jobType === 'termite');
+        chip.classList.toggle('active', chip.dataset.docType === selectedDocType);
       });
     }
     hideAddressSuggestions();
@@ -984,6 +985,7 @@
     const job = await DB.addJob({
       name,
       jobType: selectedJobType,
+      preferredDocumentType: selectedDocType,
       address: jobAddressInput.value.trim(),
       addressLat: selectedAddressCoords ? selectedAddressCoords.lat : null,
       addressLng: selectedAddressCoords ? selectedAddressCoords.lng : null,
@@ -1050,11 +1052,16 @@
   // application). Defaults to termite (matches the chip marked "active" in
   // the HTML) and resets to that default each time the form is opened.
   let selectedJobType = 'termite';
+  // Which document the job is being booked to produce. Two chips are both
+  // termite jobs — an inspection and a monitoring visit — so the chip's
+  // document type, not its job type, is what identifies it.
+  let selectedDocType = 'timber_pest_inspection';
   if (jobTypePicker) {
     jobTypePicker.addEventListener('click', (e) => {
       const btn = e.target.closest('.job-type-chip');
       if (!btn) return;
       selectedJobType = btn.dataset.jobType;
+      selectedDocType = btn.dataset.docType || '';
       jobTypePicker.querySelectorAll('.job-type-chip').forEach((chip) => {
         chip.classList.toggle('active', chip === btn);
       });

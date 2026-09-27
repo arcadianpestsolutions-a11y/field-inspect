@@ -109,7 +109,13 @@
     if (!job) return [];
     if (job.jobType === 'termite') {
       if (documentType === 'termite_certificate') return TERMITE_CERTIFICATE_CHECKLIST;
-      if (documentType === 'termite_service_record') return TERMITE_SERVICE_RECORD_CHECKLIST;
+      // Accepts the old id too: a job stamped before the rename must still get
+      // the right checklist rather than silently falling through to the
+      // full-inspection one, which asks for subfloor and roof-void shots that
+      // a monitoring visit never takes.
+      if (documentType === 'termite_monitoring' || documentType === 'termite_service_record') {
+        return TERMITE_SERVICE_RECORD_CHECKLIST;
+      }
       if (documentType === 'termite_action_plan') return [];
       return TERMITE_CHECKLIST;
     }

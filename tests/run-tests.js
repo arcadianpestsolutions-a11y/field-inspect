@@ -2452,7 +2452,7 @@
     const win = frame.contentWindow;
     const ids = win.ReportUI.documentTypesFor('termite').map((d) => d.id).sort();
     assertEqual(ids.join(','),
-      'termite_action_plan,termite_certificate,termite_service_record,timber_pest_inspection',
+      'termite_action_plan,termite_certificate,termite_monitoring,timber_pest_inspection',
       'all four termite documents are offered');
     const pest = win.ReportUI.documentTypesFor('pest_treatment').map((d) => d.id);
     assertEqual(pest.join(','), 'general_pest', 'a general pest job offers only its own document');
@@ -2491,7 +2491,7 @@
 
   test('Checklist: a service record asks about the stations being serviced, not what a fresh inspection found', () => {
     const win = frame.contentWindow;
-    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_service_record');
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_monitoring');
     assert(items.length > 1, 'a real checklist, not an empty one');
     assert(!items.some((i) => i.id === 'weepHoles'), 'this is a periodic visit to an existing system, not a fresh inspection');
     assert(items.every((i) => !i.schemaField || i.schemaField === 'servicePhotos'),
@@ -2622,28 +2622,28 @@
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'Doc Type Memory', jobType: 'termite' });
 
-    await win.ReportUI.openReview(job.id, 'termite_service_record');
+    await win.ReportUI.openReview(job.id, 'termite_monitoring');
     await wait(250);
     assertEqual(doc.getElementById('report-title').textContent,
-      'Termite Management Plan Service Record', 'the service record opens under its own title');
+      'Termite Monitoring Station Report', 'the monitoring report opens under its own title');
 
-    // Persist it, then reopen with no hint at all — it must still be a service
-    // record and not fall back to the inspection.
+    // Persist it, then reopen with no hint at all — it must still be a
+    // monitoring report and not fall back to the inspection.
     const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
-      .find((el) => /System Being Serviced/.test(el.textContent));
-    assert(li, 'the service record has its own sections');
+      .find((el) => /System Being Monitored/.test(el.textContent));
+    assert(li, 'the monitoring report has its own sections');
     li.click();
     await wait(250);
     doc.getElementById('section-save-btn').click();
     await wait(350);
 
     const saved = await win.DB.getReport(job.id);
-    assertEqual(saved.documentType, 'termite_service_record', 'the document type is stamped on the report');
+    assertEqual(saved.documentType, 'termite_monitoring', 'the document type is stamped on the report');
 
     await win.ReportUI.openReview(job.id);
     await wait(250);
     assertEqual(doc.getElementById('report-title').textContent,
-      'Termite Management Plan Service Record', 'reopening without a hint keeps the same document');
+      'Termite Monitoring Station Report', 'reopening without a hint keeps the same document');
   });
 
   test('Documents: a report written before document types still opens', async () => {
@@ -3095,6 +3095,65 @@
     const saved = await win.DB.getReport(job.id);
     const filed = (saved.sections.findings || {}).nestPhotos;
     assert(!filed || !filed.length, 'an unticked proposal files nothing');
+  });
+
+  // ---------- Booking a monitoring visit ----------
+  // Termite work is several documents off one job type: an inspection and a
+  // monitoring station visit are both 'termite'. The job type alone cannot
+  // say which report should open, so New Job asks and the answer travels.
+
+  test('New Job: booking a monitoring visit opens a monitoring report', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({
+      name: 'Station visit', jobType: 'termite',
+      preferredDocumentType: 'termite_monitoring',
+    });
+    assertEqual(job.preferredDocumentType, 'termite_monitoring', 'the choice is stored on the job');
+    assertEqual(win.ReportUI.documentTypeOf(null, job).id, 'termite_monitoring',
+      'and decides which document the job produces');
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    const title = frame.contentDocument.getElementById('report-title').textContent;
+    assert(/Monitoring Station/i.test(title),
+      `the report opens as a monitoring report without being picked again: ${title}`);
+  });
+
+  test('New Job: a plain termite job still opens the inspection', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Plain termite', jobType: 'termite' });
+    assertEqual(win.ReportUI.documentTypeOf(null, job).id, 'timber_pest_inspection',
+      'no preference means the inspection, as before');
+
+    // A preference that does not belong to this job type is ignored rather
+    // than obeyed — a general-pest document on a termite job would open a
+    // schema whose questions do not apply.
+    const crossed = await win.DB.addJob({
+      name: 'Crossed wires', jobType: 'termite', preferredDocumentType: 'general_pest',
+    });
+    assertEqual(win.ReportUI.documentTypeOf(null, crossed).id, 'timber_pest_inspection',
+      'a preference from the wrong job type is refused');
+  });
+
+  test('Reports stamped with the old service-record id still open correctly', async () => {
+    // Renaming a document type must not strand the reports already written
+    // against it. Falling back to the default would hand somebody a Timber
+    // Pest Inspection where they had answered a monitoring visit.
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Legacy stamp', jobType: 'termite' });
+    await win.DB.saveReport({
+      jobId: job.id, documentType: 'termite_service_record', sections: {}, finalizedAt: null,
+    });
+
+    const resolved = win.ReportUI.documentTypeOf({ documentType: 'termite_service_record' }, job);
+    assertEqual(resolved.id, 'termite_monitoring', 'the old id resolves to the renamed type');
+    assertEqual(resolved.title, 'Termite Monitoring Station Report', 'and to the right document');
+
+    // And the checklist must follow it, not fall through to the full
+    // inspection's subfloor-and-roof-void list.
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_service_record');
+    const monitoring = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_monitoring');
+    assertEqual(items.length, monitoring.length, 'the old id gets the monitoring checklist');
   });
 
   // ---------- Automated client email ----------
