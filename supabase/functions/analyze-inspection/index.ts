@@ -20,10 +20,20 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
-const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')!;
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
+
+// Same reasoning as the other functions: a non-null assertion checks nothing
+// at runtime, so an unset secret used to fail wherever it was first touched
+// rather than where it could be explained. OPENAI_API_KEY is left out of the
+// required set on purpose — it is only used for audio transcription, and a
+// photo-only draft works perfectly well without it.
+function missingSecrets(): string[] {
+  return Object.entries({ ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY })
+    .filter(([, v]) => !v).map(([k]) => k);
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -141,6 +151,15 @@ A single image usually answers several questions at once. A subfloor photograph 
 
 This applies especially to the yes/no findings. If the photographs show clear evidence relevant to a yes/no question, answer it. If they show the area plainly with no sign of the thing being asked about, that is also evidence and "No" may well be the right answer — say so. Only leave a field out when the photographs genuinely do not bear on it.
 
+DAMAGED TIMBER HAS MORE THAN ONE CAUSE, AND THEY LOOK ALIKE.
+Hollowed, galleried, flaking or crumbling timber is consistent with several different things that are routinely mistaken for one another:
+  - Termite workings — galleries running with the grain, packed with mud or soil, surface blistering, and often an intact paint or veneer skin left over the damage.
+  - Wood-boring beetles — small round or oval exit holes, roughly 1-3 mm, with fine powdery frass; damage concentrated in the sapwood.
+  - Fungal decay (wet rot, brown rot, dry rot) — timber cracked into cubes or splitting both along and across the grain, soft, crumbling or discoloured, with NO galleries, NO mud and NO exit holes, usually somewhere water has been sitting.
+Before answering any damage question, work out which of these the photograph actually distinguishes, and name the deciding feature in your reason. If the visible evidence does not separate them — and a single photograph of degraded timber very often does not — do not answer the termite questions from it. Leave them out and say why. Calling fungal decay termite damage is the most expensive mistake available here, and "consistent with termite workings" is not a finding when rot would look the same.
+
+Beetle damage is under-reported for the opposite reason: exit holes and frass are small and easy to pass over while looking for termite evidence. If a photograph shows them, answer the borer questions on it.
+
 WHAT YOU MUST NOT DO.
 Never invent specifics the images cannot support: termite species, product names, measured moisture percentages, timber types you cannot see, or the condition of an area that was not photographed. Absence of a photo is not evidence of absence — if no one photographed the roof void, say nothing about the roof void. Prefer leaving a field out to guessing at it. This is a DRAFT a licensed professional reviews, edits and confirms before it becomes a compliance document; a wrong confident answer costs them more time than a blank.
 
@@ -216,6 +235,8 @@ For each one give:
 - "confidence": "high", "medium", or "low" — be honest. A blurry, distant, or partially-obscured shot is low confidence no matter how common the pest looks.
 - "reasoning": one sentence naming the specific visible features that led to this identification (body shape, colouring, size relative to a visible reference, wing pattern, antennae, etc.) — the technician needs to be able to check your reading, not just trust it.
 ${targetPestOptions.length ? `- "matchedCategory": whichever of these categories this identification best fits — choose the single closest match, exactly as written: ${JSON.stringify(targetPestOptions)}. If genuinely none fit, use "Other".` : ''}
+
+YOU ARE IDENTIFYING AN INSECT, NOT READING DAMAGE. If the photograph shows only damaged, hollowed or rotted timber with no insect in it, return an empty identifications array. Damage is not an identification. Hollowed and galleried timber is caused by termites, by wood-boring beetles and by fungal decay alike, and a photograph of the damage alone does not separate them — answering "termite damage" to one is a guess wearing the clothes of an identification. Mud tubes and shelter tubes are the same trap: ants build them too.
 
 WHAT YOU MUST NOT DO. Never state species-level certainty a photograph cannot support. If the photo is too blurry, too distant, or too obscured to identify anything useful, say so in "reasoning" and use "low" confidence rather than inventing a specific answer. If you cannot identify anything at all in the photo(s) — no pest visible — return an empty identifications array rather than guessing at something.
 
@@ -486,6 +507,10 @@ Respond with ONLY a JSON object, no other text, no markdown fences:
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  const missing = missingSecrets();
+  if (missing.length) {
+    return json({ error: `Not configured — these secrets are not set: ${missing.join(', ')}` }, 500);
+  }
 
   try {
     const authHeader = req.headers.get('Authorization') || '';
