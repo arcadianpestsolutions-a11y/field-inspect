@@ -191,6 +191,9 @@
   // See applyDraftFieldsToPending for why these fields are treated differently
   // from the rest.
   let aiPendingSuggestions = {};
+  // Offers the technician dismissed with "Answer it myself". Kept rather than
+  // forgotten so recordAiReview can count them as a rejected suggestion.
+  let aiDeclinedFieldIds = new Set();
   let aiDraftInProgress = false;
   const objectUrls = [];
 
@@ -334,8 +337,23 @@
   // about what the document says and who changed it, and must not be
   // diluted with telemetry about a tool.
   function recordAiReview() {
+    // An offer that was shown and NOT taken is the most useful accuracy signal
+    // there is — a technician looking at the photograph and declining the
+    // model's answer is a human-graded wrong answer, which is exactly what the
+    // trial in ai-trial/ could only approximate. Counting accepted suggestions
+    // alone would have recorded the confirmBeforeUse fields as silence, so the
+    // fields most likely to be wrong would have been the ones contributing no
+    // data at all.
+    //
+    // Anything still sitting in aiPendingSuggestions at save time was offered
+    // and ignored; aiDeclinedFieldIds holds the ones dismissed outright. Both
+    // count as not kept.
     const suggestedIds = Object.keys(aiSuggestedValues);
-    if (!suggestedIds.length) return;
+    const rejectedIds = Array.from(new Set([
+      ...Object.keys(aiPendingSuggestions),
+      ...aiDeclinedFieldIds,
+    ]));
+    if (!suggestedIds.length && !rejectedIds.length) return;
 
     const review = currentReport.aiReview || { kept: 0, corrected: 0, fields: {} };
     review.fields = review.fields || {};
@@ -348,6 +366,14 @@
       else { review.corrected += 1; perField.corrected += 1; }
       review.fields[key] = perField;
     }
+    for (const fieldId of rejectedIds) {
+      if (Object.prototype.hasOwnProperty.call(aiSuggestedValues, fieldId)) continue; // already counted
+      const key = `${currentSectionId}.${fieldId}`;
+      const perField = review.fields[key] || { kept: 0, corrected: 0 };
+      review.corrected += 1;
+      perField.corrected += 1;
+      review.fields[key] = perField;
+    }
     review.updatedAt = Date.now();
     currentReport.aiReview = review;
     // Cleared so re-saving the same section cannot count one suggestion
@@ -355,6 +381,7 @@
     // only been offered that suggestion once.
     aiSuggestedValues = {};
     aiPendingSuggestions = {};
+    aiDeclinedFieldIds = new Set();
   }
 
   // Totals across every report on the device, for the readout in Saved
@@ -1624,6 +1651,14 @@
     if (!currentReport || !currentSectionId) return;
     const draft = draftableValues(pendingSectionValues);
     if (!Object.keys(draft).length) return;
+    // Nothing unsaved means nothing to preserve. Writing a draft identical to
+    // what is already committed is not just wasted work: it is how a draft the
+    // technician explicitly declined to restore comes back, because declining
+    // deletes the draft and then this timer writes the same values straight
+    // back under the same key. "Discarded for good" has to survive the next
+    // tick of the clock to mean anything.
+    const section = findSection(currentSectionId);
+    if (section && !draftDiffersFromCommitted(section, currentReport.sections[currentSectionId], draft)) return;
     try {
       await DB.saveSectionDraft(currentReport.jobId, currentSectionId, draft);
     } catch (e) {
@@ -1701,6 +1736,7 @@
     aiAppliedFieldIds = new Set();
     aiSuggestedValues = {};
     aiPendingSuggestions = {};
+    aiDeclinedFieldIds = new Set();
     const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
     applyDraftFieldsToPending(section, aiFieldsForSection);
 
@@ -1802,6 +1838,11 @@
       dismiss.textContent = 'Answer it myself';
       dismiss.addEventListener('click', () => {
         delete aiPendingSuggestions[field.id];
+        // Remembered, not just dropped. Somebody looked at the photograph and
+        // at the model's answer and chose their own — that is a graded wrong
+        // answer and the most informative thing this app can collect about
+        // whether the AI is any good on real work.
+        aiDeclinedFieldIds.add(field.id);
         renderCurrentSectionFields();
       });
 
@@ -2366,7 +2407,18 @@
         if (!identifications.length) {
           const empty = document.createElement('p');
           empty.className = 'identify-pest-empty';
-          empty.textContent = 'Nothing identifiable in these photos — try a closer, clearer shot.';
+          // Two different things produce an empty answer and they need
+          // different responses from the technician. A poor photo should be
+          // retaken. A good photo of damage, workings or a mud tube should
+          // NOT be — this tool identifies insects, and since the prompt was
+          // tightened it deliberately declines to read a cause from damage
+          // alone, because mud tubes are built by ants too and rotted timber
+          // looks like eaten timber. Telling someone to retake a sharp,
+          // correct photograph sends them back to a wall for nothing.
+          empty.textContent = 'No insect identified. If this photo shows damage, '
+            + 'workings or a mud tube rather than the insect itself, that is expected — '
+            + 'finish the inspection and those are read into the report instead. '
+            + 'If you did photograph an insect, try a closer or sharper shot.';
           resultsEl.appendChild(empty);
           resultsEl.classList.remove('hidden');
           return;

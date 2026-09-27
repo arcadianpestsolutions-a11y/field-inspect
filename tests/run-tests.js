@@ -2957,6 +2957,61 @@
     assert(/Yes/.test(row.textContent), 'and now carries the accepted answer');
   });
 
+  test('Report: declining an AI answer is recorded, because that is the useful signal', async () => {
+    // A technician looking at the photograph and choosing their own answer is
+    // a human-graded wrong answer — better evidence than any offline trial.
+    // Counting only accepted suggestions would mean the fields most likely to
+    // be wrong are the ones contributing no accuracy data at all.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'AI decline test', address: '13 Gallery Rd' });
+    await win.DB.saveReport({
+      jobId: job.id, sections: {}, finalizedAt: null,
+      aiDraft: {
+        draftFields: { findings: { workingsFound: 'Yes' } },
+        fieldReasons: { findings: {} },
+        frameNotes: [],
+      },
+    });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => /findings/i.test(el.textContent)).click();
+    await wait(250);
+
+    const offer = doc.querySelector('.ai-offer[data-field="workingsFound"]');
+    assert(offer, 'the offer is shown');
+    const dismiss = Array.from(offer.querySelectorAll('button'))
+      .find((b) => /answer it myself/i.test(b.textContent));
+    assert(dismiss, 'there is a way to decline it');
+    dismiss.click();
+    await wait(200);
+
+    // Answer it differently, then save.
+    const row = Array.from(doc.querySelectorAll('.field-row'))
+      .find((r) => /evidence of termite workings/i.test(r.textContent));
+    const noBtn = Array.from(row.querySelectorAll('.yesno-btn')).find((b) => /^No$/.test(b.textContent.trim()));
+    assert(noBtn, 'the question can still be answered by hand');
+    noBtn.click();
+    await wait(150);
+
+    const save = Array.from(doc.querySelectorAll('#view-report-section button'))
+      .find((b) => /save/i.test(b.textContent));
+    assert(save, 'the section can be saved');
+    save.click();
+
+    await waitFor(async () => {
+      const saved = await win.DB.getReport(job.id);
+      return saved && saved.aiReview && saved.aiReview.corrected > 0;
+    }, 'the declined suggestion is counted against the AI, not dropped');
+
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.aiReview.kept, 0, 'nothing was kept');
+    assert(saved.aiReview.corrected >= 1, 'and the rejection was recorded');
+  });
+
   // ---------- Automated client email ----------
   // Automated comms takes the technician out of the loop, so the wording has
   // to carry what the person would otherwise have known by looking: whether
