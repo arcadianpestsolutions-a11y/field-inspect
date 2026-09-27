@@ -528,8 +528,57 @@
       schemaVersion: window.REPORT_SCHEMA_VERSION || null,
       auditLog: [],
     };
+    await carryForwardStations(job, report);
     appendAudit(report, { event: 'created' });
     return report;
+  }
+
+  // Brings the station register forward from the previous visit.
+  //
+  // A property on a standing programme has the same stations in the same
+  // places for years. Re-entering eight to twenty of them every visit is how
+  // a station register turns into "all OK" by station six — which is the
+  // failure the chip-based renderer was built to avoid in the first place,
+  // arriving from a different direction.
+  //
+  // Only the stations come across: the number and where it is. Findings are
+  // deliberately cleared, because carrying last visit's result forward would
+  // mean a technician who skipped a station still produces a report saying
+  // what was in it.
+  async function carryForwardStations(job, report) {
+    if (!job || !job.recurringFromId) return;
+    try {
+      const previous = await DB.getReport(job.recurringFromId);
+      if (!previous || !previous.sections) return;
+      for (const [sectionId, values] of Object.entries(previous.sections)) {
+        const stations = values && values.stationRecords;
+        if (!Array.isArray(stations) || !stations.length) continue;
+        report.sections[sectionId] = {
+          ...(report.sections[sectionId] || {}),
+          stationRecords: stations.map((s) => ({
+            id: DB.uid(),
+            stationNumber: s.stationNumber || '',
+            status: '',
+            action: '',
+            note: '',
+          })),
+        };
+        // The register lives behind a gate, and carrying the stations without
+        // the gate would file them somewhere nobody can see. A property that
+        // had stations last visit has them this visit — that is what a
+        // standing programme is — so the answer comes across with them.
+        if (sectionId === 'rodentStations') {
+          report.sections.pestIdentification = {
+            ...(report.sections.pestIdentification || {}),
+            rodentStationsInUse: 'Yes — serviced this visit',
+          };
+        }
+      }
+    } catch (e) {
+      // A register that fails to copy is an inconvenience, not a reason to
+      // refuse to open the report — the technician adds the stations by hand.
+      console.warn('[report] could not carry stations forward:', e.message || e);
+    }
   }
 
   // An inspection date is a calendar date where the technician is standing,
@@ -2207,6 +2256,10 @@
   // stations, and anything that takes typing per station gets abbreviated to
   // "all OK" by station six — which is how a service record stops being a
   // record. Adding a station is one tap; a status is one tap.
+  // Default wording is termite baiting. A field can override both lists —
+  // rodent stations are the same shape of record but a different vocabulary,
+  // and asking a technician whether a rodent station shows 'Termite activity'
+  // is how a chip row stops being read and starts being tapped through.
   const STATION_STATUS = ['No activity', 'Termite activity', 'Bait taken', 'Bait exhausted', 'Damaged', 'Missing', 'Buried'];
   const STATION_ACTION = ['Nothing required', 'Bait replenished', 'Bait replaced', 'Station repaired', 'Station replaced', 'Station relocated', 'Cleared of debris'];
 
@@ -2276,11 +2329,11 @@
         header.appendChild(removeBtn);
         card.appendChild(header);
 
-        card.appendChild(chipRow('Found', STATION_STATUS, station.status, (v) => {
+        card.appendChild(chipRow('Found', field.statusOptions || STATION_STATUS, station.status, (v) => {
           station.status = v;
           redraw();
         }));
-        card.appendChild(chipRow('Did', STATION_ACTION, station.action, (v) => {
+        card.appendChild(chipRow('Did', field.actionOptions || STATION_ACTION, station.action, (v) => {
           station.action = v;
           redraw();
         }));

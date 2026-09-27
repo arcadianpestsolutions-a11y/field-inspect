@@ -3097,6 +3097,103 @@
     assert(!filed || !filed.length, 'an unticked proposal files nothing');
   });
 
+  // ---------- Rodent stations ----------
+
+  test('General pest: the rodent station section stays hidden unless there are stations', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'No stations', jobType: 'pest_treatment' });
+    await win.DB.saveReport({
+      jobId: job.id, documentType: 'general_pest', finalizedAt: null,
+      sections: { pestIdentification: { rodentStationsInUse: 'No' } },
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    const titles = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .map((el) => el.textContent);
+    assert(!titles.some((t) => /Rodent Bait Stations/.test(t)),
+      'most general pest jobs have no stations and should not carry an empty register');
+  });
+
+  test('General pest: saying stations are in use opens the register', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'Has stations', jobType: 'pest_treatment' });
+    await win.DB.saveReport({
+      jobId: job.id, documentType: 'general_pest', finalizedAt: null,
+      sections: { pestIdentification: { rodentStationsInUse: 'Yes — serviced this visit' } },
+    });
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    const titles = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .map((el) => el.textContent.replace(/\s+/g, ' ').trim());
+    assert(titles.some((t) => /Rodent Bait Stations/.test(t)), 'the station register appears');
+
+    const numbers = titles.map((t) => parseInt((t.match(/(\d+)\./) || [])[1], 10)).filter(Number.isFinite);
+    assertEqual(numbers.join(','), numbers.map((_, i) => i + 1).join(','), 'numbered without gaps');
+  });
+
+  test('General pest: rodent stations use rodent wording, not termite wording', () => {
+    // The same shape of record, a different vocabulary. Asking whether a
+    // rodent station shows "Termite activity" is how a chip row stops being
+    // read and starts being tapped through.
+    const win = frame.contentWindow;
+    const section = win.PEST_TREATMENT_SCHEMA.find((s) => s.id === 'rodentStations');
+    assert(section, 'the schema has a rodent station section');
+    const field = section.fields.find((f) => f.id === 'stationRecords');
+    assert(field && Array.isArray(field.statusOptions), 'it overrides the status chips');
+    assert(field.statusOptions.some((o) => /Carcass/i.test(o)), 'with rodent findings');
+    assert(!field.statusOptions.some((o) => /Termite/i.test(o)), 'and none of the termite ones');
+  });
+
+  test('General pest: stations carry forward to the next visit with findings cleared', async () => {
+    // A property on a standing programme has the same stations for years.
+    // Re-entering them every visit is how a register turns into "all OK".
+    // Last visit's RESULTS must not come with them, though — that would let a
+    // skipped station still produce a report saying what was in it.
+    const win = frame.contentWindow;
+
+    const first = await win.DB.addJob({ name: 'Station round 1', jobType: 'pest_treatment' });
+    await win.DB.saveReport({
+      jobId: first.id, documentType: 'general_pest', finalizedAt: null,
+      sections: {
+        pestIdentification: { rodentStationsInUse: 'Yes — serviced this visit' },
+        rodentStations: {
+          stationRecords: [
+            { id: 'a', stationNumber: '1', status: 'Bait fully taken', action: 'Bait replaced', note: 'by the bins' },
+            { id: 'b', stationNumber: '2', status: 'Untouched', action: 'Nothing required' },
+          ],
+        },
+      },
+    });
+
+    const second = await win.DB.addJob({
+      name: 'Station round 2', jobType: 'pest_treatment', recurringFromId: first.id,
+    });
+    await win.ReportUI.openReview(second.id);
+    await wait(250);
+
+    // Asserted through the UI rather than the record, because a freshly
+    // created report is not written to the database until a section is saved.
+    const doc = frame.contentDocument;
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => /Rodent Bait Stations/.test(el.textContent));
+    assert(li, 'the second visit shows the station register');
+    li.click();
+    await waitFor(() => doc.querySelectorAll('.station-number').length > 0,
+      'the carried-forward stations render');
+
+    const numbers = Array.from(doc.querySelectorAll('.station-number')).map((i) => i.value);
+    assertEqual(numbers.join(','), '1,2', 'both stations come across, with their numbers');
+
+    // Last visit's findings must NOT be inherited — a skipped station would
+    // otherwise still produce a report saying what was in it.
+    const active = doc.querySelectorAll('#view-report-section .station-chip.active');
+    assertEqual(active.length, 0, 'and with last visit’s findings cleared');
+  });
+
   // ---------- The action-plan half of an inspection ----------
   // A timber pest inspection on a property whose management system is fine
   // should end cleanly. One where it is absent, inadequate or failed carries

@@ -151,11 +151,73 @@ const PEST_TREATMENT_SCHEMA = [
       { id: 'pestEvidence', label: 'Evidence Observed (droppings, nests, damage, sightings, etc.)', type: 'textarea', aiFillable: true },
       { id: 'affectedAreas', label: 'Areas Affected', type: 'textarea', aiFillable: true },
       { id: 'infestationLevel', label: 'Infestation Level', type: 'select', options: ['Low', 'Moderate', 'High'], aiFillable: true, confirmBeforeUse: true },
+      // Gate for the rodent station section below. Asked outright rather than
+      // inferred from targetPests including rodents: a general pest job can
+      // target rodents by other means entirely, and a property can be on a
+      // standing station programme in a visit where rodents were not the
+      // reason for attending.
+      {
+        id: 'rodentStationsInUse',
+        label: 'Are rodent bait stations in use at this property?',
+        type: 'select', required: true, default: 'No',
+        options: ['No', 'Yes — serviced this visit', 'Yes — installed this visit'],
+      },
+    ],
+  },
+  // ---------- Rodent stations, shown only where there are some ----------
+  //
+  // Section-level showIf, the same mechanism the termite action plan uses.
+  // Most general pest jobs have no stations at all and should not carry an
+  // empty station register through the report.
+  //
+  // Stations carry forward between visits. A property on a standing programme
+  // has the same stations in the same places for years, and re-entering them
+  // every visit is how a station register turns into "all OK". The register
+  // is copied from the previous visit with its findings cleared, so each
+  // visit records its own result against a list that is already right.
+  {
+    id: 'rodentStations',
+    number: 5,
+    title: 'Rodent Bait Stations',
+    subtitle: 'Every station checked this visit, and what was in it.',
+    icon: '🐀',
+    color: '#7c2d12',
+    showIf: {
+      section: 'pestIdentification',
+      field: 'rodentStationsInUse',
+      oneOf: ['Yes — serviced this visit', 'Yes — installed this visit'],
+    },
+    fields: [
+      {
+        id: 'stationRecords', label: 'Station records', type: 'stationList', required: true,
+        statusOptions: ['Untouched', 'Bait partly taken', 'Bait fully taken', 'Droppings present',
+          'Carcass found', 'Non-target activity', 'Damaged', 'Missing', 'Inaccessible'],
+        actionOptions: ['Nothing required', 'Bait replenished', 'Bait replaced', 'Carcass removed',
+          'Station cleaned', 'Station repaired', 'Station replaced', 'Station relocated'],
+      },
+      {
+        id: 'stationBaitProduct', label: 'Bait used in the stations', type: 'productList',
+      },
+      {
+        id: 'stationsSecured', label: 'All stations locked and secured before leaving?',
+        type: 'yesno', required: true, default: 'Yes',
+      },
+      {
+        id: 'stationsUnsecuredDetail', label: 'Which were not, and why',
+        type: 'textarea', required: true, showIf: { field: 'stationsSecured', equals: 'No' },
+      },
+      {
+        id: 'rodentPressure', label: 'Overall rodent pressure at this property', type: 'select',
+        options: ['None evident', 'Low', 'Moderate', 'High'],
+        aiFillable: true, confirmBeforeUse: true,
+      },
+      { id: 'stationPhotos', label: 'Station photos', type: 'photos', aiFillable: true },
+      { id: 'stationNotes', label: 'Notes on the station programme', type: 'textarea', aiFillable: true },
     ],
   },
   {
     id: 'treatmentDetails',
-    number: 5,
+    number: 6,
     title: 'Treatment Details',
     subtitle: 'The method and areas of treatment carried out.',
     icon: '🧪',
@@ -183,7 +245,7 @@ const PEST_TREATMENT_SCHEMA = [
   },
   {
     id: 'chemicals',
-    number: 6,
+    number: 7,
     title: 'Chemicals / Products Used',
     subtitle: 'Record of every chemical product applied during this treatment, as required for pesticide use record-keeping. Add one entry per product — most spray jobs use two or three.',
     icon: '🧴',
@@ -194,7 +256,7 @@ const PEST_TREATMENT_SCHEMA = [
   },
   {
     id: 'safety',
-    number: 7,
+    number: 8,
     title: 'Risk Assessment & Safety',
     subtitle: 'What was around the treatment area, what you did about it, and the pesticide-use record the law requires.',
     icon: '⚠️',
@@ -299,7 +361,7 @@ const PEST_TREATMENT_SCHEMA = [
   },
   {
     id: 'recommendations',
-    number: 8,
+    number: 9,
     title: 'Recommendations & Follow-Up',
     subtitle: 'Advice for the client and any follow-up treatment required.',
     icon: '📝',
@@ -341,7 +403,7 @@ const PEST_TREATMENT_SCHEMA = [
   },
   {
     id: 'terms',
-    number: 9,
+    number: 10,
     title: 'Terms & Conditions',
     subtitle: 'Terms and conditions related to this pest treatment service.',
     icon: '📖',
@@ -351,7 +413,7 @@ const PEST_TREATMENT_SCHEMA = [
   },
   {
     id: 'inspector',
-    number: 10,
+    number: 11,
     title: 'Technician Details',
     subtitle: 'Contact details of the Service Provider and the Technician who carried out the treatment.',
     icon: '🧑‍🔧',
@@ -368,7 +430,7 @@ const PEST_TREATMENT_SCHEMA = [
   },
   {
     id: 'acknowledgement',
-    number: 11,
+    number: 12,
     title: 'Client Acknowledgement',
     subtitle: 'Acknowledgement and acceptance of the service to be completed by the Client.',
     icon: '✅',
