@@ -270,15 +270,6 @@
     assertEqual(remaining[0].id, c2.id);
   });
 
-  test('DB.addFootage + getFootage round-trip', async () => {
-    const job = await DB.addJob({ name: 'Footage Test' });
-    const blob = new Blob([new Uint8Array([1])], { type: 'video/webm' });
-    await DB.addFootage({ jobId: job.id, zone: 'Roof', source: 'live', kind: 'video', blob });
-    const footage = await DB.getFootage(job.id);
-    assertEqual(footage.length, 1);
-    assertEqual(footage[0].source, 'live');
-  });
-
   test('DB.saveReport + getReport round-trip', async () => {
     const job = await DB.addJob({ name: 'Report Test' });
     await DB.saveReport({ jobId: job.id, sections: { intro: { note: 'hello' } }, finalizedAt: null });
@@ -298,18 +289,16 @@
     assert(bi < ai, 'more recently saved report should sort first');
   });
 
-  test('DB.deleteJob cascades captures, footage, and report', async () => {
+  test('DB.deleteJob cascades captures and report', async () => {
     const job = await DB.addJob({ name: 'Cascade Test' });
     const blob = new Blob([new Uint8Array([1])], { type: 'image/jpeg' });
     await DB.addCapture({ jobId: job.id, zone: 'A', type: 'photo', photoBlob: blob });
-    await DB.addFootage({ jobId: job.id, zone: 'A', source: 'live', kind: 'video', blob });
     await DB.saveReport({ jobId: job.id, sections: {} });
 
     await DB.deleteJob(job.id);
 
     assertEqual(await DB.getJob(job.id), undefined);
     assertEqual((await DB.getCaptures(job.id)).length, 0);
-    assertEqual((await DB.getFootage(job.id)).length, 0);
     assertEqual(await DB.getReport(job.id), undefined);
   });
 
@@ -1551,7 +1540,7 @@
   });
 
   test('Inspection: a full start-to-finish run captures photos and opens the report', async () => {
-    // Inspections are photo-only: no MediaRecorder, no footage row. What has
+    // Inspections are photo-only: no video is recorded anywhere. What has
     // to hold is that the camera opens, each still is saved against the zone
     // the technician typed, and Finish moves the job to review and opens the
     // report — with the camera actually released rather than left running.
@@ -1635,7 +1624,6 @@
       const after = await win.DB.getJob(job.id);
       assertEqual(after.status, 'review', 'job moves to review');
       assert(after.inspectionEndedAt, 'the finish time is recorded');
-      assertEqual((await win.DB.getFootage(job.id)).length, 0, 'no video is recorded any more');
       assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'modal closes');
       assert(!doc.getElementById('finish-inspection-btn').disabled, 'finish button is usable again');
       assert(made.getTracks().every((t) => t.readyState === 'ended'), 'the camera is released, not left running');
@@ -2592,10 +2580,10 @@
     assertEqual(data.counts.invoices, data.invoices.length, 'counts must match the actual arrays');
     // Not "no report ever carries a data:image string" — a signature or a
     // sketch canvas legitimately does, and both are small. What must never
-    // happen is the bulky captures/footage stores (raw inspection photos)
-    // riding along and turning a quick download into a multi-hundred-MB file.
-    assert(!('captures' in data) && !('footage' in data),
-      'a backup meant to be quick to generate and download on a phone must not carry the raw photo/video stores');
+    // happen is the bulky captures store (raw inspection photos) riding along
+    // and turning a quick download into a multi-hundred-MB file.
+    assert(!('captures' in data),
+      'a backup meant to be quick to generate and download on a phone must not carry the raw photo store');
   });
 
   test('Documents: each schema is structurally sound', () => {
@@ -3233,7 +3221,7 @@
     const win = frame.contentWindow;
     const cases = [
       win.SyncMessages.syncFailureText([{ table: 'captures', error: { code: '42501', message: 'x' } }]),
-      win.SyncMessages.syncFailureText([{ table: 'footage', error: { message: 'Failed to fetch' } }]),
+      win.SyncMessages.syncFailureText([{ table: 'invoices', error: { message: 'Failed to fetch' } }]),
       win.SyncMessages.syncFailureText([{ table: 'invoices', error: { message: 'something odd' } }]),
       win.SyncMessages.fatalSyncText({ code: '42501', message: 'permission denied for table jobs' }),
       win.SyncMessages.fatalSyncText({ message: 'Failed to fetch' }),

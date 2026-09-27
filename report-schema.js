@@ -14,7 +14,7 @@
 // once the condition is met (mirrors the conditional layout in the source PDFs).
 // `required: true` — field must have a value for the section to show a green tick.
 // `aiFillable: true` — this is a field the AI Draft step is expected to populate
-// from footage/photos/narration; everything else is human-only (signatures,
+// from photos/narration; everything else is human-only (signatures,
 // licence numbers, fixed business info).
 
 const YES_NO = ['Yes', 'No'];

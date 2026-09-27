@@ -64,7 +64,6 @@
   const inspectionTimerEl = document.getElementById('inspection-timer');
   const startInspectionBtn = document.getElementById('start-inspection-btn');
   const finishInspectionBtn = document.getElementById('finish-inspection-btn');
-  const importFootageBtn = document.getElementById('import-footage-btn');
   const viewReportBtn = document.getElementById('view-report-btn');
   // Newer than some deployed index.html files, so guarded at every use — the
   // same CDN-skew hazard the audit refs carry.
@@ -72,13 +71,6 @@
   const inspectionPrompt = document.getElementById('inspection-prompt');
   const viewInvoiceBtn = document.getElementById('view-invoice-btn');
 
-  const importModal = document.getElementById('import-modal');
-  const importZoneInput = document.getElementById('import-zone-input');
-  const importFileInput = document.getElementById('import-file-input');
-  const importChooseBtn = document.getElementById('import-choose-btn');
-  const importFileList = document.getElementById('import-file-list');
-  const importCancelBtn = document.getElementById('import-cancel');
-  const importSaveBtn = document.getElementById('import-save');
 
   const inspectionModal = document.getElementById('inspection-modal');
   const inspectionVideo = document.getElementById('inspection-video');
@@ -87,7 +79,6 @@
   const inspectionChecklistRow = document.getElementById('inspection-checklist-row');
   const inspectionStillBtn = document.getElementById('inspection-still-btn');
   const inspectionFinishBtn = document.getElementById('inspection-finish-btn');
-  const inspectionImportBtn = document.getElementById('inspection-import-btn');
 
 
   const recordModal = document.getElementById('record-modal');
@@ -172,8 +163,6 @@
   }
   let inspectionTimerInterval = null;
   let inspectionStartedAt = 0;
-  let pendingImportFiles = [];
-  let importOpenedFromInspection = false;
   let loggedInEmail = '';
 
   // ---------- Utils ----------
@@ -1244,7 +1233,7 @@
       // there is nothing "below" any more, so the message stopped matching
       // the actual UI. index.html's own default text for this element is
       // already correct; this used to override it with the wrong one.
-      galleryEmptyEl.textContent = 'No captures yet for this job. Photos and notes are captured during Start/Finish Inspection, or via Import Footage.';
+      galleryEmptyEl.textContent = 'No captures yet for this job. Photos and notes are captured during Start and Finish Inspection.';
       show(galleryEmptyEl);
     } else if (visible.length === 0) {
       galleryEmptyEl.textContent = 'No captures in this zone yet.';
@@ -1710,8 +1699,9 @@
     // both better evidence and a far better input for the draft, because the
     // model is reading considered photographs instead of motion-blurred frames.
     //
-    // No MediaRecorder is created here any more. Import Footage still exists
-    // for jobs where video genuinely helps, and older jobs keep playing theirs.
+    // No video is recorded anywhere in the app. The camera stream here is a
+    // viewfinder for taking photographs and nothing else: it is never
+    // recorded, and there is no longer any way to bring video in.
     try {
       inspectionVideo.srcObject = inspectionStream;
       inspectionZoneInput.value = '';
@@ -1831,11 +1821,6 @@
     }, 'image/jpeg', 0.88);
   });
 
-  inspectionImportBtn.addEventListener('click', () => {
-    importOpenedFromInspection = true;
-    hide(inspectionModal);
-    openImportModal();
-  });
 
 
   let finishInspectionInProgress = false;
@@ -1974,61 +1959,6 @@
   });
   finishInspectionBtn.addEventListener('click', finishInspection);
   inspectionFinishBtn.addEventListener('click', finishInspection);
-
-  // ---------- Import Footage (mid-inspection, drone / other camera) ----------
-  function openImportModal() {
-    importZoneInput.value = (importOpenedFromInspection ? inspectionZoneInput.value : '').trim();
-    pendingImportFiles = [];
-    importFileInput.value = '';
-    importFileList.innerHTML = '';
-    importSaveBtn.disabled = true;
-    show(importModal);
-  }
-
-  function closeImportModal() {
-    hide(importModal);
-    if (importOpenedFromInspection) {
-      importOpenedFromInspection = false;
-      if (inspectionActiveJobId) show(inspectionModal);
-    }
-  }
-
-  importFootageBtn.addEventListener('click', openImportModal);
-
-  importChooseBtn.addEventListener('click', () => importFileInput.click());
-
-  importFileInput.addEventListener('change', () => {
-    pendingImportFiles = Array.from(importFileInput.files || []);
-    importFileList.innerHTML = pendingImportFiles
-      .map((f) => `<div class="import-file-row">${escapeHtml(f.name)}</div>`)
-      .join('');
-    importSaveBtn.disabled = pendingImportFiles.length === 0;
-  });
-
-  importCancelBtn.addEventListener('click', () => {
-    closeImportModal();
-    pendingImportFiles = [];
-  });
-
-  importSaveBtn.addEventListener('click', async () => {
-    if (!pendingImportFiles.length) return;
-    const zone = importZoneInput.value.trim();
-    for (const file of pendingImportFiles) {
-      const kind = file.type.startsWith('video') ? 'video' : 'photo';
-      await DB.addFootage({
-        jobId: currentJobId,
-        zone,
-        source: 'imported',
-        kind,
-        blob: file,
-        fileName: file.name,
-      });
-    }
-    closeImportModal();
-    toast(`${pendingImportFiles.length} file${pendingImportFiles.length === 1 ? '' : 's'} imported into this inspection`);
-    pendingImportFiles = [];
-    await renderGallery();
-  });
 
   // ---------- Which document is this job producing? ----------
   // Termite work is five different documents, not one. The job screen offers

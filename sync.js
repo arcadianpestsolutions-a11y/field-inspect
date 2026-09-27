@@ -2,7 +2,7 @@
 // and invoices are available from any signed-in device.
 //
 // The header used to say "photos and video stay local-only, by design". That
-// stopped being true at migration 004, which added the captures and footage
+// stopped being true at migration 004, which added the captures
 // tables and the inspection-media storage bucket: metadata rows go to
 // Postgres and the bytes go to storage. Left uncorrected, that one stale
 // sentence is the difference between believing your photos are backed up and
@@ -50,7 +50,7 @@
   // Plural throughout: the sentence is always "Your X are saved on this
   // device", and "your video are saved" is the kind of thing a client would
   // notice if it ever made it onto a report.
-  const TABLE_NAMES = { captures: 'photos', footage: 'videos', invoices: 'invoices' };
+  const TABLE_NAMES = { captures: 'photos', invoices: 'invoices' };
 
   function syncFailureText(failed) {
     const names = failed.map((f) => TABLE_NAMES[f.table] || f.table);
@@ -118,7 +118,6 @@
     jobs: ['id'],
     reports: ['job_id'],
     captures: ['id'],
-    footage: ['id'],
     invoices: ['id'],
     deletions: ['table_name', 'record_id'], // composite — neither half is unique alone
   };
@@ -529,7 +528,6 @@
     jobs: (id) => DB.deleteJobLocalOnly(id),
     reports: (id) => DB.deleteReportLocalOnly(id),
     captures: (id) => DB.deleteCaptureLocalOnly(id),
-    footage: (id) => DB.deleteFootageLocalOnly(id),
     invoices: (id) => DB.deleteInvoiceLocalOnly(id),
   };
 
@@ -664,7 +662,7 @@
     }
   }
 
-  // ---------- Captures & footage ----------
+  // ---------- Captures ----------
   // Metadata goes to Postgres, bytes go to storage. The upload happens first
   // so the row is never written claiming a path that doesn't exist yet.
   async function pushCapture(capture) {
@@ -705,35 +703,6 @@
     }
   }
 
-  async function pushFootage(item) {
-    if (!isReady()) return;
-    try {
-      let blobPath = item.blobPath || null;
-      if (window.Media && !blobPath && item.blob) {
-        blobPath = await window.Media.uploadBlob(
-          window.Media.pathFor(item.jobId, 'footage', item.id, item.blob), item.blob);
-      }
-      const { error } = await supabaseClient.from('footage').upsert({
-        id: item.id,
-        job_id: item.jobId,
-        zone: item.zone || '',
-        source: item.source || 'live',
-        kind: item.kind || 'video',
-        file_name: item.fileName || '',
-        note: item.note || '',
-        blob_path: blobPath,
-        created_at: item.createdAt,
-        updated_at: item.updatedAt || item.createdAt,
-        created_by: currentUserId(),
-      });
-      if (error) throw error;
-      if (blobPath !== (item.blobPath || null)) {
-        await DB.putFootageRaw({ ...item, blobPath });
-      }
-    } catch (e) {
-      console.warn('[sync] push footage failed, will retry on next sync:', e.message || e);
-    }
-  }
 
   function remoteCaptureToLocal(rc, existingLocal) {
     return {
@@ -754,34 +723,11 @@
     };
   }
 
-  function remoteFootageToLocal(rf, existingLocal) {
-    return {
-      id: rf.id,
-      jobId: rf.job_id,
-      zone: rf.zone || '',
-      source: rf.source || 'live',
-      kind: rf.kind || 'video',
-      fileName: rf.file_name || '',
-      note: rf.note || '',
-      blobPath: rf.blob_path || null,
-      blob: existingLocal ? existingLocal.blob || null : null,
-      createdAt: rf.created_at,
-      updatedAt: rf.updated_at,
-    };
-  }
-
   async function deleteCaptureRemote(id) {
     if (!isReady()) return;
     try { await supabaseClient.from('captures').delete().eq('id', id); }
     catch (e) { console.warn('[sync] delete capture remote failed:', e.message || e); }
     await pushTombstone('captures', id);
-  }
-
-  async function deleteFootageRemote(id) {
-    if (!isReady()) return;
-    try { await supabaseClient.from('footage').delete().eq('id', id); }
-    catch (e) { console.warn('[sync] delete footage remote failed:', e.message || e); }
-    await pushTombstone('footage', id);
   }
 
   // Same reasoning as reportAuditColumnsMissing/jobExtraColumnsMissing —
@@ -879,7 +825,7 @@
 
   // Generic last-write-wins reconcile for the id-keyed collections. Jobs and
   // reports predate this and keep their own bespoke passes; captures and
-  // footage share this one so the two can't drift apart.
+  // invoices share this one so they cannot drift apart.
   async function syncCollection({ table, localAll, toLocal, putRaw, push }) {
     const remote = await fetchAllRows(supabaseClient, table);
     const remoteById = new Map(remote.map((r) => [r.id, r]));
@@ -924,11 +870,6 @@
         if (changed) await DB.putCaptureRaw(next);
       }
 
-      for (const item of await DB.getAllFootage()) {
-        if (item.blob || !item.blobPath) continue;
-        const blob = await window.Media.downloadBlob(item.blobPath);
-        if (blob) await DB.putFootageRaw({ ...item, blob });
-      }
 
       for (const report of await DB.getAllReports()) {
         let changed = false;
@@ -1017,7 +958,7 @@
 
       // Each collection is reconciled independently. Before, one failing
       // table threw straight out of fullSync, so a permission problem on
-      // captures also silently skipped footage, invoices and the media
+      // captures also silently skipped invoices and the media
       // backup below it — the sync looked like one broken thing when four
       // were being missed. A failure here is recorded and the rest continues.
       const failed = [];
@@ -1028,13 +969,6 @@
           toLocal: remoteCaptureToLocal,
           putRaw: (rec) => DB.putCaptureRaw(rec),
           push: pushCapture,
-        },
-        {
-          table: 'footage',
-          localAll: () => DB.getAllFootage(),
-          toLocal: remoteFootageToLocal,
-          putRaw: (rec) => DB.putFootageRaw(rec),
-          push: pushFootage,
         },
         {
           table: 'invoices',
@@ -1113,11 +1047,9 @@
     pushJob,
     pushReport,
     pushCapture,
-    pushFootage,
     pushInvoice,
     deleteJobRemote,
     deleteCaptureRemote,
-    deleteFootageRemote,
     deleteInvoiceRemote,
     currentUserId,
     isOnline,

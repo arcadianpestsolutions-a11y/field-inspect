@@ -3,8 +3,6 @@
 //   jobs      (id, name, address, notes, clientPhone, clientEmail, status,
 //              inspectionDate, inspectionTime, weather, createdAt, updatedAt)
 //   captures  (id, jobId, zone, type: 'photo'|'memo', photoBlob?, audioBlob?, createdAt)
-//   footage   (id, jobId, zone, source: 'live'|'imported', kind: 'video'|'photo',
-//              blob, fileName?, note?, createdAt)
 //   reports   (jobId [key], sections: {sectionId: {fieldId: value}}, sectionStatus,
 //              aiDraft, finalizedAt, updatedAt)
 //   sectionDrafts (id [key: `${jobId}::${sectionId}`], jobId, sectionId, values,
@@ -43,7 +41,7 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // has to leave something behind. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 let dbPromise = null;
 
@@ -60,9 +58,13 @@ function openDB() {
         const store = db.createObjectStore('captures', { keyPath: 'id' });
         store.createIndex('jobId', 'jobId', { unique: false });
       }
-      if (!db.objectStoreNames.contains('footage')) {
-        const store = db.createObjectStore('footage', { keyPath: 'id' });
-        store.createIndex('jobId', 'jobId', { unique: false });
+      // DB v6 removes 'footage'. The app records no video at all any more —
+      // the camera is a viewfinder for photographs and nothing else — so the
+      // store has nothing left to hold. Dropped rather than left dormant
+      // because an empty store that nothing writes to is a trap for whoever
+      // reads this next and reasonably assumes it is still in use.
+      if (db.objectStoreNames.contains('footage')) {
+        db.deleteObjectStore('footage');
       }
       if (!db.objectStoreNames.contains('reports')) {
         db.createObjectStore('reports', { keyPath: 'jobId' });
@@ -273,10 +275,6 @@ const DB = {
       const s = await tx('captures', 'readwrite');
       await reqToPromise(s.delete(c.id));
     }
-    for (const f of await this.getFootage(id)) {
-      const s = await tx('footage', 'readwrite');
-      await reqToPromise(s.delete(f.id));
-    }
     for (const i of await this.getInvoicesForJob(id)) {
       const s = await tx('invoices', 'readwrite');
       await reqToPromise(s.delete(i.id));
@@ -295,11 +293,6 @@ const DB = {
 
   async deleteCaptureLocalOnly(id) {
     const store = await tx('captures', 'readwrite');
-    await reqToPromise(store.delete(id));
-  },
-
-  async deleteFootageLocalOnly(id) {
-    const store = await tx('footage', 'readwrite');
     await reqToPromise(store.delete(id));
   },
 
@@ -472,10 +465,6 @@ const DB = {
     const cstore = await tx('captures', 'readwrite');
     await Promise.all(captures.map((c) => reqToPromise(cstore.delete(c.id))));
 
-    const footage = await this.getFootage(id);
-    const fstore = await tx('footage', 'readwrite');
-    await Promise.all(footage.map((f) => reqToPromise(fstore.delete(f.id))));
-
     const invoices = await this.getInvoicesForJob(id);
     const istore = await tx('invoices', 'readwrite');
     await Promise.all(invoices.map((i) => reqToPromise(istore.delete(i.id))));
@@ -491,7 +480,6 @@ const DB = {
     await this.recordDeletion('jobs', id);
     await this.recordDeletion('reports', id);
     for (const c of captures) await this.recordDeletion('captures', c.id);
-    for (const f of footage) await this.recordDeletion('footage', f.id);
     for (const i of invoices) await this.recordDeletion('invoices', i.id);
 
     const jstore = await tx('jobs', 'readwrite');
@@ -566,53 +554,6 @@ const DB = {
   async getCaptureCount(jobId) {
     const captures = await this.getCaptures(jobId);
     return captures.length;
-  },
-
-  // ---------- Footage (video, live-recorded or imported) ----------
-  async addFootage({ jobId, zone, source, kind, blob, fileName, note }) {
-    const store = await tx('footage', 'readwrite');
-    const now = Date.now();
-    const item = {
-      id: uid(),
-      jobId,
-      zone: zone || '',
-      source: source || 'live', // 'live' | 'imported'
-      kind: kind || 'video', // 'video' | 'photo'
-      blob,
-      fileName: fileName || '',
-      note: note || '',
-      createdAt: now,
-      updatedAt: now,
-    };
-    await reqToPromise(store.add(item));
-    if (window.Sync) window.Sync.pushFootage(item);
-    return item;
-  },
-
-  async getFootage(jobId) {
-    const store = await tx('footage', 'readonly');
-    const idx = store.index('jobId');
-    const all = await reqToPromise(idx.getAll(jobId));
-    return all.sort((a, b) => a.createdAt - b.createdAt);
-  },
-
-  // Low-level put used only by the sync layer — never re-triggers a push.
-  async putFootageRaw(item) {
-    const store = await tx('footage', 'readwrite');
-    await reqToPromise(store.put(item));
-    return item;
-  },
-
-  async getAllFootage() {
-    const store = await tx('footage', 'readonly');
-    return reqToPromise(store.getAll());
-  },
-
-  async deleteFootage(id) {
-    const store = await tx('footage', 'readwrite');
-    await reqToPromise(store.delete(id));
-    await this.recordDeletion('footage', id);
-    if (window.Sync) window.Sync.deleteFootageRemote(id);
   },
 
   // ---------- Reports ----------
@@ -692,9 +633,8 @@ const DB = {
   // ---------- Self-service backup ----------
   // Jobs, reports (with their full audit trails) and invoices — every record
   // that only lives in Postgres otherwise, so the business is not one
-  // Supabase incident from losing them. Deliberately excludes captures and
-  // footage: those are photo/video blobs that would make this megabytes-to-
-  // gigabytes and slow to generate on a phone, and they already have their
+  // Supabase incident from losing them. Deliberately excludes captures:
+  // those are photo blobs that would make this megabytes-to-gigabytes and slow to generate on a phone, and they already have their
   // own backup path once media.js syncs them to Supabase Storage. This export
   // is a belt to that path's suspenders, not a replacement for it.
   async exportAllData() {

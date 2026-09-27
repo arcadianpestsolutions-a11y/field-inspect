@@ -1,6 +1,6 @@
 // Blob backup to Supabase Storage — the durable half of sync.
 //
-// sync.js moves records (jobs, reports, capture/footage metadata). This module
+// sync.js moves records (jobs, reports, capture metadata). This module
 // moves the bytes those records point at: site photos, voice memos, inspection
 // video, and the photos attached to report sections. Records are small and
 // live in Postgres; bytes are large and live in the `inspection-media` bucket,
@@ -91,7 +91,7 @@
   // bucket instead of leaving orphaned bytes behind forever.
   async function listJobPaths(jobId) {
     const found = [];
-    for (const kind of ['capture', 'memo', 'footage', 'report']) {
+    for (const kind of ['capture', 'memo', 'report']) {
       try {
         const { data, error } = await supabaseClient.storage.from(BUCKET).list(`${jobId}/${kind}`, { limit: 1000 });
         if (error) throw error;

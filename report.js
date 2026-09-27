@@ -703,7 +703,7 @@
       hideAllAppViews();
       show(viewArchive);
     },
-    // Called by app.js once footage analysis comes back — either the
+    // Called by app.js once photo analysis comes back — either the
     // background run right after "Finish Inspection", or a manual re-run
     // from the AI Draft button. Never writes into report.sections directly;
     // suggestions only apply when a section is opened (see openSectionEditor).
@@ -792,22 +792,27 @@
       return;
     }
     aiDraftBtn.disabled = aiDraftInProgress;
-    if (aiDraftInProgress) { aiDraftBtn.textContent = '🤖 Analyzing footage…'; return; }
+    if (aiDraftInProgress) { aiDraftBtn.textContent = '🤖 Analyzing photos…'; return; }
     aiDraftBtn.textContent = currentReport && currentReport.aiDraft ? '🤖 Regenerate AI Draft' : '🤖 Generate AI Draft';
   }
 
   aiDraftBtn.addEventListener('click', async () => {
     if (!window.AI || aiDraftInProgress) return;
-    const footage = await DB.getFootage(currentJobId);
-    const liveVideo = footage
-      .filter((f) => f.kind === 'video' && f.source === 'live')
-      .sort((a, b) => b.createdAt - a.createdAt)[0];
-    if (!liveVideo) { toast('No recorded inspection footage found for this job yet — run Start/Finish Inspection first.'); return; }
+    // Reads the job's photographs. It used to look for a recorded video and
+    // refuse if there wasn't one, which stopped making sense the moment the
+    // app became camera-and-photos only — and photographs were always the
+    // better input anyway: considered, framed shots with a zone attached,
+    // rather than motion-blurred stills pulled out of a walkthrough.
+    const captures = (await DB.getCaptures(currentJobId)).filter((c) => c.photoBlob);
+    if (!captures.length) {
+      toast('No photos on this job yet — run Start Inspection and take some first.');
+      return;
+    }
 
     aiDraftInProgress = true;
     updateAiDraftButton();
     try {
-      const result = await window.AI.analyzeInspection(liveVideo.blob, currentJob && currentJob.jobType);
+      const result = await window.AI.analyzeInspectionPhotos(captures, currentJob && currentJob.jobType);
       await ReportUI.applyAiDraft(currentJobId, result);
       toast('AI draft ready — suggested values will appear when you open each section');
     } catch (err) {
@@ -1924,9 +1929,14 @@
         && currentReport.aiDraft.fieldReasons[currentSectionId]) || {};
       const why = reasons[field.id];
 
+      // Multiselects (Target Pests) arrive as an array. String() on one gives
+      // "Ants,Spiders" with no space, which reads like a typo on the screen
+      // and, worse, on the button the technician is being asked to press.
+      const shown = Array.isArray(suggested) ? suggested.join(', ') : String(suggested);
+
       const text = document.createElement('p');
       text.className = 'ai-offer-text';
-      text.innerHTML = `✨ AI would answer <strong>${escapeHtml(String(suggested))}</strong>`
+      text.innerHTML = `✨ AI would answer <strong>${escapeHtml(shown)}</strong>`
         + (why ? ` — ${escapeHtml(why)}` : '');
       offer.appendChild(text);
 
@@ -1936,7 +1946,10 @@
       const accept = document.createElement('button');
       accept.type = 'button';
       accept.className = 'btn btn-secondary ai-offer-accept';
-      accept.textContent = `Use "${String(suggested)}"`;
+      // Long multiselect answers would make a button wider than a phone, so
+      // the label falls back to a plain "Use this" once it stops being a
+      // short, readable answer a technician can agree with at a glance.
+      accept.textContent = shown.length <= 32 ? `Use "${shown}"` : 'Use this answer';
       accept.addEventListener('click', () => {
         pendingSectionValues[field.id] = suggested;
         aiSuggestedValues[field.id] = suggested;   // so recordAiReview still scores it

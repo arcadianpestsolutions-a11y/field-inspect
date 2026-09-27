@@ -1,5 +1,5 @@
 // Client for the `analyze-inspection` Supabase Edge Function — AI report
-// drafting and zone recognition from inspection footage. All API keys stay
+// drafting and zone recognition from inspection photographs. All API keys stay
 // server-side in the Edge Function; this module only ever talks to Supabase,
 // never Anthropic/OpenAI directly.
 //
@@ -163,46 +163,6 @@
   // timestamps, via a hidden <video> + canvas — same drawImage/toBlob shape
   // already used for inspectionStillBtn in app.js, just driven by seek()
   // instead of a live stream.
-  function extractFrames(videoBlob, maxFrames) {
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
-      const url = URL.createObjectURL(videoBlob);
-      video.src = url;
-
-      video.addEventListener('error', () => {
-        URL.revokeObjectURL(url);
-        reject(new Error('Could not read recorded video for frame extraction'));
-      });
-
-      video.addEventListener('loadedmetadata', async () => {
-        const duration = video.duration && isFinite(video.duration) ? video.duration : 0;
-        if (duration <= 0) { URL.revokeObjectURL(url); resolve([]); return; }
-
-        const count = Math.max(1, Math.min(maxFrames, Math.ceil(duration / 8)));
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 360;
-        const ctx = canvas.getContext('2d');
-        const frames = [];
-
-        for (let i = 0; i < count; i++) {
-          const t = (duration * (i + 0.5)) / count;
-          await new Promise((seekResolve) => {
-            video.addEventListener('seeked', seekResolve, { once: true });
-            video.currentTime = t;
-          });
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          frames.push({ timestamp: t, dataUrl: canvas.toDataURL('image/jpeg', 0.7) });
-        }
-
-        URL.revokeObjectURL(url);
-        resolve(frames);
-      });
-    });
-  }
-
   async function invoke(body) {
     let data;
     let error;
@@ -254,26 +214,6 @@
     };
   }
 
-  // Legacy path, kept for jobs recorded before inspections became photo-only
-  // and for footage brought in through Import Footage: samples frames, sends
-  // them plus the recording's audio for transcription and drafting. Returns
-  // { transcript, draftFields, frameNotes } — the caller persists this onto
-  // report.aiDraft, never straight into report.sections (suggestions only).
-  async function analyzeInspection(footageBlob, jobType) {
-    const frames = await extractFrames(footageBlob, 12);
-    const audioBase64 = await blobToBase64(footageBlob);
-    const fieldSchema = buildAiFillableFieldSchema(undefined, jobType);
-
-    return invoke({
-      action: 'draft-report',
-      reportType: jobType || 'termite',
-      frames,
-      audioBase64,
-      audioMimeType: footageBlob.type || 'video/webm',
-      fieldSchema,
-    });
-  }
-
   // Drafts the report from the photographs taken during a walkthrough — the
   // path used since inspections became photo-only.
   //
@@ -311,10 +251,10 @@
   // Analyzes just the photos attached to one report section's "photos" field
   // (e.g. the Access/Findings/Conducive sections' top-of-section photo
   // uploads) and drafts values for that section's aiFillable fields only.
-  // Reuses the same 'draft-report' Edge Function action as analyzeInspection
+  // Reuses the same 'draft-report' Edge Function action as analyzeInspectionPhotos
   // — it already treats audio as optional, so no audio is sent here at all.
   // Returns { transcript, draftFields, frameNotes } same shape as
-  // analyzeInspection; caller reads draftFields[sectionId].
+  // analyzeInspectionPhotos; caller reads draftFields[sectionId].
   async function analyzeSectionPhotos(photoBlobs, sectionId, jobType) {
     const frames = await Promise.all(photoBlobs.map(async (blob, i) => ({
       timestamp: i,
@@ -376,7 +316,7 @@
   }
 
   window.AI = {
-    analyzeInspection, analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline,
+    analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline,
     identifyPest, identifyTree, sortGeneralPhotos,
     // Exported so report.js formats its own catch blocks the same way,
     // rather than keeping a second copy of this logic in sync.

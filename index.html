@@ -140,7 +140,6 @@
       <div class="row gap wrap">
         <button id="start-inspection-btn" class="btn btn-primary flex1">▶ Start Inspection</button>
         <button id="finish-inspection-btn" class="btn btn-primary flex1 hidden">✨ Generate Form</button>
-        <button id="import-footage-btn" class="btn btn-secondary flex1">⤒ Import Footage</button>
       </div>
       <button id="view-report-btn" class="btn btn-outline full hidden">📄 Open Report</button>
       <div id="doc-type-row" class="doc-type-row hidden"></div>
@@ -157,7 +156,7 @@
     </div>
 
     <div id="gallery" class="gallery"></div>
-    <p id="gallery-empty" class="empty-hint">No captures yet for this job. Photos and notes are captured during Start/Finish Inspection, or via Import Footage.</p>
+    <p id="gallery-empty" class="empty-hint">No captures yet for this job. Photos and notes are captured during Start and Finish Inspection.</p>
   </main>
 
   <div id="selection-bar" class="action-bar selection-bar hidden">
@@ -181,23 +180,6 @@
   </div>
 </section>
 
-<!-- ============ IMPORT FOOTAGE MODAL ============ -->
-<section id="import-modal" class="modal hidden">
-  <div class="import-wrap">
-    <h2>Import Footage</h2>
-    <p class="import-hint">Bring in drone or other camera footage for this inspection. It's merged into this job's footage alongside anything recorded live.</p>
-    <label for="import-zone-input" class="zone-label">Zone / Area this footage covers</label>
-    <input id="import-zone-input" list="zone-suggestions" type="text" placeholder="e.g. Roof Void, Whole Property…" autocomplete="off" />
-    <input id="import-file-input" type="file" accept="video/*,image/*" multiple class="hidden" />
-    <button id="import-choose-btn" class="btn btn-primary full">Choose Video / Photo Files</button>
-    <div id="import-file-list" class="import-file-list"></div>
-    <div class="row gap">
-      <button id="import-cancel" class="btn btn-secondary flex1">Cancel</button>
-      <button id="import-save" class="btn btn-primary flex1" disabled>Add to Inspection</button>
-    </div>
-  </div>
-</section>
-
 <!-- ============ INSPECTION PHOTO CAPTURE (live camera preview) ============ -->
 <section id="inspection-modal" class="modal hidden">
   <div class="camera-wrap">
@@ -212,7 +194,6 @@
   </div>
   <div class="camera-controls">
     <button id="inspection-still-btn" class="icon-btn light" aria-label="Take still photo">📷</button>
-    <button id="inspection-import-btn" class="icon-btn light" aria-label="Import footage">⤒</button>
   </div>
   <button id="inspection-finish-btn" class="btn btn-primary generate-form-btn" aria-label="Generate form from these photos">✨ Generate Form</button>
 </section>
