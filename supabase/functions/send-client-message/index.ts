@@ -42,11 +42,24 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
-const RESEND_FROM_ADDRESS = Deno.env.get('RESEND_FROM_ADDRESS')!;
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
-const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+// Read as "string or empty", never with a non-null assertion. The assertion
+// does not check anything at runtime — it only stops the compiler asking — so
+// a missing secret used to surface as "Cannot read properties of undefined
+// (reading 'replace')" from somewhere deep in the send, which tells whoever
+// is reading it nothing at all. missingSecrets() below turns the same
+// situation into a sentence naming the variable to set.
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
+const RESEND_FROM_ADDRESS = Deno.env.get('RESEND_FROM_ADDRESS') || '';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+function missingSecrets(): string[] {
+  return Object.entries({
+    RESEND_API_KEY, RESEND_FROM_ADDRESS,
+    SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY,
+  }).filter(([, v]) => !v).map(([k]) => k);
+}
 
 const BUSINESS_NAME = Deno.env.get('BUSINESS_NAME') || 'Arcadian Pest Solutions';
 const BUSINESS_ABN = Deno.env.get('BUSINESS_ABN') || '';
@@ -78,6 +91,15 @@ const COMMERCIAL = new Set(['due_reminder']);
 const ALL_KINDS = new Set([...TRANSACTIONAL, ...COMMERCIAL]);
 
 // ---------------------------------------------------------------- text ---
+
+// Pulls the bare address out of either "Name <a@b.com>" or a plain "a@b.com".
+// Returns '' rather than throwing when handed nothing, because the caller
+// decides what a missing address means — for a commercial message it is fatal,
+// everywhere else it is simply unused.
+function bareAddress(from: string): string {
+  const match = /<([^>]+)>/.exec(from || '');
+  return (match ? match[1] : (from || '')).trim();
+}
 
 function esc(s: string): string {
   return String(s || '')
@@ -229,10 +251,24 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null) {
   const to = (job.client_email || '').trim();
   const { subject, body } = compose(kind, job);
 
-  const unsubMailto = `mailto:${REPLY_TO || RESEND_FROM_ADDRESS.replace(/.*<|>.*/g, '')}`
-    + `?subject=${encodeURIComponent('Unsubscribe')}`;
-
   const isCommercial = COMMERCIAL.has(kind);
+
+  // Only built when it is actually needed. It used to be computed for every
+  // message, so a transactional booking confirmation — which carries no
+  // unsubscribe at all — still crashed on a missing from-address.
+  //
+  // A commercial message without a working unsubscribe is not a slightly
+  // worse email, it is a breach of the Spam Act. So if one cannot be built,
+  // the send is refused rather than quietly going out non-compliant.
+  let unsubMailto = '';
+  if (isCommercial) {
+    const target = REPLY_TO || bareAddress(RESEND_FROM_ADDRESS);
+    if (!target) {
+      throw new Error('Refusing to send a commercial message with no unsubscribe '
+        + 'address. Set BUSINESS_REPLY_TO, or a valid RESEND_FROM_ADDRESS.');
+    }
+    unsubMailto = `mailto:${target}?subject=${encodeURIComponent('Unsubscribe')}`;
+  }
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;
       font-size:15px;line-height:1.6;color:#10161a;max-width:560px">
       ${body}
@@ -295,6 +331,14 @@ const JOB_COLUMNS = 'id, name, address, client_email, scheduled_at, next_due_at,
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+
+  // Checked before anything else, so a missing secret is reported as the
+  // setup problem it is rather than as a runtime error from wherever it
+  // first gets used.
+  const missing = missingSecrets();
+  if (missing.length) {
+    return json({ error: `Not configured — these secrets are not set: ${missing.join(', ')}` }, 500);
+  }
 
   try {
     // Two legitimate callers, and they authenticate differently. A technician's
