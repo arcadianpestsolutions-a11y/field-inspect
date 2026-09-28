@@ -92,8 +92,13 @@ Deno.serve(async (req) => {
 
   const { data: feed, error: feedError } = await admin
     .from('calendar_feed')
-    .select('token')
-    .eq('id', 'default')
+    // The token identifies the business, so it is looked up BY TOKEN rather
+    // than by a fixed id. This function runs on the service_role key, which
+    // bypasses row-level security entirely — the org_id that comes back here
+    // is the only thing scoping the diary below, and without it every
+    // subscriber would receive every business's bookings.
+    .select('token, org_id')
+    .eq('token', token)
     .maybeSingle();
 
   if (feedError) {
@@ -102,6 +107,14 @@ Deno.serve(async (req) => {
   }
   if (!feed || feed.token !== token) {
     return textResponse('Invalid or revoked calendar feed link. Generate a new one in Scope.', 403);
+  }
+  // A feed row with no organisation would scope nothing, and an unscoped
+  // query on the service_role key returns every business's diary. Refused
+  // rather than answered: an empty calendar is a support call, the other
+  // outcome is a breach.
+  if (!feed.org_id) {
+    console.error('calendar_feed row has no org_id — refusing to serve an unscoped diary');
+    return textResponse('This calendar link is not linked to a business. Generate a new one in Scope.', 403);
   }
 
   // A year each way is generous for a pest-control diary and keeps the feed
@@ -122,6 +135,7 @@ Deno.serve(async (req) => {
     const { data, error: jobsError } = await admin
       .from('jobs')
       .select('id, name, job_type, address, notes, client_phone, status, scheduled_at, scheduled_duration_mins, updated_at')
+      .eq('org_id', feed.org_id)
       .not('scheduled_at', 'is', null)
       .gte('scheduled_at', now - windowMs)
       .lte('scheduled_at', now + windowMs)

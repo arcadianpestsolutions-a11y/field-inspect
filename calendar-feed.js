@@ -72,7 +72,11 @@
   async function loadCurrentToken() {
     const c = client();
     if (!c) return null;
-    const { data, error } = await c.from('calendar_feed').select('token').eq('id', 'default').maybeSingle();
+    // Row-level security already limits this to your own business, so an
+    // unfiltered select returns your feed and nothing else. It is NOT looked
+    // up by id = 'default' any more: that was a single-tenant assumption
+    // hiding in a primary key, and two businesses cannot both be 'default'.
+    const { data, error } = await c.from('calendar_feed').select('token').limit(1).maybeSingle();
     if (error) {
       // 42P01 = table doesn't exist yet — migration 010 not run. Anything
       // else is worth seeing in the console, but neither should crash the
@@ -87,8 +91,15 @@
     const c = client();
     if (!c) throw new Error('Sign in to set up the calendar feed.');
     const user = window.Sync && window.Sync.currentUser ? window.Sync.currentUser() : null;
+    // Keyed by the business, so regenerating replaces your own row rather
+    // than fighting another business for 'default'. org_id itself is left to
+    // the column's server-side default (see migration 023) — the app cannot
+    // set it, which is the whole point: a row can only ever be written into
+    // the caller's own organisation.
+    const orgId = (window.Org && window.Org.get().id) || '';
+    if (!orgId) throw new Error('Business details have not loaded yet — try again in a moment.');
     const { error } = await c.from('calendar_feed').upsert({
-      id: 'default',
+      id: orgId,
       token,
       created_by: user ? user.id : null,
       created_at: Date.now(),

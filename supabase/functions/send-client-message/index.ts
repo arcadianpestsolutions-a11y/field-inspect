@@ -152,6 +152,7 @@ type JobRow = {
   next_due_at: number | null;
   job_type: string | null;
   comms_opt_out: boolean | null;
+  org_id: string | null;
 };
 
 function serviceLabel(jobType: string | null): string {
@@ -324,7 +325,7 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null) {
 
 const JOB_COLUMNS = 'id, name, address, client_email, scheduled_at, next_due_at, '
   + 'job_type, comms_opt_out, confirmation_sent_for_at, day_before_sent_for_at, '
-  + 'reminder_sent_for_due_at';
+  + 'reminder_sent_for_due_at, org_id';
 
 // ----------------------------------------------------------------- serve ---
 
@@ -349,6 +350,7 @@ Deno.serve(async (req) => {
     const isScheduled = bearer.length > 0 && bearer === SERVICE_ROLE_KEY;
 
     let triggeredBy: string | null = null;
+    let callerOrgId: string | null = null;
     if (!isScheduled) {
       const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         global: { headers: { Authorization: authHeader } },
@@ -356,6 +358,15 @@ Deno.serve(async (req) => {
       const { data: { user }, error: authError } = await userClient.auth.getUser();
       if (authError || !user) return json({ error: 'Not authenticated' }, 401);
       triggeredBy = user.id;
+
+      // Which business the caller belongs to. Everything below runs on the
+      // service_role key, which bypasses row-level security — so "signed in"
+      // is not the same as "allowed to see this job", and without this the
+      // function would happily email another business's client on request.
+      const { data: role } = await admin
+        .from('user_roles').select('org_id').eq('user_id', user.id).maybeSingle();
+      callerOrgId = (role && role.org_id) || null;
+      if (!callerOrgId) return json({ error: 'Your account is not linked to a business yet.' }, 403);
     }
 
     const body = await req.json().catch(() => ({}));
@@ -373,7 +384,11 @@ Deno.serve(async (req) => {
       const windowStart = now + 20 * 60 * 60 * 1000; // ~20h out
       const windowEnd = now + 32 * 60 * 60 * 1000;   // ~32h out
 
+      // Scoped to the caller's business. A sweep is the one operation here
+      // that touches every job at once, so an unscoped one would email every
+      // client of every business on the platform from a single request.
       let query = admin.from('jobs').select(JOB_COLUMNS).eq('comms_opt_out', false);
+      if (callerOrgId) query = query.eq('org_id', callerOrgId);
       if (kind === 'day_before') {
         query = query.gte('scheduled_at', windowStart).lte('scheduled_at', windowEnd);
       } else if (kind === 'due_reminder') {
@@ -424,6 +439,14 @@ Deno.serve(async (req) => {
 
     const job = data as JobRow | null;
     if (!job) return json({ error: 'job-not-found', sent: false }, 404);
+
+    // Same answer as a job that does not exist, deliberately. Distinguishing
+    // "not yours" from "not found" tells a caller which job ids are real in
+    // other businesses, which is information they should not be able to
+    // collect one request at a time.
+    if (callerOrgId && job.org_id !== callerOrgId) {
+      return json({ error: 'job-not-found', sent: false }, 404);
+    }
 
     // A refusal is a normal outcome, not a failure. The app shows these to a
     // technician as plain sentences, so they stay machine-readable here.
