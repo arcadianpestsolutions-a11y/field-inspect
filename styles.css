@@ -2367,3 +2367,55 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   font-size: 0.76rem;
   line-height: 1.35;
 }
+
+/* ---------- Business details ----------
+   The name, licence number and phone that go on every document. These were
+   constants in three schema files until v78; a licence number in a source
+   file is one nobody can correct from a driveway. */
+#business-panel {
+  /* .modal is a column flexbox for full-screen camera views; a settings card
+     needs centring in both axes and a scrim rather than a solid black fill. */
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  padding: 20px;
+}
+.business-card {
+  width: min(520px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  margin: auto;
+  padding: 22px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.business-card h2 { margin: 0 0 6px; font-size: 1.05rem; }
+.business-hint {
+  margin: 0 0 18px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.business-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+.business-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.business-field input {
+  padding: 11px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+}

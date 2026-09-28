@@ -416,7 +416,7 @@
       </tr>`).join('');
 
     return `
-      <div class="brand">ARCADIAN PEST SOLUTIONS</div>
+      <div class="brand">${escapeHtml((window.Org && window.Org.businessName()) || "")}</div>
       <h1>Tax Invoice</h1>
       <div class="muted">${escapeHtml(current.number)}</div>
       <div class="meta">

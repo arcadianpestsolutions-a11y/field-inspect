@@ -1,5 +1,5 @@
 // Report schema — single source of truth for the digital Termite Inspection
-// Report, modelled on Arcadian Pest Solutions' AS 3660.2-2017 report template.
+// Report, modelled on an AS 3660.2-2017 report template.
 //
 // Each section has: id, number, title, icon, color, fields[]
 // Each field has: id, label, type, options?, showIf?, required?, aiFillable?, default?
@@ -85,10 +85,10 @@ const REPORT_SCHEMA = [
         id: 'inspectionType', label: 'Inspection Type Requested', type: 'static',
         default: 'Standard Timber Pest Inspection in accordance with AS 4349.3-2010',
       },
-      { id: 'providerName', label: 'Inspection Provider', type: 'static', default: 'Arcadian Pest Solutions' },
-      { id: 'providerAddress', label: 'Address', type: 'static', default: '' },
-      { id: 'providerPhone', label: 'Phone', type: 'static', default: '0291271320' },
-      { id: 'providerEmail', label: 'Email', type: 'static', default: 'tal@arcadianpestsolutions.com.au' },
+      { id: 'providerName', label: 'Inspection Provider', type: 'static', orgField: 'providerName' },
+      { id: 'providerAddress', label: 'Address', type: 'static', orgField: 'providerAddress' },
+      { id: 'providerPhone', label: 'Phone', type: 'static', orgField: 'providerPhone' },
+      { id: 'providerEmail', label: 'Email', type: 'static', orgField: 'providerEmail' },
       // The pre-engagement agreement is the strongest document available when
       // a claim is made, because it fixes scope and access limitations BEFORE
       // the inspection rather than describing them afterwards. AS 3660.2 lists
@@ -443,7 +443,7 @@ const REPORT_SCHEMA = [
       { id: 'inspectorAddress', label: 'Inspector Address', type: 'text' },
       { id: 'inspectorLicence', label: 'Inspector Licence', type: 'text', required: true },
       { id: 'inspectorPhone', label: 'Inspector Phone', type: 'text' },
-      { id: 'signedOnBehalfOf', label: 'Signed on behalf of', type: 'static', default: 'Arcadian Pest Solutions' },
+      { id: 'signedOnBehalfOf', label: 'Signed on behalf of', type: 'static', orgField: 'signedOnBehalfOf' },
       { id: 'inspectorSignature', label: 'Inspector Signature', type: 'signature', required: true },
       { id: 'signatureDate', label: 'Date', type: 'date' },
     ],
@@ -597,9 +597,22 @@ function reportValidationErrors(schema, sections) {
   return out;
 }
 
-function defaultValuesForSection(section) {
+// `org` supplies the provider block — business name, phone, email, address.
+// Those used to be schema defaults with the company name written into them,
+// which is why two businesses could not use the same file.
+//
+// Stamped onto the report at creation, not read live at render. A report is a
+// record of what was said on the day: if the office phone changes next year,
+// last year's report must keep showing the number that was on it when it was
+// signed.
+function defaultValuesForSection(section, org) {
+  const provider = (org && typeof org.provider === 'function') ? org.provider() : (org || {});
   const values = {};
   for (const field of section.fields) {
+    if (field.orgField) {
+      values[field.id] = provider[field.orgField] || '';
+      continue;
+    }
     if (field.default !== undefined) values[field.id] = field.default;
   }
   return values;

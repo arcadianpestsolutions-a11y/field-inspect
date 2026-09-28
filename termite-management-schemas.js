@@ -3,7 +3,7 @@
 //
 // WHY THESE EXIST
 // The app has always had one termite report, which conflated two different
-// standards and covered only the inspection. Arcadian's actual record shows
+// standards and covered only the inspection. The real-world record shows
 // the inspection is less than half the termite work:
 //
 //   Termite Inspection Report (AS 3660.2)          116 submissions
@@ -49,7 +49,7 @@
         { id: 'inspectorName', label: 'Technician Name', type: 'text', required: true },
         { id: 'inspectorLicence', label: 'Pest Management Licence Number', type: 'text', required: true },
         { id: 'inspectorPhone', label: 'Technician Phone', type: 'text' },
-        { id: 'signedOnBehalfOf', label: 'Signed on behalf of', type: 'static', default: 'Arcadian Pest Solutions' },
+        { id: 'signedOnBehalfOf', label: 'Signed on behalf of', type: 'static', orgField: 'signedOnBehalfOf' },
         { id: 'inspectorSignature', label: 'Technician Signature', type: 'signature', required: true },
         { id: 'signatureDate', label: 'Date', type: 'date' },
       ],
@@ -202,7 +202,7 @@
         {
           id: 'warrantyConditions', label: 'Conditions the client must meet',
           type: 'multiselect', required: true, showIf: { field: 'warrantyOffered', equals: 'Yes' },
-          options: ['Annual inspection by Arcadian Pest Solutions',
+          options: ['Annual inspection by us',
             'Six-monthly inspection where risk is high',
             'Treated zone must not be disturbed or breached',
             'Conducive conditions listed in the report to be rectified',

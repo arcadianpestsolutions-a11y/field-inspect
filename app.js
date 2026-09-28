@@ -1967,6 +1967,107 @@
   finishInspectionBtn.addEventListener('click', finishInspection);
   inspectionFinishBtn.addEventListener('click', finishInspection);
 
+  // ---------- Business details ----------
+  // The name, licence number and phone that go on every document. These used
+  // to be constants in three schema files and two renderers; editing them
+  // meant a deploy, which is not a thing a person can do from a driveway.
+  //
+  // Built in JS rather than index.html for the reason renderJobPermissions
+  // gives: a stale cached shell must not be able to hide the screen that
+  // fixes a wrong licence number on outgoing reports.
+  const businessDetailsBtn = document.getElementById('business-details-btn');
+
+  const BUSINESS_FIELDS = [
+    { key: 'name', label: 'Registered business name' },
+    { key: 'tradingName', label: 'Trading name (what clients see)' },
+    { key: 'abn', label: 'ABN' },
+    { key: 'licenceNumber', label: 'Pest management licence number' },
+    { key: 'phone', label: 'Phone' },
+    { key: 'email', label: 'Email' },
+    { key: 'address', label: 'Address' },
+    { key: 'website', label: 'Website' },
+  ];
+
+  async function openBusinessDetails() {
+    if (!window.Org) { toast('Business details are not available in this mode.'); return; }
+    // Refreshed first so two devices cannot quietly overwrite each other with
+    // whatever each happened to have cached.
+    await window.Org.refresh().catch(() => {});
+    const current = window.Org.get();
+
+    const existing = document.getElementById('business-panel');
+    if (existing) existing.remove();
+
+    const panel = document.createElement('section');
+    panel.id = 'business-panel';
+    panel.className = 'modal';
+
+    const card = document.createElement('div');
+    card.className = 'business-card';
+
+    const h = document.createElement('h2');
+    h.textContent = 'Business details';
+    card.appendChild(h);
+
+    const hint = document.createElement('p');
+    hint.className = 'business-hint';
+    hint.textContent = 'These appear on every report and invoice you issue. '
+      + 'Changing them here changes what new documents say — reports already '
+      + 'finalized keep the details they were signed with.';
+    card.appendChild(hint);
+
+    const inputs = {};
+    for (const f of BUSINESS_FIELDS) {
+      const wrap = document.createElement('label');
+      wrap.className = 'business-field';
+      wrap.appendChild(Object.assign(document.createElement('span'), {
+        className: 'business-label', textContent: f.label,
+      }));
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = `business-${f.key}`;
+      input.value = current[f.key] || '';
+      inputs[f.key] = input;
+      wrap.appendChild(input);
+      card.appendChild(wrap);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'row gap';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-secondary flex1';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => panel.remove());
+
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'btn btn-primary flex1';
+    save.textContent = 'Save';
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      const changes = {};
+      for (const f of BUSINESS_FIELDS) changes[f.key] = inputs[f.key].value.trim();
+      if (!changes.name) { toast('A registered business name is required.'); save.disabled = false; return; }
+      try {
+        await window.Org.save(changes);
+        toast('Business details saved');
+        panel.remove();
+      } catch (e) {
+        toast(e.message || 'Could not save the business details.');
+        save.disabled = false;
+      }
+    });
+
+    actions.append(cancel, save);
+    card.appendChild(actions);
+    panel.appendChild(card);
+    document.body.appendChild(panel);
+    inputs.name.focus();
+  }
+
+  if (businessDetailsBtn) businessDetailsBtn.addEventListener('click', openBusinessDetails);
+
   // ---------- Which document is this job producing? ----------
   // Termite work is five different documents, not one. The job screen offers
   // whichever apply, with the one already started shown as current — a
@@ -2250,6 +2351,11 @@
       if (session) {
         showLoggedInUI(session);
         showJobListView();
+        // Business details and the team roster, before the job list draws —
+        // they decide what a report header says and whose name appears on a
+        // job. Not awaited: a cached profile is already on hand, and the app
+        // must not wait on the network to show the diary.
+        if (window.Org) window.Org.refresh().then(() => renderJobList());
         Sync.pullAll().then(() => renderJobList());
         // Xero sends the technician back here with ?code= after they grant
         // access. It can only be redeemed while signed in, since the exchange

@@ -20,7 +20,7 @@
   <main class="content login-content">
     <div class="login-card">
       <h1 class="login-title">Scope</h1>
-      <p class="login-sub">Sign in with your Arcadian Pest Solutions account to sync jobs and reports across devices.</p>
+      <p class="login-sub">Sign in to sync your jobs and reports across devices.</p>
       <input id="login-email" type="email" placeholder="Email" autocomplete="username" />
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" />
       <button id="login-btn" class="btn btn-primary full">Log In</button>
@@ -42,6 +42,7 @@
   <div id="sync-bar" class="sync-bar hidden">
     <span id="sync-status-text" class="sync-status-text">Signed in</span>
     <span class="sync-actions">
+      <button id="business-details-btn" class="link-btn">Business</button>
       <button id="sync-now-btn" class="link-btn">Sync now</button>
       <button id="logout-btn" class="link-btn">Log out</button>
     </span>
@@ -498,6 +499,7 @@
 <script src="termite-management-schemas.js"></script>
 <script src="invoicing.js"></script>
 <script src="sync.js"></script>
+<script src="org.js"></script>
 <script src="media.js"></script>
 <script src="xero.js"></script>
 <script src="geo.js"></script>

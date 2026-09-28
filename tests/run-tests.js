@@ -3097,6 +3097,98 @@
     assert(!filed || !filed.length, 'an unticked proposal files nothing');
   });
 
+  // ---------- The business is data, not code ----------
+  // "Arcadian Pest Solutions" was written into ten application files. A
+  // licence number in a source file is one nobody can correct from a
+  // driveway, and it is why two businesses could not use the same build.
+
+  test('Business: no schema hardcodes a company name any more', () => {
+    const win = frame.contentWindow;
+    const schemas = [win.REPORT_SCHEMA, win.PEST_TREATMENT_SCHEMA,
+      win.TERMITE_ACTION_PLAN_SCHEMA, win.TERMITE_MONITORING_SCHEMA,
+      win.TERMITE_CERTIFICATE_SCHEMA];
+    for (const schema of schemas) {
+      assert(schema, 'every schema is loaded');
+      for (const section of schema) {
+        for (const field of section.fields || []) {
+          const text = JSON.stringify(field);
+          assert(!/arcadian/i.test(text),
+            `${section.id}.${field.id} still names a specific business: ${text.slice(0, 90)}`);
+        }
+      }
+    }
+  });
+
+  test('Business: provider fields are filled from the organisation', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const agreement = win.REPORT_SCHEMA.find((s) => s.id === 'agreement');
+    assert(agreement, 'the agreement section exists');
+
+    const providerFields = agreement.fields.filter((f) => f.orgField);
+    assert(providerFields.length >= 3,
+      'the provider block reads from the organisation rather than schema defaults');
+
+    const fakeOrg = {
+      provider: () => ({
+        providerName: 'Testing Pest Co',
+        providerPhone: '0400 000 000',
+        providerEmail: 'hello@testing.example',
+        providerAddress: '1 Test Lane',
+        signedOnBehalfOf: 'Testing Pest Co',
+      }),
+    };
+    const values = U.defaultValuesForSection(agreement, fakeOrg);
+    assertEqual(values.providerName, 'Testing Pest Co', 'the business name comes from the org');
+    assertEqual(values.providerPhone, '0400 000 000', 'as does the phone');
+
+    // And with no org at all it must be blank, never a guess. A blank
+    // provider line is obvious and gets fixed; an invented one gets signed.
+    const blank = U.defaultValuesForSection(agreement, null);
+    assertEqual(blank.providerName, '', 'no organisation means empty, not a fallback company');
+  });
+
+  test('Business: a finalized report keeps the details it was signed with', async () => {
+    // Static fields used to render the SCHEMA DEFAULT rather than the stored
+    // value, so changing the office phone number silently rewrote the
+    // provider line on every report ever issued. On a compliance document
+    // that is not a cosmetic bug.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    const job = await win.DB.addJob({ name: 'Old report', jobType: 'termite' });
+    await win.DB.saveReport({
+      jobId: job.id, documentType: 'timber_pest_inspection', finalizedAt: null,
+      sections: { agreement: { providerName: 'The Name It Was Signed Under' } },
+    });
+
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    const li = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((el) => /About Our Agreement/.test(el.textContent));
+    assert(li, 'the agreement section is listed');
+    li.click();
+    await waitFor(() => doc.querySelectorAll('#view-report-section .field-static').length > 0,
+      'the section opens');
+
+    const statics = Array.from(doc.querySelectorAll('#view-report-section .field-static'))
+      .map((el) => el.textContent);
+    assert(statics.some((t) => /The Name It Was Signed Under/.test(t)),
+      `the stored provider name is what shows: ${statics.join(' | ').slice(0, 120)}`);
+  });
+
+  test('Business: a technician name comes from the roster, not a table in the source', () => {
+    const win = frame.contentWindow;
+    assert(typeof win.Org.nameFor === 'function', 'the org module resolves names');
+    // Unknown logins fall back to the email — never blank, because "someone"
+    // is more use than nothing on a shared job list.
+    assertEqual(win.Org.nameFor('nobody@example.com'), 'nobody@example.com',
+      'an unrecognised login shows as its email');
+    assertEqual(win.Org.nameFor(''), '', 'and nothing in means nothing out');
+    assertEqual(win.technicianDisplayName('nobody@example.com'), 'nobody@example.com',
+      'the job list uses the same resolution');
+  });
+
   // ---------- Rodent stations ----------
 
   test('General pest: the rodent station section stays hidden unless there are stations', async () => {

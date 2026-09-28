@@ -1,4 +1,9 @@
-(() => {
+  // Turns a job's assignedTo email into a name worth showing on a job list or
+  // a scheduler slot. Reads the team roster rather than a table in this file.
+  window.technicianDisplayName = function technicianDisplayName(email) {
+    if (!email) return '';
+    return window.Org ? window.Org.nameFor(email) : email;
+  };(() => {
   'use strict';
 
   // Every AI failure shown to a technician goes through here. The real
@@ -502,7 +507,7 @@
       : defaultDocumentType(job);
     const sections = {};
     for (const section of schemaFor(job && job.jobType, { documentType })) {
-      sections[section.id] = defaultValuesForSection(section);
+      sections[section.id] = defaultValuesForSection(section, window.Org);
     }
     sections.clientDetails = {
       ...sections.clientDetails,
@@ -1708,27 +1713,17 @@
   reportExportBtn.addEventListener('click', () => exportPdf());
 
   // ---------- Section editor ----------
-  // Per-login Inspector Details defaults, keyed by the technician's Supabase
-  // Auth email (case-insensitive). Extend this table as more technicians
-  // are added; anyone not listed just gets blank fields as before.
-  const INSPECTOR_DEFAULTS_BY_EMAIL = {
-    'talpavlich@hotmail.com': {
-      inspectorName: 'Tal Pavlich',
-      inspectorAddress: 'Ingleburn',
-      inspectorLicence: '5095443',
-      inspectorPhone: '0291271320', // Arcadian Pest Solutions office number (matches providerPhone's default)
-    },
-  };
+  // Inspector Details defaults used to be a table in this file, keyed by
+  // email address, with one technician in it. Adding a second meant editing
+  // source and deploying. They live on the person's own record now — see
+  // org.js and migration 022.
 
-  // Same table, reused for a different job: turning a job's assignedTo
-  // email into a name worth showing on a job list or a scheduler slot. A
-  // login not yet added to INSPECTOR_DEFAULTS_BY_EMAIL just shows as its
-  // email — never blank, since "someone" is always better than nothing on
-  // a shared job list.
+  // Turns a job's assignedTo email into a name worth showing on a job list or
+  // a scheduler slot. Never blank: an unrecognised login shows as its email,
+  // because "someone" is always more use than nothing on a shared list.
   window.technicianDisplayName = function technicianDisplayName(email) {
     if (!email) return '';
-    const defaults = INSPECTOR_DEFAULTS_BY_EMAIL[email.toLowerCase()];
-    return (defaults && defaults.inspectorName) || email;
+    return window.Org ? window.Org.nameFor(email) : email;
   };
 
   // Merges AI-suggested values into pendingSectionValues, same rule
@@ -1939,10 +1934,12 @@
     startAutosave();
 
     if (sectionId === 'inspector') {
-      const email = await getCurrentUserEmail();
-      const defaults = email && INSPECTOR_DEFAULTS_BY_EMAIL[email.toLowerCase()];
+      // From the signed-in technician's own profile, not a lookup table in
+      // this file. Adding a second technician used to mean a deploy.
+      const defaults = window.Org ? window.Org.inspector() : null;
       if (defaults) {
         for (const [fieldId, value] of Object.entries(defaults)) {
+          if (!value) continue;
           const current = pendingSectionValues[fieldId];
           const isEmpty = current === undefined || current === null || current === '';
           if (isEmpty) pendingSectionValues[fieldId] = value;
@@ -2096,7 +2093,16 @@
     if (field.type === 'static') {
       const val = document.createElement('div');
       val.className = 'field-static';
-      val.textContent = field.default || '';
+      // The STORED value, not the schema default. It used to render the
+      // default, which meant a finalized report displayed whatever the
+      // constant happened to say today rather than what it said when it was
+      // signed — so changing the office phone number silently rewrote the
+      // provider line on every report ever issued. On a compliance document
+      // that is not a cosmetic bug.
+      const stored = pendingSectionValues[field.id];
+      val.textContent = (stored !== undefined && stored !== null && stored !== '')
+        ? stored
+        : (field.default || '');
       row.appendChild(val);
     } else if (field.type === 'text') {
       const input = document.createElement('input');
@@ -4019,7 +4025,7 @@
     const standardLine = isPestTreatment
       ? 'Chemical Application Record'
       : 'In Accordance with AS 4349.3-2010 and AS 3660.2-2017';
-    let html = `<div class="brand">ARCADIAN PEST SOLUTIONS</div>
+    let html = `<div class="brand">${escapeHtml((window.Org && window.Org.businessName()) || "")}</div>
       <h1>${escapeHtml(reportTitleFor(job && job.jobType, report))}</h1>
       <p>${standardLine}<br>${escapeHtml(job ? job.address : '')}</p>`;
 
