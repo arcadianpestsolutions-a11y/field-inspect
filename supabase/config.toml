@@ -412,3 +412,15 @@ enabled = true
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# calendar-feed is the one function that cannot sit behind Supabase auth.
+# A calendar app subscribing to a URL has no way to log in, so the token in
+# the query string IS the credential — unguessable, and revocable by
+# regenerating it. Left verified, every subscription request bounces with a
+# 401 before the function's own code runs, and the failure gives no clue why:
+# it just looks like the feed is broken.
+#
+# Recorded here rather than left as a dashboard toggle so it survives a
+# redeploy and is visible to whoever reads this next.
+[functions.calendar-feed]
+verify_jwt = false

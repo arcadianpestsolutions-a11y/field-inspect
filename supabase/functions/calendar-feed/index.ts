@@ -110,16 +110,32 @@ Deno.serve(async (req) => {
   const windowMs = 366 * 24 * 60 * 60 * 1000;
   const now = Date.now();
 
-  const { data: jobs, error: jobsError } = await admin
-    .from('jobs')
-    .select('id, name, job_type, address, notes, client_phone, status, scheduled_at, scheduled_duration_mins, updated_at')
-    .not('scheduled_at', 'is', null)
-    .gte('scheduled_at', now - windowMs)
-    .lte('scheduled_at', now + windowMs);
+  // Paged, because PostgREST caps a single response at max_rows — 1000 on
+  // this project, set in supabase/config.toml — and says nothing about having
+  // truncated it. On a calendar feed that silence is worse than an error: the
+  // subscription keeps working, keeps refreshing, and simply stops containing
+  // some of the diary. Two years of a busy book passes 1000 bookings easily,
+  // and the jobs that vanish would be the ones nobody noticed were missing.
+  const PAGE = 1000;
+  const jobs: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error: jobsError } = await admin
+      .from('jobs')
+      .select('id, name, job_type, address, notes, client_phone, status, scheduled_at, scheduled_duration_mins, updated_at')
+      .not('scheduled_at', 'is', null)
+      .gte('scheduled_at', now - windowMs)
+      .lte('scheduled_at', now + windowMs)
+      .order('id', { ascending: true })   // a stable order, or pages overlap and skip
+      .range(from, from + PAGE - 1);
 
-  if (jobsError) {
-    console.error(jobsError);
-    return textResponse('Could not read the job diary.', 500);
+    if (jobsError) {
+      console.error(jobsError);
+      return textResponse('Could not read the job diary.', 500);
+    }
+    const batch = data || [];
+    for (const row of batch) jobs.push(row);
+    if (batch.length < PAGE) break;
+    if (from > PAGE * 100) break;  // a stop, not a limit — 100k bookings is not real
   }
 
   const lines: string[] = [
