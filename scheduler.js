@@ -87,33 +87,26 @@
   // A real routing API would be more accurate and would also mean another
   // key, another bill, another thing that fails with no signal in a subfloor.
   // Worth doing only if these estimates turn out to be wrong in practice.
-  const ROAD_WINDING_FACTOR = 1.3;   // straight line -> actual road distance
-  const AVERAGE_SPEED_KMH = 40;      // door to door, not open-road speed
-  const GEAR_MINUTES = 10;           // packing up and unpacking at each end
-
-  function haversineKm(lat1, lng1, lat2, lng2) {
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const EARTH_RADIUS_KM = 6371;
-    const dLat = toRad(lat2 - lat1);
-    const dLng = toRad(lng2 - lng1);
-    const a = Math.sin(dLat / 2) ** 2
-      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-    return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)));
-  }
+  // The estimate itself now lives in availability.js, so the diary, the
+  // booking assistant and (later) a client picking their own slot all work
+  // from the same numbers instead of three copies that drifted apart.
+  //
+  // This is the internal view of the working day: the full 7am–6pm grid, no
+  // lead time, and hourly steps because that is what the grid draws. The
+  // public-facing defaults in availability.js are deliberately narrower.
+  const AVAIL_HOURS = { 0: [DAY_START_HOUR, DAY_END_HOUR], 1: [DAY_START_HOUR, DAY_END_HOUR],
+    2: [DAY_START_HOUR, DAY_END_HOUR], 3: [DAY_START_HOUR, DAY_END_HOUR],
+    4: [DAY_START_HOUR, DAY_END_HOUR], 5: [DAY_START_HOUR, DAY_END_HOUR],
+    6: [DAY_START_HOUR, DAY_END_HOUR] };
+  const AVAIL_CONFIG = { hours: AVAIL_HOURS, slotStepMins: 60, minLeadMins: 0 };
 
   function hasCoords(job) {
     return !!job && typeof job.addressLat === 'number' && typeof job.addressLng === 'number';
   }
 
-  // Null, not zero, when either end has no coordinates. Coordinates are only
-  // saved when the address was picked from the suggestion list rather than
-  // typed freehand, so plenty of real jobs have none — and a missing
-  // estimate must never be mistaken for "no travel needed".
   function travelMinutesBetween(fromJob, toJob) {
-    if (!hasCoords(fromJob) || !hasCoords(toJob)) return null;
-    const km = haversineKm(fromJob.addressLat, fromJob.addressLng, toJob.addressLat, toJob.addressLng);
-    const minutes = ((km * ROAD_WINDING_FACTOR) / AVERAGE_SPEED_KMH) * 60 + GEAR_MINUTES;
-    return Math.max(5, Math.round(minutes / 5) * 5);
+    if (!window.Availability) return null;
+    return window.Availability.travelMinutesBetween(fromJob, toJob, window.Availability.configFrom(AVAIL_CONFIG));
   }
 
   // The job immediately before this one on the same day, by start time.
@@ -492,24 +485,56 @@
     }
   }
 
+  // One-tap Book. This used to walk whole hours from 8am looking for one that
+  // was not the START of another job — which meant a job long enough to run
+  // into a later booking sailed through the search, and a drive across the
+  // region was not considered at all. Both mistakes were then caught (or
+  // waved through) by the confirm dialog afterwards, which is the wrong place
+  // to discover them: the tap is supposed to pick a time that works.
+  //
+  // Now it asks availability.js for the first slot that genuinely fits — the
+  // job's real duration, the day's existing bookings, and the drive to and
+  // from its neighbours. The confirm below stays as the safety net, and on a
+  // day with nothing workable it says so instead of booking a bad time.
   async function bookIntoFirstFreeSlot(job) {
-    const taken = new Set();
-    for (const j of jobsOn(selected)) {
-      const h = new Date(j.scheduledAt).getHours();
-      for (let i = 0; i < Math.ceil(durationOf(j) / 60); i++) taken.add(h + i);
+    const dayStart = new Date(selected).setHours(0, 0, 0, 0);
+    const dayEnd = new Date(selected).setHours(23, 59, 59, 999);
+    const mins = durationOf(job);
+
+    let slot = null;
+    if (window.Availability) {
+      slot = window.Availability.nextFreeSlot({
+        jobs,
+        durationMins: mins,
+        at: job,
+        excludeJobId: job.id,
+        from: dayStart,
+        to: dayEnd,
+        // The technician picked this day by tapping it. If the day has already
+        // been, they are back-filling work that is done, so the clock is read
+        // as that morning rather than every hour being refused for having
+        // passed. On today, the clock is now, so gone hours are not offered.
+        now: dayEnd < Date.now() ? dayStart : Date.now(),
+        policy: 'advisory',
+        config: Object.assign({}, AVAIL_CONFIG, {
+          // The grid opens at 7 so an early start can be chosen deliberately;
+          // one tap should not put a client in at 7 just because it is empty.
+          hours: Object.keys(AVAIL_HOURS).reduce((acc, k) => {
+            acc[k] = [BOOK_DEFAULT_START_HOUR, DAY_END_HOUR];
+            return acc;
+          }, {}),
+        }),
+      });
     }
-    let hour = BOOK_DEFAULT_START_HOUR;
-    while (taken.has(hour) && hour < DAY_END_HOUR - 1) hour++;
-    const when = new Date(selected);
-    when.setHours(hour, 0, 0, 0);
-    // This search only ever checked the starting hour against single-hour
-    // marks — a job that starts free but runs long enough to reach an
-    // occupied hour later in its own duration slipped straight through. The
-    // confirm below is the actual safety net; the search above just aims for
-    // a good default.
-    if (!(await confirmNoOverlap(job.id, when.getTime(), durationOf(job)))) return;
-    await DB.updateJob(job.id, { scheduledAt: when.getTime(), scheduledDurationMins: durationOf(job) });
-    toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtHour(hour)}`);
+
+    if (!slot) {
+      toast(`No room on ${fmtDayLabel(selected)} for a ${fmtHours(mins)} job — pick a time from the grid or try another day`);
+      return;
+    }
+
+    if (!(await confirmNoOverlap(job.id, slot.startAt, mins))) return;
+    await DB.updateJob(job.id, { scheduledAt: slot.startAt, scheduledDurationMins: mins });
+    toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtTime(slot.startAt)}`);
     await refresh();
   }
 

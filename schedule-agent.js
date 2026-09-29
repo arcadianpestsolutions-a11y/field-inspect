@@ -25,6 +25,16 @@
   const DAY_END_HOUR = 18;
   const MAX_TOOL_ROUNDS = 8; // a stuck model must not loop forever on someone's data plan
 
+  // The internal view of a working day, same as the scheduler's own grid:
+  // every day open 7am–6pm, half-hour steps, no lead time. availability.js
+  // ships narrower public-facing defaults, which is why these are stated here
+  // rather than relied on.
+  const AVAIL_CONFIG = {
+    hours: [0, 1, 2, 3, 4, 5, 6].reduce((acc, d) => { acc[d] = [DAY_START_HOUR, DAY_END_HOUR]; return acc; }, {}),
+    slotStepMins: 30,
+    minLeadMins: 0,
+  };
+
   const el = (id) => document.getElementById(id);
   const panel = el('agent-panel');
   const logEl = el('agent-log');
@@ -87,33 +97,57 @@
     };
   }
 
+  // The arithmetic lives in availability.js now. What this tool used to do was
+  // round every duration up to a whole hour — so a 30-minute treatment ate an
+  // hour and half the day's real gaps were never mentioned — and it had no idea
+  // what time it was, so it reported 7am on a day already gone as free and the
+  // model passed that on with a straight face.
   async function toolFindFreeSlots({ date, durationMins }) {
     const day = parseLocalDate(date);
-    const need = Math.max(1, Math.ceil((durationMins || 60) / 60));
-    const jobs = (await DB.getJobs()).filter((j) =>
+    const dayStart = new Date(day).setHours(0, 0, 0, 0);
+    const dayEnd = new Date(day).setHours(23, 59, 59, 999);
+    const all = await DB.getJobs();
+    const onDay = all.filter((j) =>
       j.scheduledAt && toLocalDate(new Date(j.scheduledAt)) === toLocalDate(day));
+    const bookedMins = onDay.reduce((sum, j) => sum + durationOf(j), 0);
 
-    const taken = new Set();
-    let bookedMins = 0;
-    for (const j of jobs) {
-      const h = new Date(j.scheduledAt).getHours();
-      bookedMins += durationOf(j);
-      for (let i = 0; i < Math.ceil(durationOf(j) / 60); i++) taken.add(h + i);
+    // A stale cache can leave this file running against an older shell that
+    // never fetched availability.js. Saying so is better than a crash the
+    // technician sees as the assistant being broken.
+    if (!window.Availability) {
+      return { date, error: 'The scheduling engine has not loaded. Close and reopen the app, then try again.' };
     }
 
-    const free = [];
-    for (let h = DAY_START_HOUR; h + need <= DAY_END_HOUR; h++) {
-      let fits = true;
-      for (let i = 0; i < need; i++) if (taken.has(h + i)) { fits = false; break; }
-      if (fits) free.push(`${h % 12 === 0 ? 12 : h % 12}${h < 12 ? 'am' : 'pm'}`);
-    }
+    // Asking about a day that has already been is a question about history, so
+    // the clock is read as that morning and the day's real gaps get described.
+    // Asking about today is a question about what is left, so hours already
+    // gone are not offered.
+    const dayIsPast = dayEnd < Date.now();
+    const result = window.Availability.freeSlots({
+      jobs: all,
+      durationMins: durationMins || 60,
+      from: dayStart,
+      to: dayEnd,
+      now: dayIsPast ? dayStart : Date.now(),
+      policy: 'advisory',
+      config: AVAIL_CONFIG,
+      limit: 40,
+    });
+
     return {
       date,
-      workingHours: '7am-6pm',
-      freeStartTimes: free,
-      alreadyBookedJobs: jobs.length,
+      workingHours: `${DAY_START_HOUR > 12 ? DAY_START_HOUR - 12 : DAY_START_HOUR}am-${DAY_END_HOUR - 12}pm`,
+      freeStartTimes: result.slots.map((s) => fmtTime(s.startAt)),
+      alreadyBookedJobs: onDay.length,
       alreadyBookedHours: bookedMins / 60,
       dayIsFull: bookedMins >= 8 * 60,
+      // So the model can say "that day has already been" rather than offering
+      // to book into it.
+      dayIsPast,
+      // Slots dropped because the drive between two jobs does not fit the gap.
+      // Without this the model cannot tell a booked-out day from an
+      // unreachable one, and both look like an empty list.
+      slotsRuledOutByTravel: result.excluded.travel,
     };
   }
 

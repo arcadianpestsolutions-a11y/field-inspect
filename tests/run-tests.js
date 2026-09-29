@@ -4370,6 +4370,300 @@
     assertEqual(allowed, true);
   });
 
+  // ---------- Availability engine ----------
+  // These run against availability.js directly rather than through the iframe,
+  // because it is a pure module with no DOM and no database. Every one of them
+  // injects its own clock, so a failure is a failure of the arithmetic and
+  // never of the date the suite happened to run on.
+  const AV = () => window.Availability;
+  const avAt = (y, m, d, h, min) => new Date(y, m - 1, d, h || 0, min || 0, 0, 0).getTime();
+  const avHM = (ts) => { const d = new Date(ts); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  const avJob = (id, startTs, mins, coords) => Object.assign(
+    { id, name: id, scheduledAt: startTs, scheduledDurationMins: mins }, coords || {});
+  const avTimes = (res) => res.slots.map((s) => avHM(s.startAt));
+  // Roughly half an hour apart on the road, which is the whole point of using
+  // these two: a clock gap of less than that is not a gap at all.
+  const AV_CAMPBELLTOWN = { addressLat: -34.0650, addressLng: 150.8140 };
+  const AV_CAMDEN = { addressLat: -34.0547, addressLng: 150.6967 };
+  const AV_DUBBO = { lat: -32.2569, lng: 148.6011 };
+  // The area Arcadian actually services, as it is advertised.
+  const AV_SERVICE_AREA = {
+    zones: [
+      { name: 'Camden South', lat: -34.0833, lng: 150.6917, radiusKm: 15 },
+      { name: 'Gregory Hills', lat: -33.9944, lng: 150.7900, radiusKm: 10 },
+    ],
+  };
+  const AV_OPEN_ALL_WEEK = [0, 1, 2, 3, 4, 5, 6].reduce((a, d) => { a[d] = [8, 17]; return a; }, {});
+  const AV_INTERNAL = { hours: AV_OPEN_ALL_WEEK, slotStepMins: 30, minLeadMins: 0 };
+
+  test('Availability: a gap too short for the drive is not offered at all', () => {
+    const day = avAt(2027, 3, 15);
+    const opts = {
+      jobs: [avJob('first', avAt(2027, 3, 15, 9), 60, AV_CAMPBELLTOWN)],
+      durationMins: 60,
+      at: AV_CAMDEN,
+      from: day,
+      to: avAt(2027, 3, 15, 23, 59),
+      now: day,
+      policy: 'advisory',
+      config: AV_INTERNAL,
+    };
+    const res = AV().freeSlots(opts);
+    assert(res.ok, res.refusal && res.refusal.message);
+    const times = avTimes(res);
+    // Straight after the Campbelltown job, with no time to reach Camden.
+    assert(!times.includes('10:00'), `10:00 leaves no time for the drive, got ${times.join(' ')}`);
+    // And the slot BEFORE it is just as impossible in the other direction —
+    // finishing in Camden at 9:00 does not get you to Campbelltown at 9:00.
+    assert(!times.includes('8:00'), '8:00 cannot hand over to a 9am job across the region');
+    assert(times.includes('10:30'), `10:30 is the first that actually works, got ${times.join(' ')}`);
+    assertEqual(avHM(AV().nextFreeSlot(opts).startAt), '10:30', 'the first offer is the first workable one');
+    // The tallies matter on their own: a booked-out day and an unreachable one
+    // both come back as a short list, and they are very different answers.
+    assertEqual(res.excluded.travel, 2, 'two slots ruled out by the drive');
+    assertEqual(res.excluded.clash, 3, 'three ruled out by overlapping the job itself');
+  });
+
+  test('Availability: a slot says how much room it really has', () => {
+    const day = avAt(2027, 3, 15);
+    const base = {
+      durationMins: 60, at: AV_CAMDEN,
+      from: day, to: avAt(2027, 3, 15, 23, 59), now: day,
+      policy: 'advisory', config: AV_INTERNAL,
+    };
+    const busy = AV().freeSlots(Object.assign({}, base, {
+      jobs: [avJob('first', avAt(2027, 3, 15, 9), 60, AV_CAMPBELLTOWN)],
+    }));
+    const at1030 = busy.slots.find((s) => avHM(s.startAt) === '10:30');
+    const at1500 = busy.slots.find((s) => avHM(s.startAt) === '15:00');
+    assertEqual(at1030.fit, 'back_to_back', 'exactly enough time to drive is not comfortable');
+    assertEqual(at1030.travelBeforeMins, 30, 'and it says how long the drive is');
+    assertEqual(at1030.slackBeforeMins, 0, 'with nothing spare either side of the drive');
+    // Still the morning job behind it, hours earlier — plenty of room, but not
+    // a slot with nothing around it.
+    assertEqual(at1500.fit, 'easy', 'five hours after the last job is comfortable');
+
+    const empty = AV().freeSlots(Object.assign({}, base, { jobs: [] }));
+    assertEqual(empty.slots[0].fit, 'open', 'a day with nothing in it has nothing to be tight about');
+    assertEqual(empty.slots[0].travelBeforeMins, null, 'and no drive to report');
+  });
+
+  test('Availability: with no coordinates the public policy assumes a drive, the internal one stays quiet', () => {
+    const day = avAt(2027, 3, 15);
+    const base = {
+      jobs: [avJob('first', avAt(2027, 3, 15, 9), 60)],   // address typed freehand, never geocoded
+      durationMins: 60, at: null,
+      from: day, to: avAt(2027, 3, 15, 23, 59), now: day,
+      config: AV_INTERNAL,
+    };
+    const internal = AV().freeSlots(Object.assign({}, base, { policy: 'advisory' }));
+    assert(avTimes(internal).includes('10:00'),
+      'the person who owns the diary can see the addresses and judge for themselves');
+
+    const client = AV().freeSlots(Object.assign({}, base, { policy: 'strict' }));
+    const times = avTimes(client);
+    assert(!times.includes('10:00'),
+      'a slot offered to a client must not assume two addresses are next door');
+    assert(times.includes('10:30'), `10:30 clears the assumed drive, got ${times.join(' ')}`);
+    assertEqual(client.slots.find((s) => avHM(s.startAt) === '10:30').assumedTravel, true,
+      'and it is flagged as an assumption, not a measurement');
+  });
+
+  test('Availability: a thirty minute job fits a thirty minute gap', () => {
+    const day = avAt(2027, 3, 15);
+    const jobs = [
+      avJob('morning', avAt(2027, 3, 15, 9), 60),
+      avJob('later', avAt(2027, 3, 15, 10, 30), 60),
+    ];
+    const base = { jobs, at: null, from: day, to: avAt(2027, 3, 15, 23, 59), now: day, policy: 'advisory', config: AV_INTERNAL };
+    // Every earlier version of this rounded durations up to whole hours, so
+    // this gap did not exist and a half-hour treatment could not be placed in it.
+    assert(avTimes(AV().freeSlots(Object.assign({}, base, { durationMins: 30 }))).includes('10:00'),
+      'the half hour between two jobs is a real half hour');
+    assert(!avTimes(AV().freeSlots(Object.assign({}, base, { durationMins: 60 }))).includes('10:00'),
+      'but an hour does not fit into it');
+  });
+
+  test('Availability: Sunday is closed and Saturday finishes at midday', () => {
+    // 2 January 2027 is a Saturday, 3 January a Sunday.
+    const res = AV().freeSlots({
+      jobs: [], durationMins: 60,
+      from: avAt(2027, 1, 2), to: avAt(2027, 1, 3, 23, 59),
+      now: avAt(2027, 1, 1), policy: 'strict',
+    });
+    assert(res.ok, res.refusal && res.refusal.message);
+    assert(res.slots.length, 'Saturday morning is workable');
+    assert(res.slots.every((s) => s.date === '2027-01-02'), 'nothing should land on the Sunday');
+    assertEqual(avHM(res.slots[res.slots.length - 1].startAt), '11:00',
+      'the last hour that finishes by midday');
+    assertEqual(res.excluded.closed, 1, 'the Sunday is counted as closed, not as booked out');
+  });
+
+  test('Availability: a public holiday is not offered', () => {
+    // New Year's Day 2027 is a Friday, so only the holiday list keeps it clear.
+    const res = AV().freeSlots({
+      jobs: [], durationMins: 60,
+      from: avAt(2027, 1, 1), to: avAt(2027, 1, 1, 23, 59),
+      now: avAt(2026, 12, 30), policy: 'strict',
+      config: { closedDates: AV().NSW_FIXED_CLOSURES },
+    });
+    assertEqual(res.slots.length, 0, 'nobody is booking a pest treatment on New Year’s Day');
+    assertEqual(res.excluded.closed, 1);
+  });
+
+  test('Availability: an address outside the service area is refused, not quietly offered a time', () => {
+    const day = avAt(2027, 3, 15);
+    const base = {
+      jobs: [], durationMins: 60, at: AV_DUBBO,
+      from: day, to: avAt(2027, 3, 15, 23, 59), now: avAt(2027, 3, 14),
+      config: Object.assign({}, AV_INTERNAL, { serviceArea: AV_SERVICE_AREA }),
+    };
+    const client = AV().freeSlots(Object.assign({}, base, { policy: 'strict' }));
+    assertEqual(client.ok, false, 'Dubbo is not a day trip from Camden');
+    assertEqual(client.refusal.code, 'outside_service_area');
+    assert(client.serviceArea.km > 200, `it knows how far out it is, got ${client.serviceArea.km}km`);
+    assert(client.serviceArea.zone, 'and which of the two areas it measured from');
+
+    // Internally it is only ever information: the office can take a job out of
+    // area if it wants to, and being told it cannot would be wrong.
+    const internal = AV().freeSlots(Object.assign({}, base, { policy: 'advisory' }));
+    assertEqual(internal.ok, true, 'the office is not blocked from booking out of area');
+    assert(internal.slots.length, 'times are still offered');
+    assertEqual(internal.serviceArea.inside, false, 'while still saying it is out of area');
+  });
+
+  test('Availability: an address that cannot be placed on a map gets no public slots', () => {
+    const day = avAt(2027, 3, 15);
+    const cfg = Object.assign({}, AV_INTERNAL, { serviceArea: AV_SERVICE_AREA });
+    const base = { jobs: [], durationMins: 60, from: day, to: avAt(2027, 3, 15, 23, 59), now: avAt(2027, 3, 14), policy: 'strict', config: cfg };
+    // A radius that is skipped whenever geocoding fails is not a radius.
+    const unknown = AV().freeSlots(Object.assign({}, base, { at: null }));
+    assertEqual(unknown.ok, false);
+    assertEqual(unknown.refusal.code, 'address_not_located');
+
+    const inArea = AV().freeSlots(Object.assign({}, base, { at: AV_CAMPBELLTOWN }));
+    assertEqual(inArea.ok, true, 'Campbelltown is inside the Gregory Hills radius');
+    assert(inArea.slots.length, 'and gets real times');
+  });
+
+  test('Availability: a client is never offered a time inside the lead time', () => {
+    const now = avAt(2027, 3, 1, 9);
+    const res = AV().freeSlots({
+      jobs: [], durationMins: 60, at: AV_CAMDEN, now, policy: 'strict',
+      config: { hours: AV_OPEN_ALL_WEEK, slotStepMins: 30 },
+    });
+    assert(res.ok, res.refusal && res.refusal.message);
+    assert(res.slots.length, 'there should be plenty on offer further out');
+    assert(res.slots[0].startAt >= now + 24 * 60 * 60000,
+      `the first offer must be a clear day out, got ${new Date(res.slots[0].startAt)}`);
+    assertEqual(avHM(res.slots[0].startAt), '9:00', 'and lands on a real slot boundary, not the exact lead-time instant');
+  });
+
+  test('Availability: a day at its job limit stops a client booking but not the technician', () => {
+    const day = avAt(2027, 3, 15);
+    const jobs = [];
+    for (let i = 0; i < 6; i++) jobs.push(avJob(`j${i}`, avAt(2027, 3, 15, 8 + Math.floor(i / 2), (i % 2) * 30), 30));
+    const base = {
+      jobs, durationMins: 60, at: null,
+      from: day, to: avAt(2027, 3, 15, 23, 59), now: avAt(2027, 3, 14),
+      config: AV_INTERNAL,
+    };
+    const client = AV().freeSlots(Object.assign({}, base, { policy: 'strict' }));
+    assertEqual(client.slots.length, 0, 'six jobs is a full day, whatever the clock says');
+    assertEqual(client.excluded.capacity, 1, 'and it is reported as a full day, not an unreachable one');
+    assertEqual(client.days[0].full, true);
+
+    const internal = AV().freeSlots(Object.assign({}, base, { policy: 'advisory' }));
+    assert(internal.slots.length, 'the technician can still squeeze one in and knows what they are doing');
+  });
+
+  test('Availability: a job longer than the working day is never given a slot', () => {
+    const res = AV().freeSlots({
+      jobs: [], durationMins: 300,                       // five hours
+      from: avAt(2027, 1, 2), to: avAt(2027, 1, 2, 23, 59),   // a Saturday, 8am to midday
+      now: avAt(2027, 1, 1), policy: 'strict',
+    });
+    assertEqual(res.slots.length, 0, 'five hours does not fit a four hour morning');
+  });
+
+  test('Availability: a duration that makes no sense is refused rather than guessed at', () => {
+    const base = { jobs: [], from: avAt(2027, 3, 15), to: avAt(2027, 3, 15, 23, 59), now: avAt(2027, 3, 14) };
+    assertEqual(AV().freeSlots(Object.assign({}, base, { durationMins: 0 })).refusal.code, 'bad_duration');
+    assertEqual(AV().freeSlots(Object.assign({}, base, { durationMins: -60 })).refusal.code, 'bad_duration');
+    assertEqual(AV().freeSlots(Object.assign({}, base, { durationMins: 13 * 60 })).refusal.code, 'bad_duration');
+  });
+
+  test('Availability: offered times do not drift when the clocks go forward', () => {
+    // NSW puts its clocks forward on the first Sunday in October. A loop that
+    // steps days by adding 86,400,000ms slides an hour at that point and every
+    // time offered after it is wrong by an hour — silently, and for the whole
+    // rest of the horizon.
+    const res = AV().freeSlots({
+      jobs: [], durationMins: 60, at: null,
+      from: avAt(2026, 10, 1), to: avAt(2026, 10, 31, 23, 59),
+      now: avAt(2026, 10, 1), policy: 'advisory',
+      config: AV_INTERNAL, limit: 500,
+    });
+    assert(res.days.length >= 25, `the whole month should be covered, got ${res.days.length} days`);
+    for (const s of res.slots) {
+      const d = new Date(s.startAt);
+      assert(d.getHours() >= 8 && d.getHours() <= 16,
+        `every slot sits inside the 8am-5pm window, got ${d.toString()}`);
+      assert(d.getMinutes() === 0 || d.getMinutes() === 30,
+        `and on a half-hour boundary, got ${d.toString()}`);
+    }
+  });
+
+  test('Availability: an hour that has already gone today is not offered', () => {
+    const t = new Date();
+    const twoPm = avAt(t.getFullYear(), t.getMonth() + 1, t.getDate(), 14);
+    const res = AV().freeSlots({
+      jobs: [], durationMins: 60, at: null,
+      from: avAt(t.getFullYear(), t.getMonth() + 1, t.getDate()),
+      to: avAt(t.getFullYear(), t.getMonth() + 1, t.getDate(), 23, 59),
+      now: twoPm, policy: 'advisory', config: AV_INTERNAL,
+    });
+    assert(res.slots.every((s) => s.startAt >= twoPm),
+      'the booking assistant used to report 7am on a day already half gone as free');
+    assertEqual(avHM(res.slots[0].startAt), '14:00', 'the next slot is the next one actually available');
+  });
+
+  test('Scheduler: one-tap Book picks a slot it can actually drive to', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const day = dayThisMonth(15, 8);
+    // Campbelltown 8-9am, then a Camden job waiting in the backlog. The old
+    // search took the first hour that was not another job's start time — 9am —
+    // which is half an hour short of the drive.
+    await win.DB.addJob({
+      name: 'Drive Anchor Job', scheduledAt: day.getTime(), scheduledDurationMins: 60,
+      addressLat: -34.0650, addressLng: 150.8140,
+    });
+    await win.DB.addJob({ name: 'Drive Backlog Job', addressLat: -34.0547, addressLng: 150.6967 });
+
+    await win.Scheduler.open();
+    await wait(400);
+    const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(day.getDate()));
+    cell.click();
+    await wait(200);
+
+    const row = Array.from(doc.querySelectorAll('#scheduler-backlog .backlog-row'))
+      .find((r) => r.textContent.includes('Drive Backlog Job'));
+    assert(row, 'the unbooked job should be in the backlog');
+    row.querySelector('.backlog-book').click();
+
+    await waitFor(async () => {
+      const j = (await win.DB.getJobs()).find((x) => x.name === 'Drive Backlog Job');
+      return !!(j && j.scheduledAt);
+    }, 'one-tap Book should have booked it');
+
+    const booked = (await win.DB.getJobs()).find((j) => j.name === 'Drive Backlog Job');
+    assertEqual(new Date(booked.scheduledAt).getDate(), day.getDate(), 'booked onto the selected day');
+    assertEqual(new Date(booked.scheduledAt).getHours(), 10,
+      '9am is unreachable from Campbelltown, so the first workable hour is 10');
+  });
+
   // ---------- Roles and permissions ----------
   // The database is what actually enforces this (migration 016). These cover
   // the app's side: that it does not offer a technician buttons the server

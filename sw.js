@@ -1,7 +1,7 @@
 // Keep this in sync with version.js's APP_VERSION — that's what drives the
 // login screen's build-color/label indicator, so a mismatched bump here
 // defeats the whole point of it.
-const CACHE_NAME = 'field-inspect-v79';
+const CACHE_NAME = 'field-inspect-v80';
 const APP_SHELL = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const APP_SHELL = [
   './pest-products.js',
   './termite-management-schemas.js',
   './invoicing.js',
+  './availability.js',
   './report.js',
   './sync.js',
   './org.js',
@@ -41,9 +42,32 @@ const APP_SHELL = [
   './icons/icon-maskable.svg',
 ];
 
+// Every shell file is fetched with cache: 'reload', which bypasses the
+// browser's ordinary HTTP cache and goes to the network.
+//
+// Without it, cache.addAll() is served by the HTTP cache like any other
+// fetch — and GitHub Pages sends these files with a ten-minute max-age that
+// its CDN can stretch further. So a browser holding yesterday's app.js will
+// copy YESTERDAY'S app.js into the new version's cache, where it then sits
+// permanently: the service worker believes it precached the new build, the
+// version bump that was supposed to fix things has already been spent, and
+// nothing dislodges it until the NEXT deploy happens to catch the file
+// fresh. Different files go stale at different moments, so what a device
+// ends up running is a mix of builds, which is the worst possible failure
+// mode — it looks like a bug in whichever feature happens to straddle the
+// split rather than like a caching problem at all.
+//
+// Caught in the act on the live site: a browser running APP_VERSION v66
+// while that same page's service-worker cache AND the network both held
+// v79. Nothing was wrong with the deploy; the page had simply been handed a
+// months-old version.js out of the HTTP cache. An app.js going stale the
+// same way is what a report like "the demo asks me to log in" looks like
+// from the outside, since that early return has not always been there.
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
   );
 });
 
