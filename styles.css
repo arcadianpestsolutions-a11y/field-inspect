@@ -2725,3 +2725,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .lead-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .lead-actions .btn { flex: 1 1 auto; }
 .lead-convert { margin-bottom: 8px; }
+
+/* ---- Client link panel ------------------------------------------------- */
+.client-link-panel { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.client-link-panel .calendar-feed-hint { padding: 0; }

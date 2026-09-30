@@ -875,6 +875,23 @@
     },
   };
 
+  // Puts the finalised report PDF in the same private bucket the photographs
+  // go to, at a path the client-portal function knows how to sign.
+  //
+  // One file per job, overwritten. An amended report replaces the copy the
+  // portal serves, which is the right answer: a client following their link
+  // should see the document as it stands, not the version that happened to
+  // be current the day the link was made.
+  async function uploadReportPdf(jobId) {
+    if (!jobId || !window.Media || !window.supabaseClient) return null;
+    const job = await DB.getJob(jobId);
+    const report = await DB.getReport(jobId);
+    if (!job || !report || !report.finalizedAt) return null;
+    const blob = await generateReportPdfBlob(job, report);
+    if (!blob) return null;
+    return window.Media.uploadBlob(`${jobId}/report/report.pdf`, blob);
+  }
+
   // Matches untagged captures to a frameNotes time range (relative seconds
   // into the inspection recording) and persists a suggestedZone onto the
   // capture — a suggestion only, never writing over an existing zone tag
@@ -1565,6 +1582,17 @@
     // property twice. The plan recorded above only matters for the case that
     // flow cannot cover: a visit that completes with no report at all.
     toast('Report finalized');
+    // The PDF goes to storage so the client portal has something to serve.
+    // The server has never held one: it is rendered here in the browser and
+    // posted to send-report-email as base64, so without this upload a portal
+    // link would open on a report that exists nowhere but this phone.
+    //
+    // Deliberately not awaited and deliberately unable to fail loudly. A
+    // technician standing in a driveway with one bar has finalized their
+    // report; whether a copy reached a bucket is not their problem, and the
+    // next finalize or amendment will try again.
+    uploadReportPdf(currentJobId).catch((err) =>
+      console.warn('[report] could not back up the report PDF:', err.message || err));
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
     offerForemanFollowUpTask(currentJobId);

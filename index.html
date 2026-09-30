@@ -161,6 +161,23 @@
       <button id="view-report-btn" class="btn btn-outline full hidden">📄 Open Report</button>
       <div id="doc-type-row" class="doc-type-row hidden"></div>
       <button id="view-invoice-btn" class="btn btn-outline full hidden">💰 Invoice</button>
+      <button id="client-link-btn" class="btn btn-outline full hidden">🔗 Client link</button>
+    </div>
+
+    <!-- One link, one job, expiring. See supabase-migration-027 for why it is
+         not a client login. -->
+    <div id="client-link-panel" class="card client-link-panel hidden">
+      <div class="row spread">
+        <strong>Client link</strong>
+        <button id="client-link-close" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <p id="client-link-hint" class="calendar-feed-hint">Loading…</p>
+      <div class="calendar-feed-url-row">
+        <input id="client-link-url" type="text" class="hidden" readonly aria-label="Client link" />
+        <button id="client-link-copy" class="btn btn-secondary hidden">Copy</button>
+      </div>
+      <button id="client-link-create" class="btn btn-outline full hidden">Create a link</button>
+      <button id="client-link-revoke" class="btn btn-secondary full hidden">Revoke this link</button>
     </div>
 
     <datalist id="zone-suggestions"></datalist>
@@ -763,6 +780,7 @@
 <script src="business-ui.js"></script>
 <script src="assets-ui.js"></script>
 <script src="leads-ui.js"></script>
+<script src="client-link.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>
 <script src="calendar-feed.js"></script>

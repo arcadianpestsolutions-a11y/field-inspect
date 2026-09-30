@@ -727,6 +727,19 @@
     // at the same point the report does — and only for an admin, since
     // migration 016 makes invoices unreadable to a technician outright. The
     // button would open an empty screen rather than fail loudly.
+    // The client link appears on the same condition as the invoice, for the
+    // same reason: there is nothing worth sending a client until the work is
+    // done, and an empty portal is a worse thing to hand somebody than no
+    // portal. The panel is closed whenever the job changes, so a link for one
+    // client can never be left on screen while another job is open.
+    const clientLinkBtn = document.getElementById('client-link-btn');
+    const clientLinkPanel = document.getElementById('client-link-panel');
+    if (clientLinkPanel) clientLinkPanel.classList.add('hidden');
+    if (clientLinkBtn) {
+      const shareable = (job.status === 'review' || job.status === 'completed') && isAdminUser();
+      clientLinkBtn.classList.toggle('hidden', !shareable);
+    }
+
     if (viewInvoiceBtn) {
       const billable = (job.status === 'review' || job.status === 'completed') && isAdminUser();
       viewInvoiceBtn.classList.toggle('hidden', !billable);

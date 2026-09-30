@@ -722,6 +722,72 @@
     assertEqual(station.action, '');
   });
 
+  // ---------- Client portal ----------
+  test('Client portal: the page carries no key, no client data and asks not to be indexed', async () => {
+    // The portal is a public page whose URL contains a credential. Three
+    // things about it are worth asserting automatically rather than trusting
+    // to review, because getting any of them wrong publishes somebody's
+    // house report.
+    const html = await (await fetch('../portal.html', { cache: 'reload' })).text();
+
+    assert(!/sb_publishable|service_role|SUPABASE_PUBLISHABLE_KEY|eyJhbGciOi/.test(html),
+      'the portal must carry no Supabase key of any kind');
+    assert(/noindex/.test(html), 'a URL that contains a credential must not be indexed');
+    assert(/no-referrer/.test(html),
+      'without this the token is handed to whatever the client clicks next');
+    // It talks to the Edge Function and nothing else. A direct supabase-js
+    // client here would mean the page itself could query tables.
+    assert(!/supabase\.min\.js|createClient/.test(html),
+      'the portal has no database client, on purpose — the function decides what it sees');
+  });
+
+  test('Client portal: a link is built from where the app is served, not hardcoded', async () => {
+    const win = frame.contentWindow;
+    assert(win.ClientLink, 'the client link module should load');
+    const url = win.ClientLink.portalUrlFor('a'.repeat(64));
+    assert(/\/portal\.html\?t=a{64}$/.test(url), `unexpected link shape: ${url}`);
+    // Same origin as the app it was made in, so it is right on the live site,
+    // in a test build and on localhost with nobody maintaining a second copy.
+    assert(url.startsWith(win.location.origin), 'the link must point at this deployment');
+    assertEqual(win.ClientLink.LIFETIME_DAYS, 90, 'links expire by default');
+  });
+
+  test('Client portal: a missing table reads as a setup step, not a broken app', async () => {
+    const win = frame.contentWindow;
+    const text = win.ClientLink.errorText({ message: 'Could not find the table \'public.client_access\' in the schema cache' });
+    assert(/migration-027/.test(text), `it should name the file to run, got: ${text}`);
+    assert(/No connection/.test(win.ClientLink.errorText({ message: 'Failed to fetch' })));
+    assert(/Sign in again/.test(win.ClientLink.errorText({ message: 'permission denied for table' })));
+  });
+
+  test('Client portal: the function only ever answers a well-formed token', async () => {
+    // The shape check exists so a malformed token never reaches a query at
+    // all. Asserted against the function's own source, because there is no
+    // Deno here to run it.
+    const src = await (await fetch('../supabase/functions/client-portal/index.ts', { cache: 'reload' })).text();
+    assert(/\[a-f0-9\]\{64\}/.test(src), 'the token shape is checked before it is used');
+    // Named columns, never select *. A select * would ship technician notes
+    // and every column added to jobs in future straight to the client.
+    assert(!/\.select\('\*'\)/.test(src), 'the portal function must never select *');
+
+    // Checked against the actual column lists, not the whole file — the word
+    // "notes" appears in a comment here explaining why select * would be
+    // wrong, and a blunter test fails on its own documentation.
+    const selects = (src.match(/\.select\('([^']+)'\)/g) || [])
+      .map((s) => s.replace(/^\.select\('|'\)$/g, ''));
+    assert(selects.length >= 3, `expected the queries to name their columns, found ${selects.length}`);
+    const everyColumn = selects.join(',').split(/\s*,\s*/);
+    for (const forbidden of ['notes', 'sections', 'audit_log', 'ai_draft', 'client_phone', 'client_email', 'org_id']) {
+      assert(!everyColumn.includes(forbidden),
+        `the portal must not read ${forbidden} — it is the client's report, not the file on them`);
+    }
+    assert(everyColumn.includes('inspection_ended_at'), 'but it does read the visit date');
+    // Expired, revoked and never-existed all answer the same way, so the
+    // portal cannot be used to confirm which tokens exist.
+    assert(/const REFUSAL/.test(src) && (src.match(/json\(REFUSAL, 404\)/g) || []).length >= 4,
+      'every refusal path returns the same answer');
+  });
+
   // ---------- Pipeline ----------
   const PL = () => window.Pipeline;
   const lead = (over) => Object.assign({

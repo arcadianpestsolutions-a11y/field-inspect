@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Your inspection report</title>
+<!--
+  The client's page. Standalone on purpose: it is NOT the app.
+
+  It loads none of Scope's code, has no database client, and holds no
+  credentials. All it can do is take the token out of its own URL, ask the
+  client-portal Edge Function what that token is allowed to see, and render
+  the fixed shape that comes back. Everything it knows about the client is
+  what the function chose to tell it.
+
+  It is also deliberately a light page. A homeowner opening a link about
+  termites in their house is not the audience for an instrument panel.
+
+  noindex because these URLs carry a credential, and a search engine that
+  finds one has published it.
+-->
+<meta name="robots" content="noindex, nofollow" />
+<!-- The token lives in the query string, so a referrer header would hand it
+     to whatever the client clicks next. -->
+<meta name="referrer" content="no-referrer" />
+<style>
+  :root {
+    --bg: #f6f7f5; --card: #fff; --ink: #14201a; --dim: #5d6d63;
+    --line: #dfe4e0; --accent: #0a6b37; --warn: #8a5000;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; }
+  .biz { font-size: .78rem; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  h1 { font-size: 1.5rem; margin: 6px 0 4px; line-height: 1.25; }
+  .addr { color: var(--dim); margin: 0 0 22px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .card h2 { font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin: 0 0 10px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+  .row dt { color: var(--dim); margin: 0; }
+  .row dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  dl { margin: 0; }
+  .btn {
+    display: block; width: 100%; padding: 14px; border: 0; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: 1rem; font-weight: 600;
+    text-align: center; text-decoration: none; cursor: pointer;
+  }
+  .note { font-size: .8rem; color: var(--dim); margin: 10px 0 0; }
+  .paid { color: var(--accent); font-weight: 600; }
+  .unpaid { color: var(--warn); font-weight: 600; }
+  .msg { text-align: center; padding: 40px 16px; color: var(--dim); }
+  .msg strong { display: block; color: var(--ink); font-size: 1.1rem; margin-bottom: 6px; }
+  .contact { text-align: center; font-size: .86rem; color: var(--dim); margin-top: 24px; }
+  .contact a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <p class="msg">Loading…</p>
+</div>
+
+<!-- Loaded first, because the script below needs the endpoint it sets. Kept
+     out of this file so the page itself carries no project-specific URL. -->
+<script src="portal-config.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  const wrap = document.getElementById('wrap');
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  const money = (cents) => '$' + ((cents || 0) / 100).toLocaleString('en-AU', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  });
+
+  const fmtDate = (value) => {
+    if (!value) return '';
+    const d = typeof value === 'number' ? new Date(value) : new Date(String(value) + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+  };
+
+  const SERVICE = {
+    termite: 'Timber pest inspection',
+    pest_treatment: 'Pest treatment',
+  };
+
+  function fail(message) {
+    wrap.innerHTML = `<div class="msg"><strong>${esc(message)}</strong>
+      If you need a new link, just reply to the message we sent you.</div>`;
+  }
+
+  async function load() {
+    // The token never leaves this page except in the request below, and the
+    // page carries no-referrer so it is not handed on to anywhere the client
+    // clicks next.
+    const token = new URLSearchParams(location.search).get('t') || '';
+    if (!/^[a-f0-9]{64}$/i.test(token)) return fail('This link is not complete.');
+
+    const base = window.PORTAL_ENDPOINT;
+    if (!base) return fail('This page is not set up yet.');
+
+    let data;
+    try {
+      const res = await fetch(`${base}?t=${encodeURIComponent(token)}`, { headers: { accept: 'application/json' } });
+      data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // Only OUR message is shown. A failure from the platform underneath —
+        // a function that is not deployed answers "Requested function was not
+        // found" — is nothing a homeowner can act on and nothing they should
+        // be reading about somebody else's infrastructure.
+        const ours = data && (data.error === 'not-available' || data.error === 'unavailable');
+        return fail(ours ? data.message : 'This link is no longer available.');
+      }
+      if (!data || !data.business) return fail('This link is no longer available.');
+    } catch (e) {
+      return fail('Could not load your report. Check your connection and try again.');
+    }
+
+    render(data);
+  }
+
+  function render(d) {
+    const parts = [];
+    parts.push(`<p class="biz">${esc(d.business.name)}</p>`);
+    parts.push(`<h1>${esc(SERVICE[d.visit.jobType] || 'Your service')}</h1>`);
+    parts.push(`<p class="addr">${esc(d.client.address || d.client.name)}</p>`);
+
+    if (d.report) {
+      parts.push(`<div class="card">
+        <h2>Your report</h2>
+        ${d.report.url
+          ? `<a class="btn" href="${esc(d.report.url)}" target="_blank" rel="noopener">Open the report (PDF)</a>
+             <p class="note">This button works for the next ${d.report.urlMinutes} minutes.
+             Reload the page if it stops working.</p>`
+          : `<p class="note">The report is being prepared. Try again shortly.</p>`}
+        <dl>
+          <div class="row"><dt>Completed</dt><dd>${esc(fmtDate(d.report.finalizedAt))}</dd></div>
+        </dl>
+      </div>`);
+    } else {
+      parts.push(`<div class="card"><h2>Your report</h2>
+        <p class="note">Your report is not finished yet. We will let you know as soon as it is.</p></div>`);
+    }
+
+    const visitRows = [];
+    if (d.visit.date || d.visit.completedAt) {
+      visitRows.push(`<div class="row"><dt>Visit</dt><dd>${esc(fmtDate(d.visit.date || d.visit.completedAt))}</dd></div>`);
+    }
+    if (d.visit.scheduledAt) {
+      visitRows.push(`<div class="row"><dt>Next appointment</dt><dd>${esc(fmtDate(d.visit.scheduledAt))}</dd></div>`);
+    }
+    if (d.visit.nextDueAt) {
+      visitRows.push(`<div class="row"><dt>Next inspection due</dt><dd>${esc(fmtDate(d.visit.nextDueAt))}</dd></div>`);
+    }
+    if (visitRows.length) {
+      parts.push(`<div class="card"><h2>Your service</h2><dl>${visitRows.join('')}</dl></div>`);
+    }
+
+    if (d.invoice) {
+      parts.push(`<div class="card">
+        <h2>Invoice</h2>
+        <dl>
+          <div class="row"><dt>Invoice</dt><dd>${esc(d.invoice.number || '')}</dd></div>
+          <div class="row"><dt>Total</dt><dd>${esc(money(d.invoice.totalCents))}</dd></div>
+          <div class="row"><dt>Status</dt><dd class="${d.invoice.paid ? 'paid' : 'unpaid'}">${d.invoice.paid ? 'Paid — thank you' : 'Unpaid'}</dd></div>
+          ${!d.invoice.paid && d.invoice.dueDate
+            ? `<div class="row"><dt>Due</dt><dd>${esc(fmtDate(d.invoice.dueDate))}</dd></div>` : ''}
+        </dl>
+      </div>`);
+    }
+
+    const bits = [];
+    if (d.business.phone) bits.push(`<a href="tel:${esc(d.business.phone.replace(/[^0-9+]/g, ''))}">${esc(d.business.phone)}</a>`);
+    if (d.business.email) bits.push(`<a href="mailto:${esc(d.business.email)}">${esc(d.business.email)}</a>`);
+    parts.push(`<p class="contact">Any questions about this report — ${bits.join(' · ') || 'get in touch'}.</p>`);
+
+    wrap.innerHTML = parts.join('');
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
