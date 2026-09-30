@@ -120,6 +120,7 @@
     captures: ['id'],
     invoices: ['id'],
     swms: ['id'],
+    leads: ['id'],
     deletions: ['table_name', 'record_id'], // composite — neither half is unique alone
   };
 
@@ -827,6 +828,83 @@
     };
   }
 
+  // ---------- Leads ----------
+  function localLeadToRemote(lead) {
+    return {
+      id: lead.id,
+      name: lead.name || '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      address: lead.address || '',
+      address_lat: typeof lead.addressLat === 'number' ? lead.addressLat : null,
+      address_lng: typeof lead.addressLng === 'number' ? lead.addressLng : null,
+      job_type: lead.jobType || 'termite',
+      source: lead.source || '',
+      notes: lead.notes || '',
+      stage: lead.stage || 'new',
+      stage_changed_at: lead.stageChangedAt || null,
+      last_contacted_at: lead.lastContactedAt || null,
+      last_follow_up_at: lead.lastFollowUpAt || null,
+      follow_up_count: lead.followUpCount || 0,
+      snoozed_until: lead.snoozedUntil || null,
+      quoted_cents: typeof lead.quotedCents === 'number' ? lead.quotedCents : null,
+      lost_reason: lead.lostReason || '',
+      converted_job_id: lead.convertedJobId || null,
+      created_by: currentUserId(),
+      created_at: lead.createdAt,
+      updated_at: lead.updatedAt,
+    };
+  }
+
+  function remoteLeadToLocal(rl) {
+    return {
+      id: rl.id,
+      name: rl.name || '',
+      phone: rl.phone || '',
+      email: rl.email || '',
+      address: rl.address || '',
+      addressLat: typeof rl.address_lat === 'number' ? rl.address_lat : null,
+      addressLng: typeof rl.address_lng === 'number' ? rl.address_lng : null,
+      jobType: rl.job_type === 'pest_treatment' ? 'pest_treatment' : 'termite',
+      source: rl.source || '',
+      notes: rl.notes || '',
+      stage: rl.stage || 'new',
+      stageChangedAt: rl.stage_changed_at || null,
+      lastContactedAt: rl.last_contacted_at || null,
+      lastFollowUpAt: rl.last_follow_up_at || null,
+      followUpCount: rl.follow_up_count || 0,
+      snoozedUntil: rl.snoozed_until || null,
+      quotedCents: typeof rl.quoted_cents === 'number' ? rl.quoted_cents : null,
+      lostReason: rl.lost_reason || '',
+      convertedJobId: rl.converted_job_id || null,
+      createdAt: rl.created_at,
+      updatedAt: rl.updated_at,
+    };
+  }
+
+  async function pushLead(lead) {
+    if (!isReady()) return;
+    try {
+      const { data, error } = await supabaseClient
+        .from('leads').upsert(localLeadToRemote(lead)).select('id');
+      if (error) throw error;
+      if (refusedByPolicy(data)) reportPolicyRefusal('lead', lead.id);
+    } catch (e) {
+      if (isMissingTableError(e)) {
+        console.warn('[sync] the leads table is not in the database yet — run supabase-migration-026-leads.sql. Leads stay on this device until then.');
+        return;
+      }
+      console.warn('[sync] push lead failed, will retry on next sync:', e.message || e);
+    }
+  }
+
+  async function deleteLeadRemote(id) {
+    if (!isReady()) return;
+    try { await supabaseClient.from('leads').delete().eq('id', id); }
+    catch (e) { console.warn('[sync] delete lead failed:', e.message || e); }
+    await pushTombstone('leads', id);
+  }
+
   // ---------- Safe Work Method Statements ----------
   function localSwmsToRemote(swms, pushedSections) {
     return {
@@ -1083,6 +1161,13 @@
           putRaw: (rec) => DB.putSwmsRaw(rec),
           push: pushSwms,
         },
+        {
+          table: 'leads',
+          localAll: () => DB.getLeads(),
+          toLocal: remoteLeadToLocal,
+          putRaw: (rec) => DB.putLeadRaw(rec),
+          push: pushLead,
+        },
       ];
 
       for (const c of collections) {
@@ -1155,10 +1240,12 @@
     pushCapture,
     pushInvoice,
     pushSwms,
+    pushLead,
     deleteJobRemote,
     deleteCaptureRemote,
     deleteInvoiceRemote,
     deleteSwmsRemote,
+    deleteLeadRemote,
     currentUserId,
     isOnline,
     getStatus: () => syncStatus,

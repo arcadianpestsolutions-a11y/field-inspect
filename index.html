@@ -35,12 +35,24 @@
 <section id="view-joblist" class="view hidden">
   <header class="topbar">
     <h1>Scope</h1>
+    <!-- Two in the bar and the rest behind More. Six icons is 324px of
+         controls in a 343px phone header, which left the app's own name with
+         nineteen pixels. The two kept out here are the ones opened daily. -->
     <button id="open-scheduler-btn" class="icon-btn" aria-label="Scheduler" title="Scheduler">📅</button>
-    <button id="open-swms-btn" class="icon-btn" aria-label="Safety statements" title="Safety statements">🦺</button>
-    <button id="open-assets-btn" class="icon-btn" aria-label="Station register" title="Station register">🏷</button>
-    <button id="open-business-btn" class="icon-btn" aria-label="Business figures" title="Business figures">📊</button>
-    <button id="open-archive-btn" class="icon-btn" aria-label="Saved Reports" title="Saved Reports">🗂</button>
+    <button id="open-leads-btn" class="icon-btn" aria-label="Leads" title="Leads">📇</button>
+    <button id="open-more-btn" class="icon-btn" aria-label="More" title="More">⋯</button>
   </header>
+
+  <!-- The screens that are opened weekly rather than daily. -->
+  <div id="more-sheet" class="more-sheet hidden">
+    <div class="more-sheet-panel">
+      <button id="open-swms-btn" class="more-item"><span>🦺</span> Safety statements</button>
+      <button id="open-assets-btn" class="more-item"><span>🏷</span> Station register</button>
+      <button id="open-business-btn" class="more-item"><span>📊</span> Business figures</button>
+      <button id="open-archive-btn" class="more-item"><span>🗂</span> Saved reports</button>
+      <button id="more-close-btn" class="btn btn-secondary full">Close</button>
+    </div>
+  </div>
 
   <div id="sync-bar" class="sync-bar hidden">
     <span id="sync-status-text" class="sync-status-text">Signed in</span>
@@ -307,6 +319,52 @@
   <div class="action-bar">
     <button id="section-save-btn" class="btn btn-primary full">Save & Back to Report</button>
   </div>
+</section>
+
+<!-- ============ LEADS ============ -->
+<!-- Enquiries that are not yet jobs. Kept out of the diary on purpose: a job
+     is work that exists, a lead is work that might. -->
+<section id="view-leads" class="view hidden">
+  <header class="topbar">
+    <button id="leads-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Leads</h1>
+      <span id="leads-subtitle" class="subtitle"></span>
+    </div>
+  </header>
+  <main class="content">
+    <div id="leads-due" class="card leads-due hidden"></div>
+    <div id="leads-board"></div>
+  </main>
+  <div class="action-bar">
+    <button id="lead-new-btn" class="btn btn-primary full">+ New enquiry</button>
+  </div>
+</section>
+
+<section id="view-lead" class="view hidden">
+  <header class="topbar">
+    <button id="lead-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1 id="lead-title">Enquiry</h1>
+      <span id="lead-subtitle" class="subtitle"></span>
+    </div>
+    <button id="lead-delete-btn" class="icon-btn" aria-label="Delete enquiry" title="Delete enquiry">🗑</button>
+  </header>
+  <main class="content">
+    <div id="lead-due-banner" class="card leads-due hidden"></div>
+    <div id="lead-fields"></div>
+
+    <h2 class="business-heading">Where it is up to</h2>
+    <div id="lead-stages" class="lead-stages"></div>
+
+    <h2 class="business-heading">Do something about it</h2>
+    <div class="lead-actions">
+      <button id="lead-call-btn" class="btn btn-outline">📞 Call</button>
+      <button id="lead-text-btn" class="btn btn-outline">💬 Text</button>
+      <button id="lead-snooze-btn" class="btn btn-secondary">Snooze a week</button>
+    </div>
+    <button id="lead-convert-btn" class="btn btn-primary full lead-convert">Won — book it as a job</button>
+  </main>
 </section>
 
 <!-- ============ QR SCANNER ============ -->
@@ -689,6 +747,7 @@
 <script src="assets.js"></script>
 <script src="camera.js"></script>
 <script src="qr-scan.js"></script>
+<script src="pipeline.js"></script>
 <script src="sync.js"></script>
 <script src="org.js"></script>
 <script src="media.js"></script>
@@ -703,6 +762,7 @@
 <script src="swms-ui.js"></script>
 <script src="business-ui.js"></script>
 <script src="assets-ui.js"></script>
+<script src="leads-ui.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>
 <script src="calendar-feed.js"></script>

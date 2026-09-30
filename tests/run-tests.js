@@ -722,6 +722,188 @@
     assertEqual(station.action, '');
   });
 
+  // ---------- Pipeline ----------
+  const PL = () => window.Pipeline;
+  const lead = (over) => Object.assign({
+    id: 'L1', name: 'Enquiry', stage: 'new', createdAt: avAt(2027, 3, 1),
+    stageChangedAt: avAt(2027, 3, 1), followUpCount: 0,
+  }, over || {});
+  // Monday 15 March 2027 at 9am, so the working-hours maths is checkable.
+  const MON_9AM = new Date(2027, 2, 15, 9, 0).getTime();
+  const HOURS_MON_FRI = { 0: null, 1: [8, 17], 2: [8, 17], 3: [8, 17], 4: [8, 17], 5: [8, 17], 6: null };
+
+  test('Pipeline: a new enquiry goes overdue in working hours, not wall-clock hours', () => {
+    const hours = HOURS_MON_FRI;
+    // Arrives 9pm Saturday. By 1am Sunday it is four hours old and nought
+    // working hours old, and telling somebody it is overdue then is how a
+    // chase list gets ignored.
+    const satNight = new Date(2027, 2, 13, 21, 0).getTime();
+    const sunEarly = new Date(2027, 2, 14, 1, 0).getTime();
+    const weekend = lead({ createdAt: satNight, stageChangedAt: satNight });
+    assertEqual(PL().followUpFor(weekend, { now: sunEarly, hours }), null,
+      'nobody is late at 1am on a Sunday');
+
+    // By Monday lunchtime it has had four working hours and then some.
+    const monNoon = new Date(2027, 2, 15, 12, 0).getTime();
+    const due = PL().followUpFor(weekend, { now: monNoon, hours });
+    assert(due, 'by Monday lunchtime it is genuinely late');
+    assertEqual(due.reason, 'new-unanswered');
+    assertEqual(due.urgency, 'high');
+    assertEqual(due.action, 'call');
+    assert(/working hours/.test(due.text), `it says what kind of hours: ${due.text}`);
+  });
+
+  test('Pipeline: working hours skip the closed days rather than counting them', () => {
+    const hours = HOURS_MON_FRI;
+    // Friday 5pm to Monday 9am is 64 wall-clock hours and one working hour.
+    const friClose = new Date(2027, 2, 12, 16, 0).getTime();
+    const monOpen = new Date(2027, 2, 15, 9, 0).getTime();
+    const worked = PL().workingHoursBetween(friClose, monOpen, hours);
+    assertEqual(Math.round(worked), 2, `Friday 4pm to Monday 9am is two working hours, got ${worked}`);
+    // And a single open day is its own length, not twenty-four.
+    assertEqual(PL().workingHoursBetween(MON_9AM, new Date(2027, 2, 15, 17, 0).getTime(), hours), 8);
+  });
+
+  test('Pipeline: a quote is chased twice and then handed to a person', () => {
+    const quotedAt = avAt(2027, 3, 1);
+    const base = { stage: 'quoted', stageChangedAt: quotedAt, createdAt: quotedAt };
+
+    // Two days out: still thinking about it. Chasing a quote the day after
+    // sending it loses it for a different reason.
+    assertEqual(PL().followUpFor(lead({ ...base }), { now: avAt(2027, 3, 3) }), null);
+
+    const first = PL().followUpFor(lead({ ...base }), { now: avAt(2027, 3, 5) });
+    assertEqual(first.reason, 'quoted-quiet');
+    assertEqual(first.action, 'follow-up');
+
+    // Chased twice already: the automatic path has been spent.
+    const exhausted = PL().followUpFor(lead({ ...base, followUpCount: 2 }), { now: avAt(2027, 3, 8) });
+    assertEqual(exhausted.reason, 'quoted-exhausted');
+    assertEqual(exhausted.action, 'call', 'past two attempts it needs a person');
+
+    // Three weeks on it is a decision, not a reminder.
+    const cold = PL().followUpFor(lead({ ...base, followUpCount: 2 }), { now: avAt(2027, 3, 25) });
+    assertEqual(cold.reason, 'quoted-cold');
+    assertEqual(cold.action, 'close');
+  });
+
+  test('Pipeline: doing something about a lead takes it off the list', () => {
+    const old = avAt(2027, 3, 1);
+    const now = avAt(2027, 3, 20);
+    // Quoted three weeks ago but spoken to yesterday: not stale. Measuring
+    // from the stage change alone would keep chasing somebody who was rung
+    // yesterday.
+    const rungYesterday = lead({ stage: 'quoted', stageChangedAt: old, lastContactedAt: avAt(2027, 3, 19) });
+    assertEqual(PL().followUpFor(rungYesterday, { now }), null);
+
+    // Snoozed leads come back, they do not disappear.
+    const snoozed = lead({ stage: 'quoted', stageChangedAt: old, snoozedUntil: avAt(2027, 3, 25) });
+    assertEqual(PL().followUpFor(snoozed, { now }), null, 'quiet while snoozed');
+    assert(PL().followUpFor(snoozed, { now: avAt(2027, 3, 26) }), 'and back afterwards');
+
+    // Won and lost are decided. Nothing chases them.
+    for (const stage of ['won', 'lost']) {
+      assertEqual(PL().followUpFor(lead({ stage, stageChangedAt: old }), { now }), null, `${stage} is finished`);
+    }
+  });
+
+  test('Pipeline: a new enquiry outranks everything else on the list', () => {
+    const now = new Date(2027, 2, 15, 16, 0).getTime();
+    const leads = [
+      lead({ id: 'ancient', stage: 'quoted', stageChangedAt: avAt(2027, 1, 5), createdAt: avAt(2027, 1, 5) }),
+      lead({ id: 'fresh', stage: 'new', stageChangedAt: MON_9AM, createdAt: MON_9AM }),
+      lead({ id: 'middling', stage: 'contacted', stageChangedAt: avAt(2027, 3, 1), createdAt: avAt(2027, 3, 1) }),
+    ];
+    const due = PL().dueList({ leads, now, hours: HOURS_MON_FRI });
+    assertEqual(due[0].lead.id, 'fresh',
+      'the enquiry from this morning beats the quote from January, because somebody else is ringing them today');
+  });
+
+  test('Pipeline: the forecast is weighted, because a pipeline is not a bank balance', () => {
+    const leads = [
+      lead({ id: 'a', stage: 'quoted', quotedCents: 100000 }),
+      lead({ id: 'b', stage: 'new', quotedCents: 100000 }),
+      lead({ id: 'c', stage: 'won', quotedCents: 50000 }),
+      lead({ id: 'd', stage: 'lost', quotedCents: 90000 }),
+    ];
+    const s = PL().summarise({ leads, now: avAt(2027, 3, 20) });
+    assertEqual(s.openCount, 2, 'won and lost are not open');
+    assertEqual(s.openValueCents, 200000, 'face value of what is still live');
+    // Quoted at 50%, new at 20%. Reporting $2,000 as expected income is how
+    // somebody decides they can afford a ute they cannot.
+    assertEqual(s.forecastCents, 70000, 'and the forecast is weighted by stage');
+    assertEqual(s.won, 1);
+    assertEqual(s.lost, 1);
+    assertEqual(s.winRate, 50, 'win rate counts decided leads only, not open ones');
+  });
+
+  test('Pipeline: a won lead becomes a job and keeps nothing the job does not need', () => {
+    const job = PL().jobFromLead(lead({
+      name: 'Nguyen', address: '3 Sturt Close', phone: '0412 345 678', email: 'a@b.com',
+      jobType: 'pest_treatment', notes: 'Ants in the kitchen',
+      stage: 'quoted', followUpCount: 2, quotedCents: 45000, source: 'Google',
+    }));
+    assertEqual(job.name, 'Nguyen');
+    assertEqual(job.clientPhone, '0412 345 678', 'the phone becomes the client phone');
+    assertEqual(job.jobType, 'pest_treatment');
+    assertEqual(job.notes, 'Ants in the kitchen');
+    // The pipeline's own bookkeeping has no meaning once this is real work.
+    for (const gone of ['stage', 'followUpCount', 'quotedCents', 'source']) {
+      assertEqual(job[gone], undefined, `${gone} should not follow a lead into the diary`);
+    }
+  });
+
+  test('Leads: an enquiry can be taken down, moved along and turned into a job', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    for (const l of await win.DB.getLeads()) await win.DB.deleteLead(l.id);
+
+    await win.LeadsUI.open();
+    await wait(250);
+    assert(/No enquiries yet/.test(doc.getElementById('leads-board').textContent),
+      'an empty board says what to do about it');
+
+    doc.getElementById('lead-new-btn').click();
+    await waitFor(async () => (await win.DB.getLeads()).length === 1, 'a new enquiry should be created');
+    const [created] = await win.DB.getLeads();
+    assertEqual(created.stage, 'new');
+
+    // Fill it in the way somebody would with a phone against one ear.
+    const set = (id, val) => {
+      const input = doc.querySelector(`#lead-fields [data-field-row="${id}"] input, #lead-fields [data-field-row="${id}"] textarea`);
+      input.value = val;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    set('name', 'Delaney Property');
+    set('phone', '0412 345 678');
+    set('quotedText', '450');
+
+    Array.from(doc.querySelectorAll('#lead-stages .stage-btn')).find((b) => /Quoted/.test(b.textContent)).click();
+    await waitFor(async () => (await win.DB.getLead(created.id)).stage === 'quoted', 'the stage should save');
+
+    const quoted = await win.DB.getLead(created.id);
+    assertEqual(quoted.name, 'Delaney Property', 'and the fields save with it');
+    assertEqual(quoted.quotedCents, 45000, 'a typed amount becomes cents');
+
+    // Winning it creates the job and keeps the enquiry pointed at it.
+    const before = (await win.DB.getJobs()).length;
+    const realConfirm = win.Dialog.confirm;
+    win.Dialog.confirm = () => Promise.resolve(true);
+    try {
+      doc.getElementById('lead-convert-btn').click();
+      await waitFor(async () => (await win.DB.getJobs()).length === before + 1, 'a job should be created');
+    } finally {
+      win.Dialog.confirm = realConfirm;
+    }
+
+    const won = await win.DB.getLead(created.id);
+    assertEqual(won.stage, 'won');
+    assert(won.convertedJobId, 'the enquiry remembers which job it became');
+    const job = await win.DB.getJob(won.convertedJobId);
+    assertEqual(job.name, 'Delaney Property');
+    assertEqual(job.clientPhone, '0412 345 678');
+  });
+
   // ---------- QR scanning ----------
   test('QR: a sticker this app printed is a sticker this app can read', async () => {
     const win = frame.contentWindow;

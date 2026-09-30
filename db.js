@@ -41,7 +41,7 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // has to leave something behind. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 
 let dbPromise = null;
 
@@ -79,6 +79,15 @@ function openDB() {
       if (!db.objectStoreNames.contains('swms')) {
         const store = db.createObjectStore('swms', { keyPath: 'id' });
         store.createIndex('jobId', 'jobId', { unique: false });
+      }
+      // DB v8 adds 'leads'. Separate from jobs on purpose: a job is work that
+      // exists and a lead is work that might, and putting maybes in the diary
+      // is how a diary stops being trusted. A lead that is won becomes a job
+      // and keeps a pointer back, so the enquiry it came from is not lost the
+      // moment it turns into real work.
+      if (!db.objectStoreNames.contains('leads')) {
+        const store = db.createObjectStore('leads', { keyPath: 'id' });
+        store.createIndex('stage', 'stage', { unique: false });
       }
       if (!db.objectStoreNames.contains('invoices')) {
         const store = db.createObjectStore('invoices', { keyPath: 'id' });
@@ -646,6 +655,78 @@ const DB = {
     const store = await tx('reports', 'readonly');
     const all = await reqToPromise(store.getAll());
     return all.sort((a, b) => (b.finalizedAt || b.updatedAt || 0) - (a.finalizedAt || a.updatedAt || 0));
+  },
+
+  // ---------- Leads ----------
+  async addLead({ name, phone, email, address, addressLat, addressLng, jobType, source, notes, quotedCents }) {
+    const store = await tx('leads', 'readwrite');
+    const now = Date.now();
+    const record = {
+      id: uid(),
+      name: name || '',
+      phone: phone || '',
+      email: email || '',
+      address: address || '',
+      addressLat: typeof addressLat === 'number' ? addressLat : null,
+      addressLng: typeof addressLng === 'number' ? addressLng : null,
+      jobType: jobType === 'pest_treatment' ? 'pest_treatment' : 'termite',
+      // Where it came from, because knowing which advertising works is the
+      // only way to decide whether to keep paying for it.
+      source: source || '',
+      notes: notes || '',
+      stage: 'new',
+      // Separate from createdAt so "how long has it sat in THIS stage" is
+      // answerable — a lead that arrived last month but was quoted yesterday
+      // is not stale.
+      stageChangedAt: now,
+      lastContactedAt: null,
+      lastFollowUpAt: null,
+      followUpCount: 0,
+      snoozedUntil: null,
+      quotedCents: typeof quotedCents === 'number' ? quotedCents : null,
+      lostReason: '',
+      // Set when the lead is won, so the enquiry is not lost the moment it
+      // becomes real work.
+      convertedJobId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await reqToPromise(store.put(record));
+    if (window.Sync) window.Sync.pushLead(record);
+    return record;
+  },
+
+  async saveLead(lead) {
+    const store = await tx('leads', 'readwrite');
+    const toSave = { ...lead, updatedAt: Date.now() };
+    await reqToPromise(store.put(toSave));
+    if (window.Sync) window.Sync.pushLead(toSave);
+    return toSave;
+  },
+
+  // Low-level put used only by the sync layer — never re-triggers a push.
+  async putLeadRaw(lead) {
+    const store = await tx('leads', 'readwrite');
+    await reqToPromise(store.put(lead));
+    return lead;
+  },
+
+  async getLead(id) {
+    const store = await tx('leads', 'readonly');
+    return reqToPromise(store.get(id));
+  },
+
+  async getLeads() {
+    const store = await tx('leads', 'readonly');
+    const all = await reqToPromise(store.getAll());
+    return all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  },
+
+  async deleteLead(id) {
+    const store = await tx('leads', 'readwrite');
+    await reqToPromise(store.delete(id));
+    await this.recordDeletion('leads', id);
+    if (window.Sync) window.Sync.deleteLeadRemote(id);
   },
 
   // ---------- Safe Work Method Statements ----------

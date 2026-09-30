@@ -309,7 +309,25 @@
   // having to know the complete list.
   window.hideAllAppViews = function () {
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+    // The More sheet is not a .view — it floats over one — so it has to be
+    // closed explicitly or it stays on top of whatever was just opened.
+    const sheet = document.getElementById('more-sheet');
+    if (sheet) sheet.classList.add('hidden');
   };
+
+  // The screens opened weekly rather than daily live behind More. Each one
+  // wires its own open button; this only shows and hides the sheet.
+  const moreSheet = document.getElementById('more-sheet');
+  const moreBtn = document.getElementById('open-more-btn');
+  if (moreSheet && moreBtn) {
+    moreBtn.addEventListener('click', () => moreSheet.classList.remove('hidden'));
+    const closeMore = () => moreSheet.classList.add('hidden');
+    const closeBtn = document.getElementById('more-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', closeMore);
+    // Tapping the dimmed area behind it closes it, which is what everyone
+    // expects of a sheet and costs one line.
+    moreSheet.addEventListener('click', (e) => { if (e.target === moreSheet) closeMore(); });
+  }
 
   // ---------- Auth / sync UI ----------
   function showLoginView() {
