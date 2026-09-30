@@ -222,7 +222,7 @@
         cell.appendChild(bar);
       }
 
-      cell.addEventListener('click', () => { selected = date; renderGrid(); renderDay(); });
+      cell.addEventListener('click', () => { selected = date; renderGrid(); renderDay(); renderTidyButton(); });
       gridEl.appendChild(cell);
     }
   }
@@ -603,10 +603,69 @@
     );
   }
 
+  // ---------- a better order for the day ----------
+  // Shows up only when there is genuinely something to save, because a button
+  // that says "this is already the best order" every day is a button nobody
+  // reads. routing.js does the arithmetic; everything here is about making
+  // the trade-off visible before anything moves.
+  const tidyBtn = el('scheduler-tidy');
+
+  function renderTidyButton() {
+    if (!tidyBtn) return;
+    if (!window.Routing) { tidyBtn.classList.add('hidden'); return; }
+    const result = window.Routing.optimiseDay({ jobs: jobsOn(selected), config: AVAIL_CONFIG });
+    const worthIt = result.ok && !result.sameOrder && result.savingMins >= 10;
+    tidyBtn.classList.toggle('hidden', !worthIt);
+    if (worthIt) {
+      tidyBtn.textContent = `Better order for this day — saves ${fmtTravel(result.savingMins)} driving`;
+    }
+  }
+
+  async function proposeTidy() {
+    const result = window.Routing.optimiseDay({ jobs: jobsOn(selected), config: AVAIL_CONFIG });
+    if (!result.ok) {
+      toast(window.Routing.REASONS[result.reason] || 'This day cannot be reordered.');
+      return;
+    }
+
+    const lines = result.moves.map((m) =>
+      `${m.toldClient ? '📞 ' : ''}${m.name}: ${fmtTime(m.fromAt)} → ${fmtTime(m.toAt)}`);
+
+    // The phone calls are the cost of the saving, so they are stated as
+    // plainly as the saving is. A technician who moves three clients without
+    // noticing they had all been sent a time has been failed by this dialog,
+    // not helped by it.
+    let body = `${lines.join('\n')}\n\n`
+      + `${fmtTravel(result.savingMins)} less driving. `
+      + `Finishes ${fmtTravel(result.finishesEarlierMins)} earlier.`;
+    if (result.alreadyToldCount) {
+      body += `\n\n📞 ${result.alreadyToldCount === 1
+        ? 'One of these clients has already been told their time'
+        : `${result.alreadyToldCount} of these clients have already been told their time`}`
+        + ' — you will need to ring them.';
+    }
+
+    const ok = await askConfirm(body, {
+      title: 'Move these jobs?',
+      okLabel: result.alreadyToldCount ? 'Move them anyway' : 'Use this order',
+      danger: !!result.alreadyToldCount,
+    });
+    if (!ok) return;
+
+    for (const m of result.moves) {
+      await DB.updateJob(m.jobId, { scheduledAt: m.toAt });
+    }
+    toast(`Day reordered — ${fmtTravel(result.savingMins)} less driving`);
+    await refresh();
+  }
+
+  if (tidyBtn) tidyBtn.addEventListener('click', proposeTidy);
+
   async function refresh() {
     jobs = await DB.getJobs();
     renderGrid();
     renderDay();
+    renderTidyButton();
     renderBacklog();
   }
 
@@ -623,6 +682,7 @@
     selected = startOfDay(new Date());
     renderGrid();
     renderDay();
+    renderTidyButton();
   });
   backBtn.addEventListener('click', () => {
     view.classList.add('hidden');

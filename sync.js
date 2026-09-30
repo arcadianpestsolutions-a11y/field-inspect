@@ -307,6 +307,14 @@
       // whether an overdue job in the backlog has already had its email
       // and should now read as "needs a call" rather than plain overdue.
       reminderSentForDueAt: rj.reminder_sent_for_due_at || null,
+      // Also written only server-side, by send-client-message, and pulled
+      // down read-only for the same kind of reason: they are the closest
+      // thing the app has to proof that a client was actually told a time.
+      // routing.js needs that before it offers to move somebody — a day
+      // reshuffled to save half an hour of driving is not a saving if three
+      // clients were already sitting at home waiting at the old time.
+      confirmationSentForAt: rj.confirmation_sent_for_at || null,
+      dayBeforeSentForAt: rj.day_before_sent_for_at || null,
       scheduledAt: rj.scheduled_at || null,
       scheduledDurationMins: rj.scheduled_duration_mins || 60,
       recurringFromId: rj.recurring_from_id || null,

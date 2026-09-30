@@ -196,6 +196,38 @@
   // are real so the mud map's aerial backdrop resolves for anyone who opens
   // the sketch pad during a demo.
   const SEED_JOBS = [
+    // A deliberately badly ordered day, three days out. Four real Macarthur
+    // suburbs booked east, west, east, west — two crossings of the region
+    // that never needed to happen.
+    //
+    // It exists because the demo is what somebody is shown, and until this
+    // was here no day in it had more than two jobs on it, so the scheduler's
+    // route ordering had nothing to work with and simply never appeared. A
+    // feature that cannot be demonstrated may as well not have been built.
+    {
+      key: 'routeRydal', name: 'Rydal Street Units', address: '22 Rydal Street, Campbelltown NSW 2560',
+      lat: -34.0650, lng: 150.8140, jobType: 'pest_treatment',
+      clientPhone: '0401 552 118', clientEmail: 'strata@example.com',
+      dayOffset: 3, hour: 8, mins: 60,
+    },
+    {
+      key: 'routeElderslie', name: 'Elderslie Cottage', address: '9 Macarthur Road, Camden NSW 2570',
+      lat: -34.0547, lng: 150.6967, jobType: 'termite',
+      clientPhone: '0455 209 663', clientEmail: 'r.tanner@example.com',
+      dayOffset: 3, hour: 9, mins: 90,
+    },
+    {
+      key: 'routeMinto', name: 'Minto Marketplace Cafe', address: '3 Brookfield Road, Minto NSW 2566',
+      lat: -34.0340, lng: 150.8470, jobType: 'pest_treatment',
+      clientPhone: '0466 771 430', clientEmail: 'cafe@example.com',
+      dayOffset: 3, hour: 11, mins: 60,
+    },
+    {
+      key: 'routeNarellan', name: 'Narellan Vale Home', address: '18 Sunshine Place, Narellan Vale NSW 2567',
+      lat: -34.0420, lng: 150.7370, jobType: 'termite',
+      clientPhone: '0478 330 922', clientEmail: 'd.whitfield@example.com',
+      dayOffset: 3, hour: 13, mins: 90,
+    },
     {
       key: 'hartley', name: 'Hartley Residence', address: '14 Wattle Grove, Ingleburn NSW 2565',
       lat: -33.9989, lng: 150.8671, jobType: 'termite',

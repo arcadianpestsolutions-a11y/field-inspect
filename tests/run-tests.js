@@ -4824,6 +4824,207 @@
     assert(landline.text, 'the message is still composed, so the office can read it out on the phone');
   });
 
+  // ---------- Route ordering ----------
+  // Four real Macarthur suburbs, so the distances are the ones a technician
+  // would actually drive rather than numbers chosen to make the test pass.
+  const RT = () => window.Routing;
+  const CAMPBELLTOWN = { addressLat: -34.0650, addressLng: 150.8140 };
+  const MINTO = { addressLat: -34.0340, addressLng: 150.8470 };       // ~5km from Campbelltown
+  const NARELLAN = { addressLat: -34.0420, addressLng: 150.7370 };
+  const CAMDEN_RT = { addressLat: -34.0547, addressLng: 150.6967 };   // the far end
+  const rtJob = (id, hour, coords, extra) => Object.assign(
+    { id, name: id, scheduledAt: avAt(2027, 3, 15, hour), scheduledDurationMins: 60 }, coords, extra || {});
+
+  test('Routing: a day driven back and forth gets straightened out', () => {
+    // Booked Campbelltown, then all the way west to Camden, then back east to
+    // Minto, then west again to Narellan. Two crossings of the region that
+    // never needed to happen.
+    const jobs = [
+      rtJob('campbelltown', 8, CAMPBELLTOWN),
+      rtJob('camden', 9, CAMDEN_RT),
+      rtJob('minto', 10, MINTO),
+      rtJob('narellan', 11, NARELLAN),
+    ];
+    const r = RT().optimiseDay({ jobs });
+    assert(r.ok, r.reason && RT().REASONS[r.reason]);
+    assertEqual(r.sameOrder, false, 'that order is not the best one');
+    assertEqual(r.after.order[0], 'campbelltown', 'the first appointment of the day stays put');
+    assertEqual(r.after.order[3], 'camden', 'the far end belongs at the end, not in the middle');
+    assert(r.savingMins >= 20, `the zig-zag should cost real time, saving was ${r.savingMins} min`);
+    assert(r.after.travelMins < r.before.travelMins, 'and the new route must actually be shorter');
+    assert(r.finishesEarlierMins > 0, `the day should finish earlier, got ${r.finishesEarlierMins} min`);
+  });
+
+  test('Routing: a day already in the right order is left alone', () => {
+    const jobs = [
+      rtJob('campbelltown', 8, CAMPBELLTOWN),
+      rtJob('minto', 9, MINTO),
+      rtJob('narellan', 11, NARELLAN),
+      rtJob('camden', 13, CAMDEN_RT),
+    ];
+    const r = RT().optimiseDay({ jobs });
+    assert(r.ok, r.reason);
+    assertEqual(r.sameOrder, true, 'west-to-east once is already the right way round');
+    assertEqual(r.savingMins, 0, 'and there is nothing to save');
+  });
+
+  test('Routing: a client who has already been told a time is flagged, not quietly moved', () => {
+    // This is the whole reason this proposes instead of applying. Two of
+    // these people have had a message; moving them is a phone call, not a
+    // tidy-up, and the difference has to be on screen.
+    const jobs = [
+      rtJob('campbelltown', 8, CAMPBELLTOWN),
+      rtJob('camden', 9, CAMDEN_RT, { confirmationSentForAt: avAt(2027, 3, 15, 9) }),
+      rtJob('minto', 10, MINTO, { dayBeforeSentForAt: avAt(2027, 3, 15, 10) }),
+      rtJob('narellan', 11, NARELLAN),
+    ];
+    const r = RT().optimiseDay({ jobs });
+    assert(r.ok, r.reason);
+    assert(r.moves.length, 'this day does get reordered');
+    const moved = r.moves.map((m) => m.jobId);
+    for (const m of r.moves) {
+      const expected = m.jobId === 'camden' || m.jobId === 'minto';
+      assertEqual(m.toldClient, expected, `${m.jobId} told-client flag`);
+    }
+    assertEqual(r.alreadyToldCount, moved.filter((id) => id === 'camden' || id === 'minto').length,
+      'the count has to match, because it is what decides whether this needs a phone call');
+    assert(RT().hasBeenTold({ confirmationSentForAt: 1 }), 'a confirmation counts');
+    assert(RT().hasBeenTold({ dayBeforeSentForAt: 1 }), 'so does a reminder');
+    assert(!RT().hasBeenTold({}), 'and an untouched job counts as nobody told');
+  });
+
+  test('Routing: a typed address stops the whole day rather than being guessed at', () => {
+    const jobs = [
+      rtJob('campbelltown', 8, CAMPBELLTOWN),
+      rtJob('camden', 9, CAMDEN_RT),
+      // Address typed freehand, so no coordinates were ever saved.
+      { id: 'typed', name: 'Typed Address Job', scheduledAt: avAt(2027, 3, 15, 10), scheduledDurationMins: 60 },
+    ];
+    const r = RT().optimiseDay({ jobs });
+    assertEqual(r.ok, false, 'a route with an unknown point on it is not a route');
+    assertEqual(r.reason, 'addresses-not-located');
+    assertEqual(r.unlocatable.length, 1);
+    assertEqual(r.unlocatable[0].jobId, 'typed', 'and it names the one to fix');
+    assert(/suggestion list/.test(RT().REASONS[r.reason]), 'the message says how to fix it');
+  });
+
+  test('Routing: two jobs have only one order, and it says so', () => {
+    const two = RT().optimiseDay({ jobs: [rtJob('a', 8, CAMPBELLTOWN), rtJob('b', 9, CAMDEN_RT)] });
+    assertEqual(two.ok, false);
+    assertEqual(two.reason, 'only-one-route');
+    const none = RT().optimiseDay({ jobs: [] });
+    assertEqual(none.reason, 'nothing-to-order');
+  });
+
+  test('Routing: new times are chained off the drive and land on a readable clock', () => {
+    const jobs = [
+      rtJob('campbelltown', 8, CAMPBELLTOWN),
+      rtJob('camden', 9, CAMDEN_RT),
+      rtJob('minto', 10, MINTO),
+      rtJob('narellan', 11, NARELLAN),
+    ];
+    const r = RT().optimiseDay({ jobs });
+    assert(r.ok, r.reason);
+    for (const m of r.moves) {
+      const d = new Date(m.toAt);
+      assertEqual(d.getMinutes() % 5, 0, `a time of ${avHM(m.toAt)} is not a time anyone keeps`);
+      assert(m.toAt >= jobs[0].scheduledAt, 'nothing may be moved before the day starts');
+    }
+    // The first job is the anchor, so it never appears as a move.
+    assert(!r.moves.some((m) => m.jobId === 'campbelltown'), 'the anchor does not move');
+  });
+
+  test('Scheduler: the better-order button proposes, waits, then writes the new times', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const day = dayThisMonth(17, 8);
+    const mk = (name, hour, lat, lng) => win.DB.addJob({
+      name, addressLat: lat, addressLng: lng, scheduledDurationMins: 60,
+      scheduledAt: new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour).getTime(),
+    });
+    // East, west, east, west.
+    await mk('Order Campbelltown', 8, -34.0650, 150.8140);
+    await mk('Order Camden', 9, -34.0547, 150.6967);
+    await mk('Order Minto', 10, -34.0340, 150.8470);
+    await mk('Order Narellan', 11, -34.0420, 150.7370);
+
+    await win.Scheduler.open();
+    await wait(400);
+    const cell = Array.from(doc.querySelectorAll('#view-scheduler .cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(day.getDate()));
+    cell.click();
+    await wait(250);
+
+    const btn = doc.getElementById('scheduler-tidy');
+    assert(!btn.classList.contains('hidden'), 'a day worth reordering should offer to reorder it');
+    assert(/saves/.test(btn.textContent), `the button says what it is worth: ${btn.textContent}`);
+
+    // Declining must write nothing. This is the half that matters — the
+    // proposal is only safe if refusing it is genuinely free.
+    const timesOf = async () => (await win.DB.getJobs())
+      .filter((j) => /^Order /.test(j.name))
+      .map((j) => `${j.name}@${new Date(j.scheduledAt).getHours()}`).sort().join(',');
+    const original = await timesOf();
+
+    const realConfirm = win.Dialog.confirm;
+    let shown = null;
+    win.Dialog.confirm = (msg, opts) => { shown = { msg, opts }; return Promise.resolve(false); };
+    btn.click();
+    await wait(500);
+    assert(shown, 'it must ask first');
+    assert(/→/.test(shown.msg), 'and show what moves where');
+    assert(/less driving/.test(shown.msg), 'and what it saves');
+    assertEqual(await timesOf(), original, 'saying no must move nothing');
+
+    // Accepting writes.
+    win.Dialog.confirm = () => Promise.resolve(true);
+    btn.click();
+    await waitFor(async () => (await timesOf()) !== original, 'accepting should have moved the jobs');
+    win.Dialog.confirm = realConfirm;
+
+    const after = await win.DB.getJobs();
+    const camden = after.find((j) => j.name === 'Order Camden');
+    const campbelltown = after.find((j) => j.name === 'Order Campbelltown');
+    assertEqual(new Date(campbelltown.scheduledAt).getHours(), 8, 'the first appointment is the anchor');
+    assert(new Date(camden.scheduledAt).getHours() >= 12, 'the far end moves to the end of the day');
+    await wait(300);
+    assert(doc.getElementById('scheduler-tidy').classList.contains('hidden'),
+      'once the day is in the right order there is nothing left to offer');
+  });
+
+  test('Scheduler: moving a client who was already told their time is called out as a phone call', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const day = dayThisMonth(19, 8);
+    const at = (h) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), h).getTime();
+    await win.DB.addJob({ name: 'Told Campbelltown', addressLat: -34.0650, addressLng: 150.8140, scheduledAt: at(8), scheduledDurationMins: 60 });
+    const told = await win.DB.addJob({ name: 'Told Camden', addressLat: -34.0547, addressLng: 150.6967, scheduledAt: at(9), scheduledDurationMins: 60 });
+    await win.DB.addJob({ name: 'Told Minto', addressLat: -34.0340, addressLng: 150.8470, scheduledAt: at(10), scheduledDurationMins: 60 });
+    await win.DB.addJob({ name: 'Told Narellan', addressLat: -34.0420, addressLng: 150.7370, scheduledAt: at(11), scheduledDurationMins: 60 });
+    // Normally stamped server-side when the confirmation actually goes out.
+    await win.DB.updateJob(told.id, { confirmationSentForAt: at(9) });
+
+    await win.Scheduler.open();
+    await wait(400);
+    Array.from(doc.querySelectorAll('#view-scheduler .cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(day.getDate())).click();
+    await wait(250);
+
+    const realConfirm = win.Dialog.confirm;
+    let shown = null;
+    win.Dialog.confirm = (msg, opts) => { shown = { msg, opts }; return Promise.resolve(false); };
+    doc.getElementById('scheduler-tidy').click();
+    await wait(500);
+    win.Dialog.confirm = realConfirm;
+
+    assert(shown, 'it should still offer the better order');
+    assert(/already been told/.test(shown.msg),
+      `a saving that costs a phone call has to say so: ${shown.msg}`);
+    assertEqual(shown.opts.danger, true, 'and it is styled as the consequential choice it is');
+    assertEqual(shown.opts.okLabel, 'Move them anyway',
+      'the button admits what it is doing rather than saying "use this order"');
+  });
+
   // ---------- Tomorrow's reminders panel ----------
   test('Reminders: the panel shows the words that will be sent, not a summary of them', async () => {
     const win = frame.contentWindow;
