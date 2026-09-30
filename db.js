@@ -41,7 +41,7 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // has to leave something behind. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 let dbPromise = null;
 
@@ -68,6 +68,17 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('reports')) {
         db.createObjectStore('reports', { keyPath: 'jobId' });
+      }
+      // DB v7 adds 'swms'. Keyed by its own id rather than by jobId, which
+      // is the whole reason it is a separate store: 'reports' is keyed by
+      // jobId, so a job holds exactly one report, and a Safe Work Method
+      // Statement has to be able to sit alongside an inspection rather than
+      // instead of it. jobId is an index here, not the key — and it is
+      // nullable, because a SWMS written once for an activity and reused
+      // across jobs is the way the document is actually used.
+      if (!db.objectStoreNames.contains('swms')) {
+        const store = db.createObjectStore('swms', { keyPath: 'id' });
+        store.createIndex('jobId', 'jobId', { unique: false });
       }
       if (!db.objectStoreNames.contains('invoices')) {
         const store = db.createObjectStore('invoices', { keyPath: 'id' });
@@ -635,6 +646,75 @@ const DB = {
     const store = await tx('reports', 'readonly');
     const all = await reqToPromise(store.getAll());
     return all.sort((a, b) => (b.finalizedAt || b.updatedAt || 0) - (a.finalizedAt || a.updatedAt || 0));
+  },
+
+  // ---------- Safe Work Method Statements ----------
+  // Its own store, not a document type on a report. `reports` is keyed by
+  // jobId, so a job holds exactly one — and a SWMS accompanies the work
+  // rather than recording it, so it has to be able to exist alongside an
+  // inspection instead of replacing it. See DOCUMENT_TYPES in report.js,
+  // which says the same thing from the other end.
+  async createSwms({ jobId, title, siteAddress }) {
+    const store = await tx('swms', 'readwrite');
+    const now = Date.now();
+    const record = {
+      id: uid(),
+      // Nullable on purpose. A SWMS written once for subfloor work and
+      // reused across a season is how the document is actually used; tying
+      // every one to a single job would make the common case the awkward one.
+      jobId: jobId || null,
+      title: title || 'Safe Work Method Statement',
+      siteAddress: siteAddress || '',
+      sections: {},
+      signedAt: null,
+      reviewDueAt: null,
+      schemaVersion: window.SWMS_SCHEMA_VERSION || 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await reqToPromise(store.put(record));
+    if (window.Sync) window.Sync.pushSwms(record);
+    return record;
+  },
+
+  async saveSwms(swms) {
+    const store = await tx('swms', 'readwrite');
+    const toSave = { ...swms, updatedAt: Date.now() };
+    await reqToPromise(store.put(toSave));
+    if (window.Sync) window.Sync.pushSwms(toSave);
+    return toSave;
+  },
+
+  // Low-level put used only by the sync layer — never re-triggers a push.
+  async putSwmsRaw(swms) {
+    const store = await tx('swms', 'readwrite');
+    await reqToPromise(store.put(swms));
+    return swms;
+  },
+
+  async getSwms(id) {
+    const store = await tx('swms', 'readonly');
+    return reqToPromise(store.get(id));
+  },
+
+  async getSwmsForJob(jobId) {
+    const store = await tx('swms', 'readonly');
+    const idx = store.index('jobId');
+    const all = await reqToPromise(idx.getAll(jobId));
+    return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+
+  async getAllSwms() {
+    const store = await tx('swms', 'readonly');
+    const all = await reqToPromise(store.getAll());
+    return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+
+  async deleteSwms(id) {
+    const store = await tx('swms', 'readwrite');
+    await reqToPromise(store.delete(id));
+    await this.recordDeletion('swms', id);
+    if (window.Sync) window.Sync.deleteSwmsRemote(id);
   },
 
   // ---------- Self-service backup ----------

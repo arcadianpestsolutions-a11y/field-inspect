@@ -456,3 +456,10 @@ const SWMS_SCHEMA = [
 ];
 
 window.SWMS_SCHEMA = SWMS_SCHEMA;
+
+// Bumped whenever a field here is added, removed, renamed, or has its options
+// or required-ness changed — same reasoning as REPORT_SCHEMA_VERSION. A signed
+// SWMS is a compliance document whose meaning depends on the questions that
+// were on screen when it was signed, and a version stamped on the record makes
+// a later mismatch visible instead of silent.
+window.SWMS_SCHEMA_VERSION = 1;

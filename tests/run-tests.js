@@ -556,6 +556,46 @@
   });
 
   // ---------- Safe Work Method Statement ----------
+  test('SWMS store: a statement sits alongside a report instead of replacing it', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'SWMS Store Job', address: '1 Safety St' });
+    // The report and the statement both exist, on the same job, at once.
+    // This is the thing that could not be done while a SWMS was a document
+    // type: reports is keyed by jobId, so one would have replaced the other.
+    await win.DB.saveReport({ jobId: job.id, sections: { findings: { liveTermitesFound: 'No' } } });
+    const swms = await win.DB.createSwms({ jobId: job.id, siteAddress: '1 Safety St' });
+
+    const report = await win.DB.getReport(job.id);
+    const stored = await win.DB.getSwms(swms.id);
+    assert(report && report.sections.findings, 'the inspection report is untouched');
+    assert(stored, 'and the safety statement exists in its own right');
+    assertEqual(stored.jobId, job.id);
+    assertEqual(stored.schemaVersion, win.SWMS_SCHEMA_VERSION, 'stamped with the schema it was written against');
+
+    const forJob = await win.DB.getSwmsForJob(job.id);
+    assertEqual(forJob.length, 1, 'and it is findable from the job');
+  });
+
+  test('SWMS store: a standing statement belongs to no job at all', async () => {
+    const win = frame.contentWindow;
+    // A statement written once for subfloor work and reused all season is how
+    // the document is actually used. Requiring a job would make the common
+    // case the awkward one.
+    const standing = await win.DB.createSwms({ title: 'Subfloor entry — standing' });
+    assertEqual(standing.jobId, null, 'no job, and that is valid');
+    const all = await win.DB.getAllSwms();
+    assert(all.some((s) => s.id === standing.id), 'it still shows up in the register');
+  });
+
+  test('SWMS store: deleting one leaves a tombstone so it stays deleted', async () => {
+    const win = frame.contentWindow;
+    const swms = await win.DB.createSwms({ title: 'To be deleted' });
+    await win.DB.deleteSwms(swms.id);
+    assertEqual(await win.DB.getSwms(swms.id), undefined, 'gone locally');
+    assertEqual(await win.DB.isDeleted('swms', swms.id), true,
+      'and recorded as deleted, or the next sync pulls it straight back down');
+  });
+
   test('SWMS: covers what WHS Regulation 2017 reg 299 says a statement must state', () => {
     const schema = window.SWMS_SCHEMA;
     const ids = schema.flatMap((s) => s.fields.map((f) => f.id));

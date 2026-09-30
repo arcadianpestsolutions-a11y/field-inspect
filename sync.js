@@ -119,6 +119,7 @@
     reports: ['job_id'],
     captures: ['id'],
     invoices: ['id'],
+    swms: ['id'],
     deletions: ['table_name', 'record_id'], // composite — neither half is unique alone
   };
 
@@ -447,6 +448,19 @@
     const code = error.code || '';
     const msg = String(error.message || '');
     return code === 'PGRST204' || /audit_log|schema_version|document_type/.test(msg);
+  }
+
+  // A table that is not there yet, because its migration has not been run.
+  // Worth telling apart from every other failure: it is not a bug, it is a
+  // setup step, and the fix is a sentence rather than an investigation.
+  // Postgres says 42P01; PostgREST reports the same thing as PGRST205 and
+  // also as a schema-cache miss, so all three count.
+  function isMissingTableError(error) {
+    if (!error) return false;
+    const code = error.code || '';
+    const msg = String(error.message || '');
+    return code === '42P01' || code === 'PGRST205'
+      || /relation .* does not exist|could not find the table|schema cache/i.test(msg);
   }
 
   function remoteReportToLocal(rr, existingLocal) {
@@ -813,6 +827,80 @@
     };
   }
 
+  // ---------- Safe Work Method Statements ----------
+  function localSwmsToRemote(swms, pushedSections) {
+    return {
+      id: swms.id,
+      job_id: swms.jobId || null,
+      title: swms.title || '',
+      site_address: swms.siteAddress || '',
+      sections: pushedSections,
+      signed_at: swms.signedAt || null,
+      review_due_at: swms.reviewDueAt || null,
+      schema_version: swms.schemaVersion || null,
+      created_by: currentUserId(),
+      created_at: swms.createdAt,
+      updated_at: swms.updatedAt,
+    };
+  }
+
+  function remoteSwmsToLocal(rs) {
+    return {
+      id: rs.id,
+      jobId: rs.job_id || null,
+      title: rs.title || 'Safe Work Method Statement',
+      siteAddress: rs.site_address || '',
+      sections: rs.sections || {},
+      signedAt: rs.signed_at || null,
+      reviewDueAt: rs.review_due_at || null,
+      schemaVersion: rs.schema_version || null,
+      createdAt: rs.created_at,
+      updatedAt: rs.updated_at,
+    };
+  }
+
+  async function pushSwms(swms) {
+    if (!isReady()) return;
+    try {
+      // Photos go through the same path a report's do, so a hazard photo is
+      // backed up exactly like an inspection photo. A SWMS with no job on it
+      // uses its own id as the storage folder, since there is no job to
+      // file it under.
+      const { sections, newPaths } = await sectionsForPush(swms.jobId || swms.id, swms.sections);
+      const { data, error } = await supabaseClient
+        .from('swms').upsert(localSwmsToRemote(swms, sections)).select('id');
+      if (error) throw error;
+      if (refusedByPolicy(data)) reportPolicyRefusal('safe work method statement', swms.id);
+      if (newPaths.length) {
+        const local = await DB.getSwms(swms.id);
+        if (local) {
+          for (const { sectionId, fieldId, photoId, path } of newPaths) {
+            const arr = local.sections && local.sections[sectionId] && local.sections[sectionId][fieldId];
+            if (!Array.isArray(arr)) continue;
+            const entry = arr.find((p) => p.id === photoId);
+            if (entry) entry.path = path;
+          }
+          await DB.putSwmsRaw(local);
+        }
+      }
+    } catch (e) {
+      // 42P01 until migration 025 has been run. Said once, plainly, rather
+      // than as a recurring error nobody can act on.
+      if (isMissingTableError(e)) {
+        console.warn('[sync] the swms table is not in the database yet — run supabase-migration-025-swms.sql. Safety statements stay on this device until then.');
+        return;
+      }
+      console.warn('[sync] push SWMS failed, will retry on next sync:', e.message || e);
+    }
+  }
+
+  async function deleteSwmsRemote(id) {
+    if (!isReady()) return;
+    try { await supabaseClient.from('swms').delete().eq('id', id); }
+    catch (e) { console.warn('[sync] delete SWMS failed:', e.message || e); }
+    await pushTombstone('swms', id);
+  }
+
   async function deleteInvoiceRemote(id) {
     if (!isReady()) return;
     try { await supabaseClient.from('invoices').delete().eq('id', id); }
@@ -988,6 +1076,13 @@
           putRaw: (rec) => DB.putInvoiceRaw(rec),
           push: pushInvoice,
         },
+        {
+          table: 'swms',
+          localAll: () => DB.getAllSwms(),
+          toLocal: remoteSwmsToLocal,
+          putRaw: (rec) => DB.putSwmsRaw(rec),
+          push: pushSwms,
+        },
       ];
 
       for (const c of collections) {
@@ -1059,9 +1154,11 @@
     pushReport,
     pushCapture,
     pushInvoice,
+    pushSwms,
     deleteJobRemote,
     deleteCaptureRemote,
     deleteInvoiceRemote,
+    deleteSwmsRemote,
     currentUserId,
     isOnline,
     getStatus: () => syncStatus,
