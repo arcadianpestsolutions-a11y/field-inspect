@@ -2610,3 +2610,33 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   color: var(--text-dim);
   line-height: 1.5;
 }
+
+/* ---- Station register and QR stickers ---------------------------------- */
+.asset-history { list-style: none; padding: 4px 0 10px 54px; margin: -4px 0 8px; }
+.asset-history-row { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.asset-history-row:last-child { border-bottom: 0; }
+.asset-history-date { font-size: 0.72rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.asset-history-what { font-size: 0.85rem; }
+.asset-history-note { font-size: 0.78rem; color: var(--text-dim); }
+
+.sticker-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.sticker {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px; border: 1px dashed var(--border); border-radius: 6px;
+  background: #fff;
+}
+/* The QR itself is always black on white whatever the app's theme is doing.
+   A sticker is a physical object that gets printed and read by a camera in a
+   garden bed; it has no business following a dark mode. */
+.sticker-qr { background: #fff; line-height: 0; }
+.sticker-qr canvas, .sticker-qr img, .sticker-qr table { display: block; }
+.sticker-label { display: flex; flex-direction: column; align-items: center; color: #000; font-size: 0.78rem; text-align: center; }
+.sticker-label strong { font-size: 0.9rem; }
+
+@media print {
+  /* Only the sheet prints. The app around it is not part of the label. */
+  .no-print, .topbar, .action-bar, .sync-bar { display: none !important; }
+  body, .view, .content { background: #fff !important; height: auto !important; overflow: visible !important; }
+  .sticker-sheet { grid-template-columns: repeat(4, 1fr); gap: 8mm; }
+  .sticker { break-inside: avoid; border: 1px dashed #999; }
+}

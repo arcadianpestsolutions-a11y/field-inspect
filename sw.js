@@ -1,7 +1,7 @@
 // Keep this in sync with version.js's APP_VERSION — that's what drives the
 // login screen's build-color/label indicator, so a mismatched bump here
 // defeats the whole point of it.
-const CACHE_NAME = 'field-inspect-v87';
+const CACHE_NAME = 'field-inspect-v88';
 const APP_SHELL = [
   './',
   './index.html',
@@ -21,6 +21,7 @@ const APP_SHELL = [
   './availability.js',
   './routing.js',
   './reporting.js',
+  './assets.js',
   './report.js',
   './sync.js',
   './org.js',
@@ -29,6 +30,7 @@ const APP_SHELL = [
   './invoice-ui.js',
   './swms-ui.js',
   './business-ui.js',
+  './assets-ui.js',
   './scheduler.js',
   './schedule-agent.js',
   './calendar-feed.js',
@@ -43,6 +45,7 @@ const APP_SHELL = [
   // them, which is what lets the app boot and export PDFs with no signal.
   './vendor/supabase.min.js',
   './vendor/html2pdf.bundle.min.js',
+  './vendor/qrcode.min.js',
   './supabase-config.js',
   './manifest.json',
   './icons/icon.svg',

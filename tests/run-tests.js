@@ -556,6 +556,172 @@
   });
 
   // ---------- Safe Work Method Statement ----------
+  // ---------- Station register ----------
+  const AS = () => window.Assets;
+  const asReport = (jobId, finalizedAt, stations, sectionId) => ({
+    jobId, finalizedAt,
+    sections: { [sectionId || 'monitoringStations']: { stationRecords: stations } },
+  });
+
+  test('Assets: a station keeps one identity across years of visits', () => {
+    // The whole point. Before stations carried an assetId, every visit minted
+    // a fresh row id, so "what has station 7 done" could only be answered by
+    // matching printed numbers across three years of reports and trusting
+    // that nobody had renumbered anything.
+    const jobs = [
+      { id: 'v1', name: 'Nguyen', address: '3 Sturt Close' },
+      { id: 'v2', name: 'Nguyen', address: '3 Sturt Close', recurringFromId: 'v1' },
+      { id: 'v3', name: 'Nguyen', address: '3 Sturt Close', recurringFromId: 'v2' },
+    ];
+    const reports = [
+      asReport('v1', avAt(2025, 3, 10), [
+        { id: 'r1', assetId: 'A7', stationNumber: '7', location: 'NE corner', status: 'No activity', action: 'Nothing required' },
+        { id: 'r2', assetId: 'A8', stationNumber: '8', status: 'No activity' },
+      ]),
+      asReport('v2', avAt(2025, 9, 14), [
+        { id: 'r3', assetId: 'A7', stationNumber: '7', status: 'Termite activity', action: 'Bait replenished', note: 'Heavy feeding' },
+      ]),
+      asReport('v3', avAt(2026, 3, 9), [
+        { id: 'r4', assetId: 'A7', stationNumber: '7', status: 'Bait taken', action: 'Bait replaced' },
+      ]),
+    ];
+    const register = AS().registerFor({ jobs, reports, propertyKey: 'v1' });
+
+    assertEqual(register.length, 2, 'two physical stations, not four rows');
+    const seven = register.find((a) => a.assetId === 'A7');
+    assertEqual(seven.history.length, 3, 'three visits against the one station');
+    assertEqual(seven.history[0].status, 'Bait taken', 'newest first');
+    assertEqual(seven.history[2].status, 'No activity', 'and the oldest last');
+    assertEqual(seven.location, 'NE corner', 'the position carries forward even when a later visit omits it');
+  });
+
+  test('Assets: a station renumbered on the last visit is known by its new number', () => {
+    const jobs = [{ id: 'v1', name: 'P' }, { id: 'v2', name: 'P', recurringFromId: 'v1' }];
+    const reports = [
+      asReport('v1', avAt(2025, 3, 10), [{ id: 'r1', assetId: 'A1', stationNumber: '3', location: 'Front bed' }]),
+      asReport('v2', avAt(2026, 3, 10), [{ id: 'r2', assetId: 'A1', stationNumber: '12', location: 'Side path' }]),
+    ];
+    const [asset] = AS().registerFor({ jobs, reports, propertyKey: 'v1' });
+    // Renumbered from then on, not retrospectively — the history still shows
+    // both visits, but the station is called what it is called now.
+    assertEqual(asset.stationNumber, '12');
+    assertEqual(asset.location, 'Side path');
+    assertEqual(asset.history.length, 2, 'and nothing was lost by the rename');
+  });
+
+  test('Assets: stations belong to the property, not to one visit', () => {
+    // A standing programme is a new job every visit. Grouping by job would
+    // produce a register per visit, which is not a register.
+    const jobs = [
+      { id: 'root', name: 'Harrington', address: '22 Fitzgibbon' },
+      { id: 'again', name: 'Harrington', address: '22 Fitzgibbon', recurringFromId: 'root' },
+      { id: 'elsewhere', name: 'Someone Else', address: '9 Other St' },
+    ];
+    const reports = [
+      asReport('root', avAt(2025, 6, 1), [{ id: 'a', assetId: 'H1', stationNumber: '1' }]),
+      asReport('again', avAt(2026, 6, 1), [{ id: 'b', assetId: 'H2', stationNumber: '2' }]),
+      asReport('elsewhere', avAt(2026, 6, 2), [{ id: 'c', assetId: 'X1', stationNumber: '1' }]),
+    ];
+    assertEqual(AS().propertyKeyFor(jobs[1], { root: jobs[0], again: jobs[1] }), 'root',
+      'a recurring visit resolves back to the first job at that address');
+
+    const here = AS().registerFor({ jobs, reports, propertyKey: 'root' });
+    assertEqual(here.length, 2, 'both stations at this property');
+    assert(!here.some((a) => a.assetId === 'X1'), 'and nothing from the property down the road');
+
+    const properties = AS().propertiesWithStations({ jobs, reports });
+    assertEqual(properties.length, 2, 'two properties have registers');
+    const harrington = properties.find((p) => p.propertyKey === 'root');
+    assertEqual(harrington.stationCount, 2);
+    assertEqual(harrington.address, '22 Fitzgibbon', 'named by the property, not the latest visit');
+  });
+
+  test('Assets: stations sort the way somebody walks them', () => {
+    const jobs = [{ id: 'j', name: 'P' }];
+    const reports = [asReport('j', avAt(2026, 6, 1), [
+      { id: 'a', assetId: 'S10', stationNumber: '10' },
+      { id: 'b', assetId: 'S2', stationNumber: '2' },
+      { id: 'c', assetId: 'S1', stationNumber: '1' },
+    ])];
+    const order = AS().registerFor({ jobs, reports, propertyKey: 'j' }).map((a) => a.stationNumber);
+    // Sorted as numbers. As strings, station 10 lands between 1 and 2.
+    assertEqual(order.join(','), '1,2,10');
+  });
+
+  test('Assets: a rodent register and a termite register are told apart', () => {
+    const jobs = [{ id: 'j', name: 'P' }];
+    const reports = [{
+      jobId: 'j', finalizedAt: avAt(2026, 6, 1),
+      sections: {
+        rodentStations: { stationRecords: [{ id: 'a', assetId: 'R1', stationNumber: '1' }] },
+        monitoringStations: { stationRecords: [{ id: 'b', assetId: 'T1', stationNumber: '1' }] },
+      },
+    }];
+    const register = AS().registerFor({ jobs, reports, propertyKey: 'j' });
+    assertEqual(register.find((a) => a.assetId === 'R1').kind, 'rodent_station');
+    assertEqual(register.find((a) => a.assetId === 'T1').kind, 'termite_station');
+  });
+
+  test('Assets: a QR sticker carries a reference and nothing about the client', () => {
+    const payload = AS().qrPayload('abc123');
+    assertEqual(payload, 'scope:station:abc123');
+    assertEqual(AS().parseQr(payload), 'abc123', 'and reads back');
+    assertEqual(AS().parseQr('  scope:station:abc123 '), 'abc123', 'whitespace from a scanner is trimmed');
+
+    // A sticker on a bait station in a front garden is readable by anyone
+    // walking past, so it carries an opaque id and nothing else.
+    for (const leak of ['Smith', '12 Smith St', '0412', '@']) {
+      assert(!payload.includes(leak), `a sticker must not carry ${leak}`);
+    }
+    // Anything that is not one of ours is refused rather than half-read.
+    for (const bad of ['https://evil.example/x', 'scope:station:', 'scope:job:abc', 'abc123', '']) {
+      assertEqual(AS().parseQr(bad), null, `${bad || '(empty)'} is not a station code`);
+    }
+  });
+
+  test('Assets: carrying stations forward keeps the asset id and the position', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const first = await win.DB.addJob({
+      name: 'Carry Asset Job', address: '5 Station Rd',
+      jobType: 'termite', preferredDocumentType: 'termite_monitoring',
+    });
+    await win.DB.saveReport({
+      jobId: first.id,
+      documentType: 'termite_monitoring',
+      sections: { stations: { stationRecords: [
+        { id: 'row1', assetId: 'KEEPME', stationNumber: '4', location: 'Rear fence', status: 'Termite activity', action: 'Bait replenished' },
+      ] } },
+    });
+    const next = await win.DB.addJob({
+      name: 'Carry Asset Job', address: '5 Station Rd', recurringFromId: first.id,
+      jobType: 'termite', preferredDocumentType: 'termite_monitoring',
+    });
+
+    // Opening the report is what carries the register across — but a new
+    // report lives in memory until a section is saved, so the save is part of
+    // the path being tested rather than a convenience.
+    await win.ReportUI.openReview(next.id);
+    await waitFor(async () => !!Array.from(doc.querySelectorAll('.report-section-item'))
+      .find((li) => /The Stations/.test(li.textContent)), 'the monitoring report should open');
+    Array.from(doc.querySelectorAll('.report-section-item')).find((li) => /The Stations/.test(li.textContent)).click();
+    await wait(500);
+    doc.getElementById('section-save-btn').click();
+    await waitFor(async () => !!(await win.DB.getReport(next.id)), 'saving should persist the carried register');
+
+    const carried = await win.DB.getReport(next.id);
+    const [station] = carried.sections.stations.stationRecords;
+    assertEqual(station.assetId, 'KEEPME', 'the physical station is the same physical station');
+    assertEqual(station.stationNumber, '4', 'and keeps its number');
+    assertEqual(station.location, 'Rear fence', 'and its position, which only changes when somebody moves it');
+    assert(station.id !== 'row1', 'but this visit is a new row');
+    // Findings are deliberately cleared: carrying last visit's result forward
+    // would mean a technician who skipped a station still produces a report
+    // saying what was in it.
+    assertEqual(station.status, '', 'last visit\'s finding does not come across');
+    assertEqual(station.action, '');
+  });
+
   // ---------- Business figures ----------
   const RP = () => window.Reporting;
   const rpInvoice = (id, jobId, createdAt, cents, extra) => Object.assign({

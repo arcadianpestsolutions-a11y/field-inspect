@@ -551,8 +551,24 @@
         report.sections[sectionId] = {
           ...(report.sections[sectionId] || {}),
           stationRecords: stations.map((s) => ({
+            // `id` identifies this VISIT's row and is new every time.
             id: DB.uid(),
+            // `assetId` identifies the STATION — the physical thing in the
+            // ground — and is the same every visit for the life of it. Until
+            // this existed a station had no identity beyond its printed
+            // number, so "what has station 7 done over three years" could
+            // only be answered by reading three years of reports and trusting
+            // that nobody renumbered anything. It is also what a QR sticker
+            // on the station cap encodes.
+            //
+            // Minted here for stations installed before this existed, so an
+            // established property gains a register the first time it is
+            // serviced rather than needing anything re-entered.
+            assetId: s.assetId || DB.uid(),
             stationNumber: s.stationNumber || '',
+            // Where it is only changes when somebody moves it, so unlike a
+            // finding it comes forward.
+            location: s.location || '',
             status: '',
             action: '',
             note: '',
@@ -2230,7 +2246,7 @@
     addBtn.className = 'btn btn-outline flex1';
     addBtn.textContent = '+ Add Station';
     addBtn.addEventListener('click', () => {
-      stations.push({ id: DB.uid(), stationNumber: String(stations.length + 1) });
+      stations.push({ id: DB.uid(), assetId: DB.uid(), stationNumber: String(stations.length + 1) });
       redraw();
     });
 
@@ -2247,7 +2263,7 @@
       if (!Number.isFinite(count) || count < 1 || count > 100) return;
       stations.length = 0;
       for (let i = 1; i <= count; i++) {
-        stations.push({ id: DB.uid(), stationNumber: String(i), status: 'No activity', action: 'Nothing required' });
+        stations.push({ id: DB.uid(), assetId: DB.uid(), stationNumber: String(i), status: 'No activity', action: 'Nothing required' });
       }
       redraw();
     });

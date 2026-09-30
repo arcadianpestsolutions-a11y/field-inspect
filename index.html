@@ -37,6 +37,7 @@
     <h1>Scope</h1>
     <button id="open-scheduler-btn" class="icon-btn" aria-label="Scheduler" title="Scheduler">📅</button>
     <button id="open-swms-btn" class="icon-btn" aria-label="Safety statements" title="Safety statements">🦺</button>
+    <button id="open-assets-btn" class="icon-btn" aria-label="Station register" title="Station register">🏷</button>
     <button id="open-business-btn" class="icon-btn" aria-label="Business figures" title="Business figures">📊</button>
     <button id="open-archive-btn" class="icon-btn" aria-label="Saved Reports" title="Saved Reports">🗂</button>
   </header>
@@ -305,6 +306,60 @@
 
   <div class="action-bar">
     <button id="section-save-btn" class="btn btn-primary full">Save & Back to Report</button>
+  </div>
+</section>
+
+<!-- ============ STATION REGISTER ============ -->
+<!-- The stations physically installed at a property, built from the station
+     registers in the reports rather than kept in a second store that could
+     disagree with them. See assets.js. -->
+<section id="view-assets" class="view hidden">
+  <header class="topbar">
+    <button id="assets-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Stations</h1>
+      <span class="subtitle">Properties with a register</span>
+    </div>
+  </header>
+  <main class="content">
+    <ul id="assets-property-list" class="report-section-list"></ul>
+  </main>
+</section>
+
+<section id="view-asset-property" class="view hidden">
+  <header class="topbar">
+    <button id="asset-property-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1 id="asset-property-title">Property</h1>
+      <span id="asset-property-subtitle" class="subtitle"></span>
+    </div>
+  </header>
+  <main class="content">
+    <ul id="asset-station-list" class="report-section-list"></ul>
+  </main>
+  <div class="action-bar">
+    <button id="asset-stickers-btn" class="btn btn-outline full">🏷 Print QR stickers</button>
+  </div>
+</section>
+
+<section id="view-asset-stickers" class="view hidden">
+  <header class="topbar no-print">
+    <button id="asset-stickers-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>QR stickers</h1>
+      <span id="asset-stickers-subtitle" class="subtitle"></span>
+    </div>
+  </header>
+  <main class="content">
+    <p class="empty-hint no-print">
+      Print on weatherproof label stock and stick one inside each station cap. Scanning one opens that
+      station straight away, so a finding cannot be recorded against the wrong number.
+      The code carries a reference and nothing else — no address, no client name.
+    </p>
+    <div id="asset-sticker-sheet" class="sticker-sheet"></div>
+  </main>
+  <div class="action-bar no-print">
+    <button id="asset-print-btn" class="btn btn-primary full">Print</button>
   </div>
 </section>
 
@@ -598,6 +653,7 @@
      service worker cache them, which is what makes PDF export work offline. -->
 <script src="vendor/supabase.min.js"></script>
 <script src="vendor/html2pdf.bundle.min.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <script src="supabase-config.js"></script>
 <!-- Before every module that asks the technician a question: on an
      installed iOS home-screen app, native confirm/prompt never appear. -->
@@ -615,6 +671,7 @@
 <script src="availability.js"></script>
 <script src="routing.js"></script>
 <script src="reporting.js"></script>
+<script src="assets.js"></script>
 <script src="sync.js"></script>
 <script src="org.js"></script>
 <script src="media.js"></script>
@@ -628,6 +685,7 @@
 <script src="invoice-ui.js"></script>
 <script src="swms-ui.js"></script>
 <script src="business-ui.js"></script>
+<script src="assets-ui.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>
 <script src="calendar-feed.js"></script>
