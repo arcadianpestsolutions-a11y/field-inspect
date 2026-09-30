@@ -1,7 +1,7 @@
 // Keep this in sync with version.js's APP_VERSION — that's what drives the
 // login screen's build-color/label indicator, so a mismatched bump here
 // defeats the whole point of it.
-const CACHE_NAME = 'field-inspect-v80';
+const CACHE_NAME = 'field-inspect-v81';
 const APP_SHELL = [
   './',
   './index.html',
@@ -31,6 +31,7 @@ const APP_SHELL = [
   './ai.js',
   './email.js',
   './comms.js',
+  './reminders-ui.js',
   './version.js',
   // Vendored third-party libs. Same-origin so the service worker can cache
   // them, which is what lets the app boot and export PDFs with no signal.

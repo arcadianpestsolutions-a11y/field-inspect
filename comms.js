@@ -34,6 +34,19 @@
     'already-sent':
       'Already sent for this time, so nothing was sent again. Changing the '
       + 'appointment time sends a fresh confirmation.',
+    // The day-before reminder goes out as a text message, so what has to be
+    // on file is a mobile. These three are separated on purpose: one is
+    // missing, one is a typo, and one is a number that will never receive a
+    // text no matter how many times it is tried.
+    'no-phone-on-file':
+      'Not sent. There is no mobile number on this job. Add one in the job '
+      + 'details and the reminder will go out the day before.',
+    'phone-not-valid':
+      'Not sent. The number on this job does not look like an Australian '
+      + 'mobile. Check it in the job details.',
+    'landline-not-mobile':
+      'Not sent. That is a landline, and a landline cannot receive a text. '
+      + 'Add a mobile in the job details, or phone them the day before.',
     'nothing-to-send-about':
       'Not sent. This job has no appointment time yet, so there is nothing to '
       + 'confirm. Schedule it first.',
@@ -122,7 +135,43 @@
         body: { sweep: kind },
       });
       if (error) return { ok: false, message: failureText(await edgeErrorMessage(error)) };
-      return { ok: true, wouldSend: (data && data.wouldSend) || [], checked: (data && data.checked) || 0 };
+      return {
+        ok: true,
+        channel: (data && data.channel) || 'email',
+        wouldSend: (data && data.wouldSend) || [],
+        // The clients who get nothing, and why. With a one-way reminder this
+        // is the half that needs a person, so it is not an afterthought in
+        // the response — it is half the answer.
+        needsAPhoneCall: (data && data.needsAPhoneCall) || [],
+        checked: (data && data.checked) || 0,
+      };
+    } catch (e) {
+      return { ok: false, message: failureText(e && e.message) };
+    }
+  }
+
+  // The live counterpart to previewSweep. This used to be deliberately absent
+  // on the grounds that a sweep over every client should not be a button
+  // anyone can lean on — which was right about the danger and wrong about the
+  // remedy, because the alternative was calling the Edge Function by hand
+  // with a JSON body, and nobody should have to do that to find out what
+  // their business is about to say to its customers.
+  //
+  // The rule is kept a different way: the button that calls this only appears
+  // after a preview has been read, and it names the exact number of messages
+  // in a confirm. Deliberate, but possible.
+  async function sendSweep(kind) {
+    try {
+      const { data, error } = await client.functions.invoke('send-client-message', {
+        body: { sweep: kind, dryRun: false },
+      });
+      if (error) return { ok: false, message: failureText(await edgeErrorMessage(error)) };
+      const results = (data && data.results) || [];
+      return {
+        ok: true,
+        sent: results.filter((r) => r.sent).length,
+        failed: results.filter((r) => !r.sent),
+      };
     } catch (e) {
       return { ok: false, message: failureText(e && e.message) };
     }
@@ -132,5 +181,6 @@
     sendBookingConfirmation: (jobId) => send('booking_confirmation', jobId),
     sendReportReady: (jobId) => send('report_ready', jobId),
     previewSweep,
+    sendSweep,
   };
 })();

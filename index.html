@@ -315,10 +315,28 @@
       <h1>Scheduler</h1>
       <span id="scheduler-month-label" class="subtitle"></span>
     </div>
+    <button id="reminders-open" class="icon-btn" aria-label="Tomorrow's reminders" title="Tomorrow's reminders">🔔</button>
     <button id="calendar-feed-open" class="icon-btn" aria-label="Calendar feed" title="Subscribe from another calendar">🔗</button>
     <button id="agent-open" class="icon-btn" aria-label="Booking assistant" title="Booking assistant">💬</button>
-    <button id="scheduler-today" class="link-btn">Today</button>
   </header>
+
+  <!-- Tomorrow's reminders. Checking what a client is about to be sent used
+       to mean calling the Edge Function by hand with a JSON body, which is
+       not a thing anyone should have to do to find out what their business
+       is saying to their customers. Preview first, send second, always in
+       that order. -->
+  <div id="reminders-panel" class="agent-panel hidden">
+    <div class="agent-head">
+      <span class="agent-title">Tomorrow's reminders</span>
+      <button id="reminders-close" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <p id="reminders-hint" class="calendar-feed-hint">
+      See exactly what each client gets before anything is sent.
+    </p>
+    <div id="reminders-list"></div>
+    <button id="reminders-check" class="btn btn-outline full">Check tomorrow</button>
+    <button id="reminders-send" class="btn btn-primary full hidden">Send these now</button>
+  </div>
 
   <!-- Booking assistant: reads the diary and proposes bookings the
        technician confirms. Lives inside the scheduler because that is the
@@ -354,6 +372,11 @@
   <main class="content">
     <div class="cal-nav">
       <button id="scheduler-prev" class="icon-btn" aria-label="Previous month">‹</button>
+      <!-- Today sits with the other two things that move the calendar, not up
+           in the topbar. It was crowding the month label off a phone screen,
+           and "jump back to today" was never a title-bar action to begin
+           with — it belongs beside the arrows it undoes. -->
+      <button id="scheduler-today" class="link-btn">Today</button>
       <button id="scheduler-next" class="icon-btn" aria-label="Next month">›</button>
     </div>
 
@@ -507,6 +530,7 @@
 <script src="ai.js"></script>
 <script src="email.js"></script>
 <script src="comms.js"></script>
+<script src="reminders-ui.js"></script>
 <script src="report.js"></script>
 <script src="invoice-ui.js"></script>
 <script src="scheduler.js"></script>

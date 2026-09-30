@@ -1574,7 +1574,7 @@ select {
 }
 
 /* ---------- Scheduler ---------- */
-.cal-nav { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.cal-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 
 .cal-grid {
   display: grid;
@@ -2418,4 +2418,90 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   color: var(--text);
   font: inherit;
   font-size: 0.92rem;
+}
+
+/* ---- Tomorrow's reminders ---------------------------------------------
+   Lives in the scheduler beside the calendar feed and the booking
+   assistant, so it inherits .agent-panel. What is different here is that
+   the message text is the point: it is shown in full, wrapped, at a size
+   meant to be read rather than skimmed, because this is the one chance to
+   notice a wrong word before every client on the list receives it. */
+#reminders-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px 8px;
+}
+.reminders-section-head {
+  margin: 12px 0 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.reminders-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.reminders-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.reminders-text {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Amber, not red: a client who needs a phone call is a task, not a fault.
+   Matches the warning colour used through the rest of the app. */
+.reminders-row-warn { border-left: 3px solid var(--warning); }
+#reminders-check, #reminders-send { margin: 0 16px 12px; width: calc(100% - 32px); }
+/* Taller than the other two panels on purpose. Those are a link and a chat
+   box; this one is a page of text that has to be read before a button is
+   pressed, and a reading surface squeezed into a third of the screen is one
+   nobody reads. */
+#reminders-panel { max-height: 72vh; }
+
+/* The scheduler topbar carries four controls beside the title now, and on a
+   phone that squeezed "Scheduler" down to "Sch…" while the month wrapped
+   onto two lines — the useful half losing to the decorative half. Below
+   420px the word is hidden from sight but left for screen readers, and the
+   month becomes the heading, which is what you actually need to see on this
+   screen. */
+@media (max-width: 420px) {
+  #view-scheduler .topbar-title h1 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  #view-scheduler .topbar-title .subtitle {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text);
+    /* A span is inline, so overflow and text-overflow do nothing to it —
+       the month ran straight underneath the icons instead of clipping. */
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Four icons and a Today link were still crowding the month out. Tighter
+     icons buy back the ~30px that "September 2026" needs, and the tap
+     targets stay above 40px because the topbar itself is tall. */
+  #view-scheduler .topbar .icon-btn {
+    padding: 4px 5px;
+    font-size: 1.05rem;
+  }
 }

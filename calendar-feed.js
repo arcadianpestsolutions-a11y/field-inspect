@@ -132,8 +132,10 @@
     // Both this and the booking assistant are panels inside the same
     // scheduler screen, opened from adjacent header icons — without this,
     // opening one after the other left both stacked on screen at once.
-    const agentPanel = document.getElementById('agent-panel');
-    if (agentPanel) agentPanel.classList.add('hidden');
+    for (const id of ['agent-panel', 'reminders-panel']) {
+      const other = document.getElementById(id);
+      if (other) other.classList.add('hidden');
+    }
     panel.classList.remove('hidden');
     hintEl.textContent = 'Loading…';
     try {

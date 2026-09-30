@@ -4664,6 +4664,237 @@
       '9am is unreachable from Campbelltown, so the first workable hour is 10');
   });
 
+  // ---------- Reminder SMS ----------
+  // The module is shared with the send-client-message Edge Function, which
+  // runs under Deno, so it is a real ES module and has to be pulled in with
+  // a dynamic import rather than a script tag. That needs a real origin:
+  // opening run-tests.html straight off the disk will fail here, which is
+  // what the error message says rather than leaving it to be guessed at.
+  let __sms = null;
+  async function SMS() {
+    if (__sms) return __sms;
+    try {
+      __sms = await import('../supabase/functions/_shared/reminder-sms.js');
+    } catch (e) {
+      throw new Error('Could not load reminder-sms.js. Serve the project over http '
+        + '(preview_start "scope-local", then open http://localhost:8787/tests/run-tests.html) '
+        + 'instead of opening this file directly. Original error: ' + (e && e.message));
+    }
+    return __sms;
+  }
+
+  test('Reminder SMS: every message stays in the 7-bit alphabet and inside two parts', async () => {
+    const sms = await SMS();
+    // One character outside GSM-7 — a curly apostrophe pasted in from a word
+    // processor is the usual culprit — drops the limit from 160 to 70 and
+    // doubles the bill on every reminder from then on. This is the test that
+    // notices.
+    for (const kind of sms.VISIT_KINDS) {
+      const r = sms.reminderSms({ businessName: 'Arcadian Pest', visitKind: kind, when: 'tomorrow at 10.30am' });
+      assertEqual(r.encoding, 'gsm7', `${kind} left the 7-bit alphabet: ${r.text}`);
+      assert(r.segments <= sms.MAX_SEGMENTS,
+        `${kind} costs ${r.segments} parts (${r.units} chars): ${r.text}`);
+      assert(r.text.includes(sms.OPT_OUT), `${kind} must carry the opt-out`);
+    }
+    // And prove the check actually detects the thing it is guarding against.
+    assertEqual(sms.smsSegments('we’re coming').encoding, 'ucs2',
+      'a curly apostrophe must be recognised as the expensive character it is');
+  });
+
+  test('Reminder SMS: each kind of visit asks for the access that visit actually needs', async () => {
+    const sms = await SMS();
+    const say = (kind) => sms.reminderSms({ businessName: 'Arcadian Pest', visitKind: kind, when: 'tomorrow at 10am' }).text;
+
+    const inspection = say('timber_pest_inspection');
+    assert(/roof manhole/.test(inspection) && /subfloor/.test(inspection), 'an inspection needs the roof void and subfloor');
+    assert(/over 18/.test(inspection), 'and somebody home to let them in');
+
+    const monitoring = say('termite_monitoring');
+    assert(/in-ground stations/.test(monitoring), 'a station check is about the stations');
+    assert(/do not need to be home/.test(monitoring),
+      'and saying so is what stops a client cancelling a visit they did not need to attend');
+    assert(!/subfloor/.test(monitoring), 'nobody is going under the house to read a station');
+
+    const works = say('termite_works');
+    assert(/cars off the driveway/.test(works), 'treating the perimeter means clearing the perimeter');
+
+    const rodent = say('rodent_program');
+    assert(/every station we have put down/.test(rodent), 'a rodent visit is a round of the stations');
+    assert(/sheds/.test(rodent) && /locked rooms/.test(rodent), 'including the ones behind locked doors');
+
+    const spray = say('general_pest');
+    assert(/skirting boards/.test(spray) && /not essential/.test(spray),
+      'skirting board access helps a spray but is not worth a client emptying a room over');
+    assert(/fish tanks/.test(spray), 'covering the tank is the one that actually matters');
+
+    // The bug that started this: one message for every visit.
+    const all = sms.VISIT_KINDS.map(say);
+    assertEqual(new Set(all).size, all.length, 'no two visit types may share a message');
+  });
+
+  test('Reminder SMS: the visit type comes from the job, and rodent work from the last report', async () => {
+    const sms = await SMS();
+    assertEqual(sms.visitKindFor({ preferred_document_type: 'timber_pest_inspection' }), 'timber_pest_inspection');
+    assertEqual(sms.visitKindFor({ preferred_document_type: 'termite_monitoring' }), 'termite_monitoring');
+    assertEqual(sms.visitKindFor({ preferred_document_type: 'termite_action_plan' }), 'termite_works');
+    assertEqual(sms.visitKindFor({ preferred_document_type: 'termite_certificate' }), 'termite_works');
+    assertEqual(sms.visitKindFor({ job_type: 'pest_treatment' }), 'general_pest');
+    // Rodent work is not a document type of its own — it is a general pest
+    // job whose register has stations in it, so the only honest signal is
+    // what the last visit recorded.
+    assertEqual(sms.visitKindFor({ job_type: 'pest_treatment' }, { data: { rodentStationsInUse: true } }), 'rodent_program');
+    assertEqual(sms.visitKindFor({ job_type: 'pest_treatment' }, { data: { rodentStations: [{ id: 1 }] } }), 'rodent_program');
+    assertEqual(sms.visitKindFor({ job_type: 'pest_treatment' }, { data: { rodentStationsInUse: false } }), 'general_pest');
+
+    // The shape a report row actually has: values nested under `sections`,
+    // keyed by section, with the rodent register gated inside the pest
+    // treatment schema. A hard-coded path would miss this the first time the
+    // schema moved, and the client would get spray instructions for a bait
+    // station round.
+    const realRow = {
+      job_id: 'j1',
+      document_type: 'general_pest',
+      sections: {
+        treatment: { rodentStationsInUse: true, rodentStations: [{ id: 'S1', status: 'active' }] },
+        sitePhotos: { photos: [] },
+      },
+    };
+    assertEqual(sms.visitKindFor({ job_type: 'pest_treatment' }, realRow), 'rodent_program',
+      'the flag has to be found wherever the schema puts it');
+    const sprayRow = { job_id: 'j2', sections: { treatment: { rodentStationsInUse: false }, notes: {} } };
+    assertEqual(sms.visitKindFor({ job_type: 'pest_treatment' }, sprayRow), 'general_pest');
+    // A termite job with nothing recorded asks for the most, because
+    // over-preparing costs ten minutes and under-preparing costs a return trip.
+    assertEqual(sms.visitKindFor({ job_type: 'termite' }), 'timber_pest_inspection');
+  });
+
+  test('Reminder SMS: a landline is refused rather than texted into the void', async () => {
+    const sms = await SMS();
+    const ok = (n) => sms.normaliseAuMobile(n);
+    assertEqual(ok('0412 345 678').e164, '+61412345678', 'the way a mobile is actually written down');
+    assertEqual(ok('0412345678').e164, '+61412345678');
+    assertEqual(ok('+61 412 345 678').e164, '+61412345678');
+    assertEqual(ok('61412345678').e164, '+61412345678');
+    assertEqual(ok('(04) 1234-5678').e164, '+61412345678', 'brackets and dashes are not part of the number');
+    assertEqual(ok('0011 61 412 345 678').e164, '+61412345678', 'dialled the long way round');
+
+    // A landline silently swallows an SMS on some carriers and reads it out
+    // by robot on others. Either way the client never gets the reminder, so
+    // this has to come back as a job to ring rather than a message sent.
+    assertEqual(ok('02 4655 1234').reason, 'landline-not-mobile');
+    assertEqual(ok('0246551234').ok, false);
+    assertEqual(ok('').reason, 'no-phone-on-file');
+    assertEqual(ok(null).reason, 'no-phone-on-file');
+    assertEqual(ok('not a phone').reason, 'phone-not-valid');
+    assertEqual(ok('0412 345').reason, 'phone-not-valid', 'too short to be anything');
+  });
+
+  test('Reminder SMS: the time reads the way someone would say it', async () => {
+    const sms = await SMS();
+    const now = new Date(2027, 2, 15, 16, 0).getTime();
+    assertEqual(sms.whenPhrase(new Date(2027, 2, 16, 10, 0).getTime(), now), 'tomorrow at 10am');
+    assertEqual(sms.whenPhrase(new Date(2027, 2, 16, 10, 30).getTime(), now), 'tomorrow at 10.30am');
+    assertEqual(sms.whenPhrase(new Date(2027, 2, 16, 14, 0).getTime(), now), 'tomorrow at 2pm');
+    assertEqual(sms.whenPhrase(new Date(2027, 2, 16, 12, 0).getTime(), now), 'tomorrow at 12pm');
+    assertEqual(sms.whenPhrase(new Date(2027, 2, 15, 9, 0).getTime(), now), 'today at 9am');
+  });
+
+  test('Reminder SMS: a whole reminder composes from a job in one call', async () => {
+    const sms = await SMS();
+    const now = new Date(2027, 2, 15, 16, 0).getTime();
+    const job = {
+      client_phone: '0412 345 678',
+      job_type: 'pest_treatment',
+      scheduled_at: new Date(2027, 2, 16, 8, 30).getTime(),
+    };
+    const rodent = sms.composeReminder({
+      businessName: 'Arcadian Pest', job, lastReport: { data: { rodentStationsInUse: true } }, now,
+    });
+    assertEqual(rodent.sendable, true);
+    assertEqual(rodent.to, '+61412345678');
+    assertEqual(rodent.visitKind, 'rodent_program');
+    assert(/tomorrow at 8.30am/.test(rodent.text), `the time should be in it, got: ${rodent.text}`);
+    assert(rodent.segments <= sms.MAX_SEGMENTS, 'and still fit two parts with a real business name in front');
+
+    const landline = sms.composeReminder({
+      businessName: 'Arcadian Pest', job: { ...job, client_phone: '02 4655 1234' }, now,
+    });
+    assertEqual(landline.sendable, false);
+    assertEqual(landline.reason, 'landline-not-mobile');
+    assert(landline.text, 'the message is still composed, so the office can read it out on the phone');
+  });
+
+  // ---------- Tomorrow's reminders panel ----------
+  test('Reminders: the panel shows the words that will be sent, not a summary of them', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.Scheduler.open();
+    await wait(250);
+    doc.getElementById('reminders-open').click();
+    assert(win.RemindersUI, 'the reminders panel should be wired up');
+
+    win.RemindersUI.renderPreview({
+      ok: true, channel: 'sms', checked: 3,
+      wouldSend: [{
+        jobId: 'j1', name: 'Nguyen', to: '+61412345678', segments: 2,
+        text: 'Arcadian Pest: termite station check tomorrow at 9am. We need to reach the in-ground stations around the house.',
+      }],
+      needsAPhoneCall: [
+        { jobId: 'j2', name: 'Harrington', phone: '02 4655 1234', reason: 'landline-not-mobile' },
+      ],
+    });
+
+    const shown = doc.getElementById('reminders-list').textContent;
+    assert(/in-ground stations around the house/.test(shown),
+      'the full message has to be on screen, because this is the one chance to catch a wrong word');
+    assert(/\+61412345678/.test(shown), 'and the number it is going to');
+    assert(/2 message parts/.test(shown), 'and what it costs to send');
+
+    // The half that needs a person.
+    assert(/Harrington/.test(shown), 'a client who cannot be texted must still appear');
+    assert(/landline/i.test(shown), 'with the reason in plain words, not a code');
+    assert(/ring/i.test(doc.getElementById('reminders-list').textContent),
+      'and it says what to do about them');
+
+    assert(!doc.getElementById('reminders-send').classList.contains('hidden'),
+      'once a preview has been read, sending becomes possible');
+  });
+
+  test('Reminders: nothing to send says so, and offers no send button', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.Scheduler.open();
+    await wait(200);
+    doc.getElementById('reminders-open').click();
+
+    win.RemindersUI.renderPreview({ ok: true, channel: 'sms', checked: 0, wouldSend: [], needsAPhoneCall: [] });
+    assert(/nothing is booked/i.test(doc.getElementById('reminders-hint').textContent),
+      'an empty diary is a different answer to an empty list');
+    assert(doc.getElementById('reminders-send').classList.contains('hidden'),
+      'there must be no way to send nothing to nobody');
+
+    win.RemindersUI.renderPreview({ ok: true, channel: 'sms', checked: 4, wouldSend: [], needsAPhoneCall: [] });
+    assert(/already had their reminder/i.test(doc.getElementById('reminders-hint').textContent),
+      'and "everyone has already been told" is a third answer again');
+  });
+
+  test('Reminders: opening one scheduler panel closes the other two', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.Scheduler.open();
+    await wait(250);
+
+    const ids = ['reminders-panel', 'calendar-feed-panel', 'agent-panel'];
+    const openers = { 'reminders-panel': 'reminders-open', 'calendar-feed-panel': 'calendar-feed-open', 'agent-panel': 'agent-open' };
+    const visible = () => ids.filter((id) => !doc.getElementById(id).classList.contains('hidden'));
+
+    for (const id of ids) {
+      doc.getElementById(openers[id]).click();
+      await wait(120);
+      assertEqual(visible().join(','), id, `opening ${id} should leave only it on screen`);
+    }
+  });
+
   // ---------- Roles and permissions ----------
   // The database is what actually enforces this (migration 016). These cover
   // the app's side: that it does not offer a technician buttons the server
