@@ -309,6 +309,20 @@
   </div>
 </section>
 
+<!-- ============ QR SCANNER ============ -->
+<!-- Reads the sticker inside a bait station cap. Decoding happens on the
+     device; no frame ever leaves it, and nothing is recorded. -->
+<section id="qr-modal" class="modal hidden">
+  <div class="camera-wrap">
+    <video id="qr-video" playsinline autoplay muted></video>
+    <div class="qr-reticle" aria-hidden="true"></div>
+    <p id="qr-hint" class="qr-hint">Point the camera at the sticker inside the station cap.</p>
+  </div>
+  <div class="camera-controls">
+    <button id="qr-cancel-btn" class="btn btn-secondary full">Cancel</button>
+  </div>
+</section>
+
 <!-- ============ STATION REGISTER ============ -->
 <!-- The stations physically installed at a property, built from the station
      registers in the reports rather than kept in a second store that could
@@ -654,6 +668,7 @@
 <script src="vendor/supabase.min.js"></script>
 <script src="vendor/html2pdf.bundle.min.js"></script>
 <script src="vendor/qrcode.min.js"></script>
+<script src="vendor/jsqr.min.js"></script>
 <script src="supabase-config.js"></script>
 <!-- Before every module that asks the technician a question: on an
      installed iOS home-screen app, native confirm/prompt never appear. -->
@@ -672,6 +687,8 @@
 <script src="routing.js"></script>
 <script src="reporting.js"></script>
 <script src="assets.js"></script>
+<script src="camera.js"></script>
+<script src="qr-scan.js"></script>
 <script src="sync.js"></script>
 <script src="org.js"></script>
 <script src="media.js"></script>

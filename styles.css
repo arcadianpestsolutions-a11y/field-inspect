@@ -2640,3 +2640,33 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   .sticker-sheet { grid-template-columns: repeat(4, 1fr); gap: 8mm; }
   .sticker { break-inside: avoid; border: 1px dashed #999; }
 }
+
+/* ---- QR scanner -------------------------------------------------------- */
+.qr-reticle {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  width: min(62vw, 260px);
+  aspect-ratio: 1;
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45), var(--glow-accent);
+  pointer-events: none;
+}
+.qr-hint {
+  position: absolute;
+  left: 16px; right: 16px; bottom: 16px;
+  margin: 0;
+  text-align: center;
+  font-size: 0.86rem;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+/* Marks the row a scan landed on. A scan that silently scrolls a list is a
+   scan nobody trusts — it has to be visible that THIS is the one. */
+.station-scanned {
+  outline: 2px solid var(--accent);
+  box-shadow: var(--glow-accent);
+  transition: outline-color 0.4s ease, box-shadow 0.4s ease;
+}

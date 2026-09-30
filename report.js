@@ -2250,6 +2250,43 @@
       redraw();
     });
 
+    // Scanning the sticker inside the cap, rather than finding the row by
+    // eye. A monitoring system is eight to thirty stations around one house,
+    // and hunting for station 17 in a list while kneeling in a garden bed is
+    // how a finding ends up recorded against station 19 — which on the
+    // document the warranty rests on is not a typo, it is a false record.
+    //
+    // A code that belongs to a station not on this register is not an error:
+    // it is a station that was installed before the register was, so it is
+    // added rather than refused.
+    const scanBtn = document.createElement('button');
+    scanBtn.type = 'button';
+    scanBtn.className = 'btn btn-secondary flex1';
+    scanBtn.textContent = '📷 Scan station';
+    scanBtn.addEventListener('click', async () => {
+      if (!window.QrScan) { toast('The scanner is not available on this device.'); return; }
+      const assetId = await window.QrScan.scanStation();
+      if (!assetId) return;
+
+      let index = stations.findIndex((s) => s.assetId === assetId);
+      if (index === -1) {
+        stations.push({ id: DB.uid(), assetId, stationNumber: String(stations.length + 1) });
+        index = stations.length - 1;
+        redraw();
+        toast(`New station added as ${stations[index].stationNumber}`);
+      } else {
+        toast(`Station ${stations[index].stationNumber || index + 1}`);
+      }
+      // Bring it to where the technician is looking, and mark it, because a
+      // scan that silently scrolls a list is a scan nobody trusts.
+      const card = cardsWrap.children[index];
+      if (card) {
+        card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        card.classList.add('station-scanned');
+        setTimeout(() => card.classList.remove('station-scanned'), 2200);
+      }
+    });
+
     // Most visits are "all of them, all clear". Doing that in one tap and then
     // correcting the two that weren't is far faster than twenty additions, and
     // it produces a complete record rather than a partial one.
@@ -2270,6 +2307,7 @@
 
     controls.appendChild(addBtn);
     controls.appendChild(allClearBtn);
+    controls.appendChild(scanBtn);
     wrap.appendChild(cardsWrap);
     wrap.appendChild(controls);
     return wrap;

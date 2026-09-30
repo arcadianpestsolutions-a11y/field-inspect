@@ -722,6 +722,89 @@
     assertEqual(station.action, '');
   });
 
+  // ---------- QR scanning ----------
+  test('QR: a sticker this app printed is a sticker this app can read', async () => {
+    const win = frame.contentWindow;
+    assert(win.jsQR, 'the decoder is vendored, because iOS Safari has no BarcodeDetector');
+    assert(win.QRCode, 'and so is the encoder');
+
+    // The whole round trip without a camera: encode the payload exactly as
+    // the sticker sheet does, then decode the pixels exactly as the scanner
+    // does. If these two ever disagree, every sticker in the field is waste.
+    const assetId = 'STATION-ABC123';
+    const payload = win.Assets.qrPayload(assetId);
+    const host = win.document.createElement('div');
+    win.document.body.appendChild(host);
+    try {
+      new win.QRCode(host, {
+        text: payload, width: 300, height: 300,
+        colorDark: '#000000', colorLight: '#ffffff',
+        correctLevel: win.QRCode.CorrectLevel.H,
+      });
+      await waitFor(async () => {
+        const c = host.querySelector('canvas');
+        return !!(c && c.width);
+      }, 'the encoder should draw a canvas');
+
+      const canvas = host.querySelector('canvas');
+      const ctx = canvas.getContext('2d');
+      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const decoded = win.jsQR(image.data, image.width, image.height, { inversionAttempts: 'dontInvert' });
+
+      assert(decoded, 'the printed code must decode');
+      assertEqual(decoded.data, payload, 'and decode to exactly what was encoded');
+      assertEqual(win.Assets.parseQr(decoded.data), assetId, 'and parse back to the station');
+    } finally {
+      host.remove();
+    }
+  });
+
+  test('QR: the scanner refuses a code that is not ours rather than doing nothing', async () => {
+    const win = frame.contentWindow;
+    // "I scanned it and nothing happened" is the worst outcome, so anything
+    // that is not a Scope station sticker is named as such.
+    assertEqual(win.Assets.parseQr('https://example.com/whatever'), null);
+    assertEqual(win.Assets.parseQr('WIFI:S=Home;T=WPA;P=hunter2;;'), null);
+    assert(win.QrScan, 'the scanner module should load');
+    assertEqual(typeof win.QrScan.scanStation, 'function');
+  });
+
+  test('Camera: opening one fails with a reason a technician can act on', async () => {
+    const win = frame.contentWindow;
+    assert(win.Camera, 'the camera module is shared by the inspection screen and the scanner');
+
+    // Each code has to produce a sentence that says what to DO. A camera that
+    // fails with "NotAllowedError" has told nobody anything.
+    for (const code of ['insecure', 'unsupported', 'denied', 'blocked', 'timeout', 'notfound', 'failed']) {
+      const msg = win.Camera.messageFor({ code });
+      assert(msg && msg.length > 20, `${code} needs a real message, got: ${msg}`);
+    }
+    assert(/https/.test(win.Camera.messageFor({ code: 'insecure' })),
+      'the secure-context failure names the actual cause, since it looks like a broken camera');
+    assert(/settings/i.test(win.Camera.messageFor({ code: 'denied' })),
+      'a blocked camera says where to unblock it');
+    // Backing out is a choice, not an error, and must never produce error
+    // language at somebody who simply changed their mind.
+    assertEqual(win.Camera.messageFor({ code: 'cancelled' }), null);
+  });
+
+  test('Camera: a missing mediaDevices is reported as the http problem it usually is', async () => {
+    const win = frame.contentWindow;
+    const real = win.navigator.mediaDevices;
+    // Serving over plain http from a LAN address is exactly how somebody
+    // tests a build on their phone, and it leaves mediaDevices undefined.
+    try {
+      Object.defineProperty(win.navigator, 'mediaDevices', { value: undefined, configurable: true });
+      let caught = null;
+      try { await win.Camera.open({}); } catch (e) { caught = e; }
+      assert(caught, 'it must fail rather than throw a TypeError deep inside');
+      assert(caught.code === 'insecure' || caught.code === 'unsupported',
+        `expected a named cause, got ${caught.code}`);
+    } finally {
+      Object.defineProperty(win.navigator, 'mediaDevices', { value: real, configurable: true });
+    }
+  });
+
   // ---------- Business figures ----------
   const RP = () => window.Reporting;
   const rpInvoice = (id, jobId, createdAt, cents, extra) => Object.assign({

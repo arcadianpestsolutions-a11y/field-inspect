@@ -1609,101 +1609,26 @@
       inspectionStream = null;
     };
 
+    // The camera itself, and every hard-won thing about opening one, now
+    // lives in camera.js — it moved there when the QR scanner needed the
+    // same secure-context check, the same permission handling and the same
+    // deadline that knows whether a human is still being asked something.
+    // Two copies of that would have meant the scanner slowly re-learning all
+    // of it. What stays here is what to say and what to do about it, which is
+    // this screen's business and not the camera's.
+    // Lets a second tap on the button abandon a hung permission prompt.
+    let cancelStart = false;
     try {
-      // getUserMedia does NOT always settle: if the OS permission sheet is
-      // dismissed by a swipe rather than answered, the promise hangs forever
-      // with nothing to catch. So it is raced against a timeout — but the
-      // timeout has to know whether a human is being asked something.
-      //
-      // A fixed 15s here was itself a bug: a first-time user gets a permission
-      // sheet, and anyone who reads it before tapping Allow blew through the
-      // deadline and was told the camera had failed when it was about to work.
-      // So: if permission is already granted the camera should appear quickly
-      // and a short deadline is right; if we are still waiting on a person,
-      // give them a genuinely human amount of time.
-      // Browsers only expose the camera in a secure context: https, or
-      // localhost. Served over plain http from a LAN address — which is
-      // exactly how someone tests a build on their phone before deploying —
-      // navigator.mediaDevices is undefined, and reaching straight for
-      // getUserMedia below throws "Cannot read properties of undefined",
-      // which tells the technician nothing about the real problem.
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        releaseStream();
-        toast(window.isSecureContext
-          ? 'This browser does not support camera capture.'
-          : 'The camera needs a secure connection (https). Open the app on its https address rather than an IP address.');
-        resetButton();
-        return;
-      }
-
-      let permission = 'unknown';
-      try {
-        if (navigator.permissions && navigator.permissions.query) {
-          permission = (await navigator.permissions.query({ name: 'camera' })).state;
-        }
-      } catch (e) { /* Safari/Firefox may not expose 'camera' — fall through */ }
-
-      if (permission === 'denied') {
-        releaseStream();
-        toast('Camera access is blocked for this site. Allow it in your browser settings, then try again.');
-        resetButton();
-        return;
-      }
-
-      const deadlineMs = permission === 'granted' ? 20000 : 120000;
-      let gaveUp = false;
-      // Lets a second tap on the button abandon the wait immediately.
-      abandonPendingStart = () => { gaveUp = true; };
-      const request = navigator.mediaDevices.getUserMedia({
-        // Photographs are the evidence now, so the preview is requested at the
-        // highest sensible resolution rather than the 720p that suited
-        // continuous recording — the still button captures whatever the
-        // preview is running at. Nothing streams to disk any more, so the old
-        // bandwidth and storage argument for capping it no longer applies.
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        // No microphone. Photo capture has no use for it, and not asking is
-        // both one less permission prompt and one less thing recorded inside
-        // a client's home.
-        audio: false,
-      });
-      // If the camera turns up after we stopped waiting, nobody else holds a
-      // reference to it — release it or the indicator light stays on.
-      request.then((late) => { if (gaveUp) late.getTracks().forEach((t) => t.stop()); }).catch(() => {});
-
-      inspectionStream = await Promise.race([
-        request,
-        new Promise((_, reject) => setTimeout(() => {
-          gaveUp = true;
-          reject(new Error('__timeout__'));
-        }, deadlineMs)),
-        // Resolves only if the technician taps the button again to back out.
-        new Promise((_, reject) => {
-          const poll = setInterval(() => {
-            if (gaveUp) { clearInterval(poll); reject(new Error('__cancelled__')); }
-          }, 150);
-          setTimeout(() => clearInterval(poll), deadlineMs + 1000);
-        }),
-      ]);
+      abandonPendingStart = () => { cancelStart = true; };
+      inspectionStream = await window.Camera.open({ isCancelled: () => cancelStart });
     } catch (err) {
       releaseStream();
-      if (err && err.message === '__cancelled__') {
+      if (err && err.code === 'cancelled') {
         // Their own choice — no error language for it.
         resetButton();
         return;
       }
-      if (err && err.message === '__timeout__') {
-        toast('The camera never responded. Check this site has camera and microphone permission, then try again.');
-      } else if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
-        toast('Camera/microphone access was blocked. Allow it for this site in your browser settings, then try again.');
-      } else if (err && err.name === 'NotFoundError') {
-        toast('No camera or microphone was found on this device.');
-      } else {
-        toast('Could not start the camera: ' + ((err && err.message) || err));
-      }
+      toast(window.Camera.messageFor(err) || 'Could not start the camera.');
       resetButton();
       return;
     }
