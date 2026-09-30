@@ -544,8 +544,8 @@
     }
   });
 
-  test('Schema: both report types have unique section and field ids', () => {
-    for (const [name, schema] of [['termite', window.REPORT_SCHEMA], ['pest', window.PEST_TREATMENT_SCHEMA]]) {
+  test('Schema: every report type has unique section and field ids', () => {
+    for (const [name, schema] of [['termite', window.REPORT_SCHEMA], ['pest', window.PEST_TREATMENT_SCHEMA], ['swms', window.SWMS_SCHEMA]]) {
       const sectionIds = schema.map((s) => s.id);
       assertEqual(new Set(sectionIds).size, sectionIds.length, `${name}: duplicate section id`);
       for (const s of schema) {
@@ -553,6 +553,122 @@
         assertEqual(new Set(fieldIds).size, fieldIds.length, `${name}/${s.id}: duplicate field id`);
       }
     }
+  });
+
+  // ---------- Safe Work Method Statement ----------
+  test('SWMS: covers what WHS Regulation 2017 reg 299 says a statement must state', () => {
+    const schema = window.SWMS_SCHEMA;
+    const ids = schema.flatMap((s) => s.fields.map((f) => f.id));
+    // The work, the hazards, the controls, and how the controls are
+    // implemented, monitored and reviewed. All four, or it is not a SWMS.
+    assert(ids.includes('workDescription'), 'the work being carried out');
+    assert(schema.some((s) => s.fields.some((f) => /Hazards/.test(f.id))), 'hazards identified');
+    assert(schema.some((s) => s.fields.some((f) => /Controls|Checks/.test(f.id))), 'control measures');
+    assert(ids.includes('monitoringMethod'), 'how the controls are monitored');
+    assert(ids.includes('reviewDate'), 'when it gets reviewed');
+    assert(ids.includes('consultationDone'), 'consultation with the workers doing the job');
+    assert(ids.includes('technicianSignature'), 'and somebody has to sign it');
+  });
+
+  test('SWMS: a spray-only job is never shown the subfloor or roof void pages', () => {
+    const win = frame.contentWindow;
+    const visible = (answers) => win.ReportUI.visibleSchemaForTest
+      ? win.ReportUI.visibleSchemaForTest(window.SWMS_SCHEMA, { sections: { swmsActivities: answers } })
+      : window.SWMS_SCHEMA.filter((s) => {
+        const c = s.showIf;
+        if (!c) return true;
+        const v = answers[c.field];
+        if (Array.isArray(c.oneOf)) return c.oneOf.includes(v);
+        if (Object.prototype.hasOwnProperty.call(c, 'equals')) return v === c.equals;
+        if (Object.prototype.hasOwnProperty.call(c, 'notEquals')) return v !== undefined && v !== '' && v !== c.notEquals;
+        return false;
+      });
+
+    const sprayOnly = visible({
+      entersSubfloor: 'No', entersRoofVoid: 'No', appliesChemical: 'Yes',
+      drillsOrTrenches: 'No', preNinetyBuilding: 'No',
+    }).map((s) => s.id);
+    assert(!sprayOnly.includes('swmsSubfloor'), 'nobody is going under the house on a spray job');
+    assert(!sprayOnly.includes('swmsHeight'), 'nor into the roof void');
+    assert(!sprayOnly.includes('swmsDrilling'));
+    assert(!sprayOnly.includes('swmsAsbestos'), 'a post-1990 building does not get the asbestos page');
+    assert(sprayOnly.includes('swmsChemicals'), 'but it certainly gets the chemical page');
+    assert(sprayOnly.includes('swmsPreStart') && sprayOnly.includes('swmsEmergency'),
+      'and the pages that apply to every job, always');
+
+    const termiteJob = visible({
+      entersSubfloor: 'Yes', entersRoofVoid: 'Yes', appliesChemical: 'Yes',
+      drillsOrTrenches: 'Yes', preNinetyBuilding: 'Unknown — treat as if it is',
+    }).map((s) => s.id);
+    for (const id of ['swmsSubfloor', 'swmsHeight', 'swmsChemicals', 'swmsDrilling', 'swmsAsbestos']) {
+      assert(termiteJob.includes(id), `a full termite job should see ${id}`);
+    }
+    // "Unknown" has to behave like Yes. An asbestos page that only appears
+    // when somebody has already confirmed asbestos is a page that never
+    // appears when it matters.
+    const unknownAge = visible({ preNinetyBuilding: 'Unknown — treat as if it is' }).map((s) => s.id);
+    assert(unknownAge.includes('swmsAsbestos'), 'unknown age must be treated as if it is asbestos');
+  });
+
+  test('SWMS: the subfloor page asks the confined space question first', () => {
+    const subfloor = sectionById(window.SWMS_SCHEMA, 'swmsSubfloor');
+    assertEqual(subfloor.fields[0].id, 'confinedSpaceCheck',
+      'whether it is a confined space changes every other answer, so it cannot be buried');
+    assertEqual(subfloor.fields[0].required, true);
+    const options = subfloor.fields[0].options.join(' ');
+    assert(/entry refused/i.test(options), 'not entering has to be one of the offered answers');
+    // The hazards a technician actually meets under a Macarthur house.
+    const hazards = sectionById(window.SWMS_SCHEMA, 'swmsSubfloor').fields
+      .find((f) => f.id === 'subfloorHazards').options.join(' ');
+    for (const real of ['wiring', 'funnel-web', 'asbestos', 'syringes']) {
+      assert(new RegExp(real, 'i').test(hazards), `a real subfloor hazard is missing: ${real}`);
+    }
+  });
+
+  test('SWMS: the emergency page carries the numbers rather than asking for them', () => {
+    const emergency = sectionById(window.SWMS_SCHEMA, 'swmsEmergency');
+    const poisons = emergency.fields.find((f) => f.id === 'poisonsInfo');
+    assertEqual(poisons.type, 'static', 'a number you have to type in is a number that is wrong');
+    assert(/13 11 26/.test(poisons.default), 'Poisons Information Centre');
+    assert(/000/.test(emergency.fields.find((f) => f.id === 'emergencyNumber').default));
+    assert(/13 10 50/.test(emergency.fields.find((f) => f.id === 'incidentProcedure').default),
+      'and SafeWork NSW, because a notifiable incident has to be reported immediately');
+  });
+
+  test('SWMS: the business ABN and licence fill themselves in', () => {
+    // A principal contractor checks both before letting anyone on site, so
+    // they come from the business record rather than being retyped each time.
+    const details = sectionById(window.SWMS_SCHEMA, 'swmsDetails');
+    const abn = details.fields.find((f) => f.id === 'providerAbn');
+    const licence = details.fields.find((f) => f.id === 'providerLicence');
+    assertEqual(abn.orgField, 'providerAbn');
+    assertEqual(licence.orgField, 'providerLicence');
+
+    const filled = window.ReportSchemaUtils.defaultValuesForSection(details, {
+      provider: () => ({ providerName: 'Arcadian Pest Solutions', providerAbn: '11 222 333 444', providerLicence: 'PMT-12345' }),
+      inspector: () => ({ inspectorName: 'T. Pavlich', inspectorLicence: 'TECH-987' }),
+    });
+    assertEqual(filled.providerAbn, '11 222 333 444');
+    assertEqual(filled.providerLicence, 'PMT-12345');
+
+    // The sign-off page pulls from the inspector block instead, which
+    // defaultValuesForSection now merges in alongside the provider block.
+    const signoff = sectionById(window.SWMS_SCHEMA, 'swmsSignoff');
+    const signed = window.ReportSchemaUtils.defaultValuesForSection(signoff, {
+      provider: () => ({ providerName: 'Arcadian Pest Solutions' }),
+      inspector: () => ({ inspectorName: 'T. Pavlich', inspectorLicence: 'TECH-987' }),
+    });
+    assertEqual(signed.technicianName, 'T. Pavlich');
+    assertEqual(signed.technicianLicence, 'TECH-987');
+  });
+
+  test('SWMS: a lone worker has to say who is expecting them back', () => {
+    const preStart = sectionById(window.SWMS_SCHEMA, 'swmsPreStart');
+    const checkIn = preStart.fields.find((f) => f.id === 'checkInArrangement');
+    assertEqual(checkIn.required, true);
+    assertEqual(checkIn.showIf.field, 'loneWorker');
+    assertEqual(checkIn.showIf.equals, 'Yes',
+      'it only has to be answered when somebody is actually on their own');
   });
 
   test('Compliance: termite report covers all four AS 4349.3 timber pest categories', () => {
@@ -2456,6 +2572,22 @@
       'all four termite documents are offered');
     const pest = win.ReportUI.documentTypesFor('pest_treatment').map((d) => d.id);
     assertEqual(pest.join(','), 'general_pest', 'a general pest job offers only its own document');
+  });
+
+  test('Documents: a SWMS is not one of them, because a job holds only one report', () => {
+    const win = frame.contentWindow;
+    // The reports store is keyed by jobId. Everything in DOCUMENT_TYPES is an
+    // alternative to everything else in it, and a safety statement is not an
+    // alternative to an inspection — it accompanies one. Listing it there
+    // would let switching document type replace a finished inspection report
+    // with a blank SWMS, which is a silent way to lose a compliance document.
+    for (const jobType of ['termite', 'pest_treatment']) {
+      const ids = win.ReportUI.documentTypesFor(jobType).map((d) => d.id);
+      assert(!ids.includes('safe_work_method'),
+        `a SWMS must not be selectable as the ${jobType} report until it has a store of its own`);
+    }
+    assert(window.SWMS_SCHEMA && window.SWMS_SCHEMA.length,
+      'the schema itself is built and ready for that store');
   });
 
   // ---------- Guided capture per document type ----------

@@ -87,6 +87,19 @@
       jobTypes: ['pest_treatment'],
       schema: () => window.PEST_TREATMENT_SCHEMA,
     },
+    // A Safe Work Method Statement is deliberately NOT in here, and the
+    // reason is worth writing down so nobody adds it later without meaning
+    // to. Everything in this map is an ALTERNATIVE: one visit produces one
+    // document, which is why the reports store is keyed by jobId and why a
+    // job holds exactly one report. An inspection, an action plan, a
+    // certificate and a monitoring visit really are alternatives to each
+    // other. A SWMS is not — it accompanies the work rather than recording
+    // it, and a builder wants it before anyone turns up, not after.
+    //
+    // Registering it here would mean switching document type on a job
+    // silently replaced a finished inspection report with a safety document.
+    // The schema is built and tested (swms-schema.js); what it still needs is
+    // a store of its own, which is a separate piece of work.
   };
 
   // Takes the whole job, not just its type, so the choice made at New Job

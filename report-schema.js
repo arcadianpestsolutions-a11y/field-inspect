@@ -606,11 +606,18 @@ function reportValidationErrors(schema, sections) {
 // last year's report must keep showing the number that was on it when it was
 // signed.
 function defaultValuesForSection(section, org) {
+  // Both blocks, merged. The provider block is the business; the inspector
+  // block is the person signing. A SWMS needs a field from each on the same
+  // page, and there is no reason a schema should have to know which of the
+  // two an orgField came from — only that it is a fact about who is doing
+  // the work, kept in one place so two documents cannot disagree.
   const provider = (org && typeof org.provider === 'function') ? org.provider() : (org || {});
+  const inspector = (org && typeof org.inspector === 'function') ? org.inspector() : {};
+  const source = { ...provider, ...inspector };
   const values = {};
   for (const field of section.fields) {
     if (field.orgField) {
-      values[field.id] = provider[field.orgField] || '';
+      values[field.id] = source[field.orgField] || '';
       continue;
     }
     if (field.default !== undefined) values[field.id] = field.default;

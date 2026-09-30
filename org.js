@@ -73,6 +73,11 @@
       providerEmail: org.email || '',
       providerAddress: org.address || '',
       signedOnBehalfOf: businessName(),
+      // A Safe Work Method Statement is handed to a principal contractor who
+      // checks both of these before anyone is allowed on site, so they belong
+      // in the block every document draws from rather than being retyped.
+      providerAbn: org.abn || '',
+      providerLicence: org.licenceNumber || '',
     }),
 
     // The signing technician's own details, for the inspector section.
