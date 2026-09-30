@@ -37,6 +37,7 @@
     <h1>Scope</h1>
     <button id="open-scheduler-btn" class="icon-btn" aria-label="Scheduler" title="Scheduler">📅</button>
     <button id="open-swms-btn" class="icon-btn" aria-label="Safety statements" title="Safety statements">🦺</button>
+    <button id="open-business-btn" class="icon-btn" aria-label="Business figures" title="Business figures">📊</button>
     <button id="open-archive-btn" class="icon-btn" aria-label="Saved Reports" title="Saved Reports">🗂</button>
   </header>
 
@@ -305,6 +306,26 @@
   <div class="action-bar">
     <button id="section-save-btn" class="btn btn-primary full">Save & Back to Report</button>
   </div>
+</section>
+
+<!-- ============ BUSINESS FIGURES ============ -->
+<!-- Reads the records already on the device. Nothing here is entered by
+     hand, so nothing here can be out of date in a way the diary is not. -->
+<section id="view-business" class="view hidden">
+  <header class="topbar">
+    <button id="business-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Business</h1>
+      <span id="business-period-label" class="subtitle"></span>
+    </div>
+  </header>
+
+  <main class="content">
+    <label class="field-label" for="business-period">Period</label>
+    <select id="business-period" class="business-period"></select>
+
+    <div id="business-body"></div>
+  </main>
 </section>
 
 <!-- ============ SAFE WORK METHOD STATEMENTS ============ -->
@@ -593,6 +614,7 @@
 <script src="invoicing.js"></script>
 <script src="availability.js"></script>
 <script src="routing.js"></script>
+<script src="reporting.js"></script>
 <script src="sync.js"></script>
 <script src="org.js"></script>
 <script src="media.js"></script>
@@ -605,6 +627,7 @@
 <script src="report.js"></script>
 <script src="invoice-ui.js"></script>
 <script src="swms-ui.js"></script>
+<script src="business-ui.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>
 <script src="calendar-feed.js"></script>

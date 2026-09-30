@@ -2516,3 +2516,97 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   margin-top: 2px;
 }
 .swms-intro { margin-bottom: 14px; }
+
+/* ---- Desktop: one column, not a stretched phone -----------------------
+   Scope is phone-first and stays that way — the technician is holding it in
+   a subfloor, not sitting at a desk. But a phone layout spread across a
+   27-inch monitor is not a desktop layout, it is a phone layout that has
+   been maximised: a job card a metre wide with the client's name at one end
+   and the status pill at the other, and nothing in between.
+
+   So above 900px the reading column is capped and centred, and the bars that
+   frame it pad themselves to line up with it. The bars keep their full-bleed
+   backgrounds — a header that stops two thirds of the way across looks
+   broken — while everything you actually read sits in one column. */
+@media (min-width: 900px) {
+  :root { --page-gutter: max(16px, calc((100% - 880px) / 2)); }
+  .content { padding-inline: var(--page-gutter); }
+  .topbar { padding-left: var(--page-gutter); padding-right: var(--page-gutter); }
+  .action-bar { padding-left: var(--page-gutter); padding-right: var(--page-gutter); }
+  .sync-bar { padding-left: var(--page-gutter); padding-right: var(--page-gutter); }
+  /* The floating New Job button follows the column rather than hugging the
+     far corner of the screen, where it is nowhere near what it acts on. */
+  .fab { right: calc(var(--page-gutter) + 4px); }
+}
+
+/* Short answers should not be a metre wide. A Yes/No pair stretched across
+   the full column reads as two enormous slabs, and a date field wide enough
+   for a paragraph invites the wrong kind of answer. Textareas, photo grids
+   and multiselects keep the full width, because those genuinely use it. */
+@media (min-width: 900px) {
+  .field-row > input[type="text"],
+  .field-row > input[type="date"],
+  .field-row > input[type="time"],
+  .field-row > select,
+  .field-row > .yesno-toggle {
+    max-width: 420px;
+  }
+  .signature-field { max-width: 420px; }
+}
+
+/* ---- Business figures -------------------------------------------------- */
+.business-period { width: 100%; max-width: 420px; margin-bottom: 18px; }
+
+/* The headline is a card rather than a tile because it is the one number on
+   this screen that is money still on the table rather than a record of
+   something that already happened. */
+.business-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 4px solid var(--warning);
+}
+.business-headline-clear { border-left-color: var(--accent); }
+.business-headline-value { font-size: 2.2rem; font-weight: 700; line-height: 1.1; }
+.business-headline-label { font-weight: 600; }
+.business-headline-sub { margin: 4px 0 0; font-size: 0.8rem; color: var(--text-dim); }
+.business-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.business-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 0.86rem; min-width: 0; }
+.business-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.business-list-meta { color: var(--text-dim); flex: 0 0 auto; font-size: 0.8rem; }
+
+.business-heading {
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 22px 0 8px;
+}
+
+.stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+@media (min-width: 620px) { .stat-grid { grid-template-columns: repeat(4, 1fr); } }
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  min-width: 0;
+}
+/* Semantic colour on the border only. Colouring the figure itself makes a
+   dollar amount look like a status, and $0 overdue is good news in the same
+   colour as $4,000 overdue is bad news. */
+.stat-warn { border-left: 3px solid var(--warning); }
+.stat-bad  { border-left: 3px solid var(--danger); }
+.stat-value { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat-label { font-size: 0.78rem; font-weight: 600; }
+.stat-sub { font-size: 0.72rem; color: var(--text-dim); }
+
+.business-note {
+  margin: 10px 2px 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}

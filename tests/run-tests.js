@@ -556,6 +556,126 @@
   });
 
   // ---------- Safe Work Method Statement ----------
+  // ---------- Business figures ----------
+  const RP = () => window.Reporting;
+  const rpInvoice = (id, jobId, createdAt, cents, extra) => Object.assign({
+    id, jobId, createdAt, status: 'sent', gstRegistered: false,
+    lineItems: [{ description: 'Work', quantity: 1, unitAmountCents: cents }],
+  }, extra || {});
+
+  test('Business: the financial year runs July to June, not January to December', () => {
+    // A January-to-December year to date is the wrong answer to every
+    // question a BAS or a tax agent asks.
+    assertEqual(RP().fyStartYear(new Date(2027, 5, 30)), 2026, '30 June 2027 is still FY2026');
+    assertEqual(RP().fyStartYear(new Date(2027, 6, 1)), 2027, '1 July 2027 starts FY2027');
+
+    const r = RP().periodRange('this-fy', avAt(2027, 3, 15));
+    assertEqual(new Date(r.from).getMonth(), 6, 'the year starts in July');
+    assertEqual(new Date(r.from).getFullYear(), 2026);
+    assertEqual(new Date(r.to).getMonth(), 5, 'and ends in June');
+    assertEqual(new Date(r.to).getFullYear(), 2027);
+    assertEqual(RP().periodLabel('this-fy', avAt(2027, 3, 15)), 'FY 2026–27');
+
+    // A BAS is lodged on calendar quarters, so the quarter is a calendar one.
+    const q = RP().periodRange('this-quarter', avAt(2027, 5, 20));
+    assertEqual(new Date(q.from).getMonth(), 3, 'May sits in the April quarter');
+  });
+
+  test('Business: finished work that was never invoiced is the headline', () => {
+    const now = avAt(2027, 3, 20);
+    const jobs = [
+      { id: 'billed', name: 'Billed Job', inspectionEndedAt: avAt(2027, 3, 18) },
+      { id: 'unbilled', name: 'Unbilled Job', inspectionEndedAt: avAt(2027, 3, 2) },
+      { id: 'older', name: 'Older Unbilled', inspectionEndedAt: avAt(2027, 2, 10) },
+      // Still in progress: not late to be invoiced, so not on this list.
+      { id: 'running', name: 'In Progress', inspectionStartedAt: avAt(2027, 3, 19) },
+    ];
+    const invoices = [rpInvoice('i1', 'billed', avAt(2027, 3, 18), 40000)];
+    const s = RP().summarise({ jobs, invoices, reports: [], now, period: 'all' });
+
+    assertEqual(s.notInvoiced.count, 2, 'two finished jobs have no invoice');
+    assert(!s.notInvoiced.jobs.some((j) => j.jobId === 'running'),
+      'a job still in progress is not late to be invoiced');
+    assert(!s.notInvoiced.jobs.some((j) => j.jobId === 'billed'), 'and a billed one is not on the list');
+    // Measured from the OLDEST, because that is the one that has been
+    // forgotten longest and the reason to look at this screen at all.
+    assertEqual(s.notInvoiced.oldestDays, 38, `oldest unbilled job in days, got ${s.notInvoiced.oldestDays}`);
+  });
+
+  test('Business: a report finalised counts the work even with no inspection end time', () => {
+    const now = avAt(2027, 3, 20);
+    // Older jobs have no inspectionEndedAt. Their report's finalizedAt is the
+    // only date on the record, and without this fallback every one of them
+    // would silently drop out of "work done".
+    const jobs = [{ id: 'j1', name: 'No End Time' }];
+    const reports = [{ jobId: 'j1', finalizedAt: avAt(2027, 3, 5), documentType: 'timber_pest_inspection' }];
+    const s = RP().summarise({ jobs, reports, invoices: [], now, period: 'this-month' });
+    assertEqual(s.work.completed, 1, 'the job counts as done');
+    assertEqual(s.notInvoiced.count, 1, 'and as not invoiced');
+  });
+
+  test('Business: an old unpaid invoice stays visible however short the period', () => {
+    const now = avAt(2027, 3, 20);
+    const invoices = [
+      // Issued months before the period being looked at, still unpaid.
+      rpInvoice('old', 'j1', avAt(2026, 11, 3), 55000, { dueDate: '2026-11-17' }),
+      rpInvoice('recent', 'j2', avAt(2027, 3, 12), 30000, { dueDate: '2027-03-26' }),
+    ];
+    const s = RP().summarise({ jobs: [], reports: [], invoices, now, period: 'this-month' });
+
+    assertEqual(s.money.invoicedCount, 1, 'only this month was invoiced this month');
+    // The whole point of the number: a period filter would hide the one that
+    // matters most.
+    assertEqual(s.money.outstandingCount, 2, 'both are still unpaid');
+    assertEqual(s.money.overdueCount, 1, 'and the November one is past its due date');
+    assertEqual(s.money.overdueCents, 55000);
+  });
+
+  test('Business: paid comes from Xero and a voided invoice counts as nothing', () => {
+    const now = avAt(2027, 3, 20);
+    const invoices = [
+      rpInvoice('paid', 'j1', avAt(2027, 3, 4), 20000, { xeroStatus: 'PAID' }),
+      rpInvoice('sent', 'j2', avAt(2027, 3, 5), 30000, { xeroStatus: 'AUTHORISED' }),
+      rpInvoice('void', 'j3', avAt(2027, 3, 6), 99900, { xeroStatus: 'VOIDED' }),
+      rpInvoice('draft', 'j4', avAt(2027, 3, 7), 10000, { status: 'draft' }),
+    ];
+    const s = RP().summarise({ jobs: [], reports: [], invoices, now, period: 'this-month' });
+
+    assertEqual(s.money.paidCents, 20000, 'only what Xero says is paid');
+    assertEqual(s.money.paidFrom, 'xero', 'and the screen is told where that came from');
+    assertEqual(s.money.outstandingCount, 1, 'authorised but unpaid');
+    assertEqual(s.money.draftCount, 1, 'a draft is written but not asked for');
+    // A voided invoice is not money, not outstanding, and not invoiced.
+    assertEqual(s.money.invoicedCents, 20000 + 30000 + 10000, 'a voided invoice is excluded entirely');
+  });
+
+  test('Business: a client who ignored the reminder is counted separately from merely overdue', () => {
+    const now = avAt(2027, 3, 20);
+    const past = avAt(2027, 2, 1);
+    const jobs = [
+      // Overdue, but the automatic email has not gone yet.
+      { id: 'a', name: 'Not Yet Reminded', nextDueAt: past },
+      // Overdue AND the reminder for this exact due date already went. The
+      // automatic path has been spent; this one needs a person.
+      { id: 'b', name: 'Reminded, Ignored', nextDueAt: past, reminderSentForDueAt: past },
+      // Overdue but already rebooked, so not chasing anybody.
+      { id: 'c', name: 'Rebooked', nextDueAt: past, scheduledAt: avAt(2027, 3, 25) },
+    ];
+    const s = RP().summarise({ jobs, reports: [], invoices: [], now, period: 'all' });
+    assertEqual(s.upcoming.overdueForReinspection, 2, 'the rebooked one is not overdue any more');
+    assertEqual(s.upcoming.needsACall, 1, 'only the one the email failed to move');
+  });
+
+  test('Business: a due date that is just a date is read in local time, not UTC', () => {
+    // Date.parse on a bare ISO date reads it as UTC, which in Sydney makes an
+    // invoice due today look due yesterday and lands it in the overdue pile
+    // a day early. Every year. Quietly.
+    const now = new Date(2027, 2, 20, 9, 0).getTime();
+    const invoices = [rpInvoice('today', 'j1', avAt(2027, 3, 1), 10000, { dueDate: '2027-03-20' })];
+    const s = RP().summarise({ jobs: [], reports: [], invoices, now, period: 'all' });
+    assertEqual(s.money.overdueCount, 0, 'due today is not overdue');
+  });
+
   // ---------- the SWMS screens ----------
   const swmsSections = (doc) => Array.from(doc.querySelectorAll('#swms-section-list .report-section-item'))
     .map((li) => li.querySelector('.section-name').textContent.trim());
@@ -3912,10 +4032,19 @@
   // ever telling anyone. These pin the shared check itself; the confirm-based
   // UI wiring at each call site is exercised live rather than re-mocked five
   // times over.
+  //
+  // The dates here are hardcoded and deliberately in 2031, which no relative
+  // date in this suite can reach. They used to be in October 2026, and sat
+  // there harmlessly until the month rolled over to October 2026 for real —
+  // at which point dayThisMonth(13) resolved to the same instant as the
+  // hardcoded 13 October and a travel test started failing on a clash with a
+  // fixture it had never heard of. A suite whose result depends on the date
+  // it is run is worse than no suite, so these are now permanently out of
+  // reach rather than merely unlikely to collide.
 
   test('Overlap: two jobs booked into the same window are detected', async () => {
     const win = frame.contentWindow;
-    const base = Date.parse('2026-10-12T09:00:00');
+    const base = Date.parse('2031-10-12T09:00:00');
     const a = await win.DB.addJob({ name: 'Overlap A', scheduledAt: base, scheduledDurationMins: 120 });
     const b = await win.DB.addJob({ name: 'Overlap B' });
     const clashes = await win.DB.getOverlappingJobs(base + 60 * 60000, 60, b.id);
@@ -3928,7 +4057,7 @@
     // — the boundary itself must not count as overlapping, or a technician
     // could never book two jobs back to back without a false warning.
     const win = frame.contentWindow;
-    const base = Date.parse('2026-10-13T09:00:00');
+    const base = Date.parse('2031-10-13T09:00:00');
     const a = await win.DB.addJob({ name: 'Back-to-back A', scheduledAt: base, scheduledDurationMins: 60 });
     const clashes = await win.DB.getOverlappingJobs(base + 60 * 60000, 60, null);
     assertEqual(clashes.length, 0, 'a job starting exactly when another ends is not a clash');
@@ -3936,7 +4065,7 @@
 
   test('Overlap: a job never clashes with itself', async () => {
     const win = frame.contentWindow;
-    const base = Date.parse('2026-10-14T09:00:00');
+    const base = Date.parse('2031-10-14T09:00:00');
     const a = await win.DB.addJob({ name: 'Self Job', scheduledAt: base, scheduledDurationMins: 90 });
     const clashes = await win.DB.getOverlappingJobs(base, 90, a.id);
     assertEqual(clashes.length, 0, 'moving a job or re-saving it at the same time must not flag against itself');
@@ -3953,16 +4082,16 @@
     // tapped hour as free. A 3pm job that runs 3 hours reaches 6pm even
     // though 3pm itself was clear.
     const win = frame.contentWindow;
-    const base = Date.parse('2026-10-15T17:00:00'); // 5pm
+    const base = Date.parse('2031-10-15T17:00:00'); // 5pm
     const later = await win.DB.addJob({ name: 'Late Job', scheduledAt: base, scheduledDurationMins: 60 });
-    const candidateStart = Date.parse('2026-10-15T15:00:00'); // 3pm, itself free
+    const candidateStart = Date.parse('2031-10-15T15:00:00'); // 3pm, itself free
     const clashes = await win.DB.getOverlappingJobs(candidateStart, 180, null); // runs to 6pm
     assertEqual(clashes.length, 1, 'the 5pm job is caught even though 3pm itself was empty');
   });
 
   test('Overlap: the confirm prompt names the job it clashes with', async () => {
     const win = frame.contentWindow;
-    const base = Date.parse('2026-10-16T10:00:00');
+    const base = Date.parse('2031-10-16T10:00:00');
     await win.DB.addJob({ name: 'Existing Slot Job', scheduledAt: base, scheduledDurationMins: 60 });
     const mover = await win.DB.addJob({ name: 'Mover Job' });
 
