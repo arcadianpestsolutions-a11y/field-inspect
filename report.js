@@ -153,36 +153,13 @@
     return schemaFor(currentJob && currentJob.jobType, currentReport);
   }
 
-  // Section-level visibility.
-  //
-  // A FIELD's showIf names a sibling in its own section. A SECTION's names a
-  // field in a different one, so it carries that section's id too — which is
-  // the whole point: the action-plan half of a timber pest inspection is
-  // decided by an answer given back in Findings.
-  //
-  // A condition that names nothing is treated as hidden rather than shown.
-  // These sections appear because somebody said works are needed; appearing
-  // by default, before the question has been answered, would put a blank
-  // proposal in front of every inspection.
-  function isSectionVisible(section, report) {
-    const cond = section && section.showIf;
-    if (!cond) return true;
-    const values = (report && report.sections && report.sections[cond.section]) || {};
-    const value = values[cond.field];
-    if (Array.isArray(cond.oneOf)) return cond.oneOf.includes(value);
-    if (Object.prototype.hasOwnProperty.call(cond, 'equals')) return value === cond.equals;
-    if (Object.prototype.hasOwnProperty.call(cond, 'notEquals')) {
-      return value !== undefined && value !== '' && value !== cond.notEquals;
-    }
-    return false;
-  }
-
-  // The schema as the technician actually sees it. Everything that counts
-  // sections — the list, the finalize check, validation and the PDF — works
-  // from this, so a hidden section cannot block finalizing or print blank.
-  function visibleSchema(schema, report) {
-    return (schema || []).filter((s) => isSectionVisible(s, report));
-  }
+  // Both moved to report-schema.js, where they sit beside isFieldVisible and
+  // have no idea what a report is. A Safe Work Method Statement gates its
+  // subfloor page on an answer given back in "What This Job Involves" —
+  // exactly the same mechanism as an inspection gating its action plan on an
+  // answer given back in Findings — and it needs these, not a copy of them.
+  const isSectionVisible = window.ReportSchemaUtils.isSectionVisible;
+  const visibleSchema = window.ReportSchemaUtils.visibleSchema;
 
   function currentDocumentType() {
     return documentTypeOf(currentReport, currentJob);

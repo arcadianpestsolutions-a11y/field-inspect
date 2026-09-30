@@ -660,7 +660,44 @@ const SCHEMA_VERSION = 7;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;
+// Section-level visibility.
+//
+// A FIELD's showIf names a sibling in its own section. A SECTION's names a
+// field in a different one, so it carries that section's id too — which is
+// the whole point: the action-plan half of a timber pest inspection is
+// decided by an answer given back in Findings, and the subfloor page of a
+// safety statement by an answer given back in "What This Job Involves".
+//
+// A condition that names nothing is treated as hidden rather than shown.
+// These sections appear because somebody answered a question; appearing by
+// default, before it has been answered, would put a blank proposal in front
+// of every inspection.
+//
+// Lives here rather than in report.js because it is schema logic and has no
+// idea what a report is — which is what lets a Safe Work Method Statement use
+// exactly this instead of a second copy that drifts.
+function isSectionVisible(section, record) {
+  const cond = section && section.showIf;
+  if (!cond) return true;
+  const values = (record && record.sections && record.sections[cond.section]) || {};
+  const value = values[cond.field];
+  if (Array.isArray(cond.oneOf)) return cond.oneOf.includes(value);
+  if (Object.prototype.hasOwnProperty.call(cond, 'equals')) return value === cond.equals;
+  if (Object.prototype.hasOwnProperty.call(cond, 'notEquals')) {
+    return value !== undefined && value !== '' && value !== cond.notEquals;
+  }
+  return false;
+}
+
+// The schema as the technician actually sees it. Everything that counts
+// sections — the list, the finalize check, validation and the PDF — works
+// from this, so a hidden section cannot block finalizing or print blank.
+function visibleSchema(schema, record) {
+  return (schema || []).filter((s) => isSectionVisible(s, record));
+}
+
 window.ReportSchemaUtils = {
-  isFieldVisible, computeSectionStatus, defaultValuesForSection, YES_NO,
+  isFieldVisible, isSectionVisible, visibleSchema,
+  computeSectionStatus, defaultValuesForSection, YES_NO,
   fieldValidationErrors, sectionValidationErrors, reportValidationErrors,
 };

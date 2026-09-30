@@ -2505,3 +2505,14 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
     font-size: 1.05rem;
   }
 }
+
+/* A second line under a list item's name — used on the safety statement
+   register to say whether one is signed or still a draft, which is the
+   difference between handing a builder a document and handing them a form. */
+.section-sub {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.swms-intro { margin-bottom: 14px; }

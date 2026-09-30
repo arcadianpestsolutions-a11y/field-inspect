@@ -288,6 +288,16 @@
   window.showJobListView = showJobListView;
   // Used by invoice-ui.js to return to the job it was opened from.
   window.showJobViewById = showJobView;
+  // Which job is on screen, if any. swms-ui.js uses it to start a safety
+  // statement already carrying the site address, rather than making somebody
+  // retype an address the app is currently displaying. Returns null rather
+  // than guessing when no job is open — a statement with no job is valid.
+  // Read from the database rather than from jobsCache. That cache holds
+  // {job, count} wrappers and is only filled when the job LIST renders, so a
+  // job opened straight from a link — or one created moments ago — is not in
+  // it. Async for the same reason: correctness here is worth a round trip to
+  // IndexedDB that nobody is waiting on.
+  window.currentJobForSwms = async () => (currentJobId ? (await DB.getJob(currentJobId)) || null : null);
   // Real sign-out only fires this through Sync.onAuthChange, which test/demo
   // mode never wires up (sync.js bails out before it exists) — exposed so
   // the "logging out doesn't leave another screen showing underneath" case

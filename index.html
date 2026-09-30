@@ -36,6 +36,7 @@
   <header class="topbar">
     <h1>Scope</h1>
     <button id="open-scheduler-btn" class="icon-btn" aria-label="Scheduler" title="Scheduler">📅</button>
+    <button id="open-swms-btn" class="icon-btn" aria-label="Safety statements" title="Safety statements">🦺</button>
     <button id="open-archive-btn" class="icon-btn" aria-label="Saved Reports" title="Saved Reports">🗂</button>
   </header>
 
@@ -306,6 +307,70 @@
   </div>
 </section>
 
+<!-- ============ SAFE WORK METHOD STATEMENTS ============ -->
+<!-- Three views, mirroring the report flow a technician already knows:
+     the register, one statement's sections, and one section being filled in.
+     A statement is NOT a report document type — see DOCUMENT_TYPES in
+     report.js — because a job holds one report and needs to be able to carry
+     a safety statement alongside it rather than instead of it. -->
+<section id="view-swms-list" class="view hidden">
+  <header class="topbar">
+    <button id="swms-list-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Safety statements</h1>
+      <span class="subtitle">Safe Work Method Statements</span>
+    </div>
+  </header>
+
+  <main class="content">
+    <p class="empty-hint swms-intro">
+      What a builder, strata manager or facilities company asks for before they will let you on site.
+      One can be written for a single job, or once for an activity and reused.
+    </p>
+    <ul id="swms-list" class="report-section-list"></ul>
+  </main>
+
+  <div class="action-bar">
+    <button id="swms-new-btn" class="btn btn-primary full">+ New statement</button>
+  </div>
+</section>
+
+<section id="view-swms" class="view hidden">
+  <header class="topbar">
+    <button id="swms-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1 id="swms-title">Safe Work Method Statement</h1>
+      <span id="swms-subtitle" class="subtitle"></span>
+    </div>
+    <button id="swms-delete-btn" class="icon-btn" aria-label="Delete statement" title="Delete statement">🗑</button>
+  </header>
+
+  <main class="content">
+    <p id="swms-gate-hint" class="empty-hint">
+      Answer “What This Job Involves” first — it decides which hazard pages you get.
+    </p>
+    <ul id="swms-section-list" class="report-section-list"></ul>
+  </main>
+</section>
+
+<section id="view-swms-section" class="view hidden">
+  <header class="topbar">
+    <button id="swms-section-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1 id="swms-section-title">Section</h1>
+      <span id="swms-section-subtitle" class="subtitle"></span>
+    </div>
+  </header>
+
+  <main class="content">
+    <div id="swms-section-fields" class="report-section-fields"></div>
+  </main>
+
+  <div class="action-bar">
+    <button id="swms-section-save-btn" class="btn btn-primary full">Save &amp; Back</button>
+  </div>
+</section>
+
 <!-- ============ SAVED REPORTS ARCHIVE VIEW ============ -->
 <!-- ============ SCHEDULER VIEW ============ -->
 <section id="view-scheduler" class="view hidden">
@@ -539,6 +604,7 @@
 <script src="reminders-ui.js"></script>
 <script src="report.js"></script>
 <script src="invoice-ui.js"></script>
+<script src="swms-ui.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>
 <script src="calendar-feed.js"></script>

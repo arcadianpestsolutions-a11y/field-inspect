@@ -556,6 +556,140 @@
   });
 
   // ---------- Safe Work Method Statement ----------
+  // ---------- the SWMS screens ----------
+  const swmsSections = (doc) => Array.from(doc.querySelectorAll('#swms-section-list .report-section-item'))
+    .map((li) => li.querySelector('.section-name').textContent.trim());
+  const swmsOpenSection = async (doc, name) => {
+    Array.from(doc.querySelectorAll('#swms-section-list .report-section-item'))
+      .find((li) => new RegExp(name).test(li.textContent)).click();
+    await wait(300);
+  };
+  const swmsRow = (doc, id) => doc.querySelector(`#swms-section-fields [data-field-row="${id}"]`);
+  const swmsYes = (doc, id) => Array.from(swmsRow(doc, id).querySelectorAll('.yesno-btn'))
+    .find((b) => b.textContent === 'Yes').click();
+
+  test('SWMS screen: a new statement opens with only the pages that always apply', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    for (const s of await win.DB.getAllSwms()) await win.DB.deleteSwms(s.id);
+
+    await win.SwmsUI.open();
+    await wait(250);
+    assert(/No statements yet/.test(doc.getElementById('swms-list').textContent),
+      'an empty register says so rather than showing nothing');
+
+    doc.getElementById('swms-new-btn').click();
+    await waitFor(async () => swmsSections(doc).length > 0, 'a new statement should open');
+
+    const sections = swmsSections(doc);
+    assertEqual(sections.length, 5, `only the always-on pages to start with, got ${sections.join(' | ')}`);
+    assert(/What This Job Involves/.test(sections[1]), 'the gate questions come second');
+    assert(!sections.some((s) => /Subfloor|Roof Void|Chemicals|Asbestos/.test(s)),
+      'a statement nobody has answered yet must not open with every hazard page');
+    assert(!doc.getElementById('swms-gate-hint').classList.contains('hidden'),
+      'and it says which section to answer first');
+  });
+
+  test('SWMS screen: answering the gate questions opens the hazard pages and renumbers', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await swmsOpenSection(doc, 'What This Job Involves');
+
+    for (const id of ['entersSubfloor', 'entersRoofVoid', 'appliesChemical', 'drillsOrTrenches']) swmsYes(doc, id);
+    const sel = swmsRow(doc, 'preNinetyBuilding').querySelector('select');
+    sel.value = 'Unknown — treat as if it is';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+
+    doc.getElementById('swms-section-save-btn').click();
+    await waitFor(async () => swmsSections(doc).length === 10, 'every hazard page should now be on the list');
+
+    const sections = swmsSections(doc);
+    for (const expected of ['Subfloor Entry', 'Roof Void and Ladders', 'Chemicals', 'Drilling and Trenching', 'Asbestos']) {
+      assert(sections.some((s) => s.includes(expected)), `${expected} should have appeared`);
+    }
+    // Numbered by what is on screen, not by the schema. A list reading 1-3
+    // then 9 looks like pages went missing rather than pages never needed.
+    assertEqual(sections.map((s) => parseInt(s, 10)).join(','), '1,2,3,4,5,6,7,8,9,10',
+      'the numbering has to be contiguous');
+    assert(doc.getElementById('swms-gate-hint').classList.contains('hidden'),
+      'the hint has done its job and gets out of the way');
+  });
+
+  test('SWMS screen: back discards, save writes — one rule, same as the report editor', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const idOf = async () => (await win.DB.getAllSwms())[0].id;
+
+    await swmsOpenSection(doc, 'Subfloor Entry');
+    assertEqual(doc.querySelector('#swms-section-fields [data-field-row]').dataset.fieldRow, 'confinedSpaceCheck',
+      'whether it is a confined space changes every other answer, so it is asked first');
+
+    const notes = swmsRow(doc, 'subfloorNotes').querySelector('textarea');
+    notes.value = 'Discarded on purpose';
+    notes.dispatchEvent(new Event('input', { bubbles: true }));
+    doc.getElementById('swms-section-back-btn').click();
+    await wait(400);
+    let stored = await win.DB.getSwms(await idOf());
+    assert(!(stored.sections.swmsSubfloor && stored.sections.swmsSubfloor.subfloorNotes),
+      'backing out of a section must not write it');
+
+    await swmsOpenSection(doc, 'Subfloor Entry');
+    const notes2 = swmsRow(doc, 'subfloorNotes').querySelector('textarea');
+    notes2.value = 'Bare wiring stapled to the bearer, NE corner.';
+    notes2.dispatchEvent(new Event('input', { bubbles: true }));
+    doc.getElementById('swms-section-save-btn').click();
+    await waitFor(async () => {
+      const s = await win.DB.getSwms(await idOf());
+      return s.sections.swmsSubfloor && s.sections.swmsSubfloor.subfloorNotes === 'Bare wiring stapled to the bearer, NE corner.';
+    }, 'saving should write the section');
+  });
+
+  test('SWMS screen: a signature is what turns a form into a statement', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const idOf = async () => (await win.DB.getAllSwms())[0].id;
+    assertEqual((await win.DB.getSwms(await idOf())).signedAt, null, 'unsigned until somebody signs');
+
+    await swmsOpenSection(doc, 'Review and Sign-off');
+    const canvas = doc.querySelector('#swms-section-fields .signature-canvas');
+    const r = canvas.getBoundingClientRect();
+    const ev = (type, x, y) => canvas.dispatchEvent(new win.MouseEvent(type, { bubbles: true, clientX: r.left + x, clientY: r.top + y }));
+    ev('mousedown', 20, 60); ev('mousemove', 90, 30); ev('mousemove', 150, 70);
+    win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }));
+    await wait(200);
+    doc.getElementById('swms-section-save-btn').click();
+
+    await waitFor(async () => !!(await win.DB.getSwms(await idOf())).signedAt, 'signing should stamp the record');
+    const signed = await win.DB.getSwms(await idOf());
+    assert(String(signed.sections.swmsSignoff.technicianSignature).startsWith('data:image'),
+      'and the signature itself is stored, not just the fact of it');
+
+    await win.SwmsUI.open();
+    await wait(300);
+    assert(/Signed/.test(doc.getElementById('swms-list').textContent),
+      'the register says signed, because an unsigned statement is a form and a signed one is a document');
+  });
+
+  test('SWMS screen: started from a job, it already knows the address', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'SWMS From Job', address: '42 Subfloor Lane, Camden NSW 2570' });
+    await win.showJobViewById(job.id);
+    await wait(400);
+
+    doc.getElementById('open-swms-btn').click();
+    await wait(300);
+    doc.getElementById('swms-new-btn').click();
+    await waitFor(async () => (await win.DB.getSwmsForJob(job.id)).length === 1,
+      'a statement started with a job on screen should be linked to it');
+
+    const [created] = await win.DB.getSwmsForJob(job.id);
+    assertEqual(created.siteAddress, '42 Subfloor Lane, Camden NSW 2570',
+      'and carry the address rather than making somebody retype what is on screen');
+    assertEqual(doc.getElementById('swms-title').textContent, '42 Subfloor Lane, Camden NSW 2570',
+      'which is what it is called in the register too');
+  });
+
   test('SWMS store: a statement sits alongside a report instead of replacing it', async () => {
     const win = frame.contentWindow;
     const job = await win.DB.addJob({ name: 'SWMS Store Job', address: '1 Safety St' });
