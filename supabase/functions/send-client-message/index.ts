@@ -82,9 +82,18 @@ const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const CLICKSEND_USERNAME = Deno.env.get('CLICKSEND_USERNAME') || '';
 const CLICKSEND_API_KEY = Deno.env.get('CLICKSEND_API_KEY') || '';
 // What shows up as the sender. Australian carriers allow an alphanumeric
-// sender ID of up to 11 characters, which is why this is not the full
-// business name. A client who cannot tell who texted them deletes it.
-const SMS_SENDER_ID = (Deno.env.get('SMS_SENDER_ID') || 'ArcadianPst').slice(0, 11);
+// sender ID of up to 11 characters, which is why a full business name does
+// not fit. A client who cannot tell who texted them deletes it.
+//
+// EMPTY BY DEFAULT, and that is deliberate. An alphanumeric sender ID has to
+// be registered with the provider before it will carry anything, and a new
+// account has none — so a hardcoded default would have every message
+// rejected by a service that was set up correctly, which is about the worst
+// first impression a feature can make. Left unset, no `from` is sent at all
+// and the provider uses a working number of its own. The message names the
+// business in its first three words either way, so nothing is lost while
+// this is blank.
+const SMS_SENDER_ID = (Deno.env.get('SMS_SENDER_ID') || '').slice(0, 11);
 // The name inside the message. Separate from BUSINESS_NAME because every
 // character is paid for: "Arcadian Pest Solutions" is 23 of the 306 a
 // two-part message gets, and "Arcadian Pest" says the same thing.
@@ -386,19 +395,22 @@ async function sendSmsOne(kind: string, job: JobRow, triggeredBy: string | null)
     return { jobId: job.id, kind, sent: false, reason: composed.reason };
   }
 
+  const message: Record<string, unknown> = {
+    source: 'scope',
+    to: composed.to,
+    body: composed.text,
+    custom_string: job.id,
+  };
+  // Only sent when one has actually been registered. An unregistered sender
+  // ID is refused outright by the carrier, so an empty string here would be
+  // worse than no field at all.
+  if (SMS_SENDER_ID) message.from = SMS_SENDER_ID;
+
   const auth = btoa(`${CLICKSEND_USERNAME}:${CLICKSEND_API_KEY}`);
   const res = await fetch('https://rest.clicksend.com/v3/sms/send', {
     method: 'POST',
     headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages: [{
-        source: 'scope',
-        from: SMS_SENDER_ID,
-        to: composed.to,
-        body: composed.text,
-        custom_string: job.id,
-      }],
-    }),
+    body: JSON.stringify({ messages: [message] }),
   });
 
   const payload = await res.json().catch(() => ({}));
