@@ -1930,6 +1930,7 @@
     currentSectionId = sectionId;
     const section = findSection(sectionId);
     pendingSectionValues = cloneSectionValues(currentReport.sections[sectionId]);
+    bindSectionValues();
 
     const draft = await DB.getSectionDraft(currentReport.jobId, sectionId).catch(() => null);
     if (draft && draft.values && draftDiffersFromCommitted(section, currentReport.sections[sectionId], draft.values)) {
@@ -1940,6 +1941,7 @@
         { title: 'Unsaved work found', okLabel: 'Restore it' }
       )) {
         pendingSectionValues = { ...pendingSectionValues, ...draft.values };
+        bindSectionValues();
       } else {
         await DB.deleteSectionDraft(currentReport.jobId, sectionId).catch(() => {});
       }
@@ -1983,26 +1985,62 @@
     show(viewReportSection);
   }
 
-  function refreshVisibility() {
-    const section = findSection(currentSectionId);
-    for (const field of section.fields) {
-      const row = sectionFieldsEl.querySelector(`[data-field-row="${field.id}"]`);
-      if (!row) continue;
-      row.classList.toggle('hidden', !isFieldVisible(field, pendingSectionValues));
-    }
+  // ---------- the form renderer ----------
+  // The controls themselves live in form-render.js now. What stays here is
+  // everything that is about inspections rather than about forms: the field
+  // types only a report has, and the AI offer UI that hangs off a row.
+  //
+  // The split exists because a Safe Work Method Statement needs exactly these
+  // text boxes, date pickers, yes/no toggles and signature pads, and while
+  // they were defined inside this file the only way to get them was to be a
+  // report — which a safety statement is not.
+  const formRenderer = window.FormRender.create({
+    values: pendingSectionValues,
+    container: sectionFieldsEl,
+
+    // The field types that are about pest control rather than about forms.
+    // The shared renderer has no idea what a bait station or a mud map is,
+    // and should not.
+    customFields: {
+      photos: (field) => renderPhotosField(field),
+      sketch: (field) => renderSketchField(field),
+      productList: (field) => renderProductListField(field),
+      stationList: (field) => renderStationListField(field),
+    },
+
+    // Everything the AI draft puts on a row. A report gets this; a safety
+    // statement passes no decorator and gets a plain row.
+    decorateRow: (row, field) => decorateRowWithAi(row, field),
+
+    onFieldChange: (field, value) => {
+      if (field.id === 'jobCategory') applyJobCategoryPrefill(value);
+    },
+  });
+
+  function renderField(field) {
+    formRenderer.setSection(findSection(currentSectionId));
+    return formRenderer.renderField(field);
   }
 
-  function fieldRowWrapper(field) {
-    const row = document.createElement('div');
-    row.className = 'field-row';
-    row.dataset.fieldRow = field.id;
-    if (!isFieldVisible(field, pendingSectionValues)) row.classList.add('hidden');
-    const labelEl = document.createElement('label');
-    labelEl.className = 'field-label';
-    labelEl.innerHTML = escapeHtml(field.label) + (field.aiFillable ? ' <span class="ai-badge">AI</span>' : '') +
-      (field.required ? ' <span class="required-dot">*</span>' : '');
-    row.appendChild(labelEl);
+  function refreshVisibility() {
+    formRenderer.setSection(findSection(currentSectionId));
+    formRenderer.refreshVisibility();
+  }
 
+  // pendingSectionValues is REPLACED rather than mutated when a section
+  // opens, so the renderer has to be re-pointed at the new object or it goes
+  // on writing into the previous section's values — which would look like
+  // edits vanishing on save.
+  function bindSectionValues() {
+    formRenderer.setValues(pendingSectionValues);
+  }
+
+  // The AI offer UI, lifted out of the old fieldRowWrapper unchanged. It is
+  // report-specific in every line: it reads currentReport.aiDraft, it scores
+  // declines for the accuracy summary, and it re-renders the section. None of
+  // that belongs in a generic form renderer, so it arrives through the
+  // decorateRow hook instead.
+  function decorateRowWithAi(row, field) {
     if (aiAppliedFieldIds.has(field.id)) {
       row.classList.add('ai-suggested-value');
       const note = document.createElement('span');
@@ -2092,177 +2130,7 @@
       offer.appendChild(actions);
       row.appendChild(offer);
     }
-
-    return row;
   }
-
-  function renderField(field) {
-    // A pure data slot (the sketch's marker JSON): no label, no control, no
-    // row at all — it exists only so the value round-trips through save.
-    if (field.type === 'sketchData') return;
-
-    const row = fieldRowWrapper(field);
-
-    if (field.type === 'static') {
-      const val = document.createElement('div');
-      val.className = 'field-static';
-      // The STORED value, not the schema default. It used to render the
-      // default, which meant a finalized report displayed whatever the
-      // constant happened to say today rather than what it said when it was
-      // signed — so changing the office phone number silently rewrote the
-      // provider line on every report ever issued. On a compliance document
-      // that is not a cosmetic bug.
-      const stored = pendingSectionValues[field.id];
-      val.textContent = (stored !== undefined && stored !== null && stored !== '')
-        ? stored
-        : (field.default || '');
-      row.appendChild(val);
-    } else if (field.type === 'text') {
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = pendingSectionValues[field.id] || '';
-      input.addEventListener('input', () => { pendingSectionValues[field.id] = input.value; });
-      row.appendChild(input);
-    } else if (field.type === 'textarea') {
-      const ta = document.createElement('textarea');
-      ta.rows = 3;
-      ta.value = pendingSectionValues[field.id] || '';
-      ta.addEventListener('input', () => { pendingSectionValues[field.id] = ta.value; });
-      row.appendChild(ta);
-    } else if (field.type === 'date') {
-      const input = document.createElement('input');
-      input.type = 'date';
-      input.value = pendingSectionValues[field.id] || '';
-      input.addEventListener('input', () => { pendingSectionValues[field.id] = input.value; });
-      row.appendChild(input);
-    } else if (field.type === 'time') {
-      const input = document.createElement('input');
-      input.type = 'time';
-      input.value = pendingSectionValues[field.id] || '';
-      input.addEventListener('input', () => { pendingSectionValues[field.id] = input.value; });
-      row.appendChild(input);
-    } else if (field.type === 'select') {
-      const select = document.createElement('select');
-      const blank = document.createElement('option');
-      blank.value = '';
-      blank.textContent = '— Select —';
-      select.appendChild(blank);
-      for (const opt of field.options) {
-        const o = document.createElement('option');
-        o.value = opt;
-        o.textContent = opt;
-        if (pendingSectionValues[field.id] === opt) o.selected = true;
-        select.appendChild(o);
-      }
-      select.addEventListener('change', () => {
-        pendingSectionValues[field.id] = select.value;
-        refreshVisibility();
-      });
-      row.appendChild(select);
-    } else if (field.type === 'choiceCards') {
-      // A single-pick set of big tappable cards rather than a dropdown —
-      // built for jobCategory, where the choice itself is the useful action
-      // (it prefills PPE and equipment elsewhere in the report), not just a
-      // value to record. See applyJobCategoryPrefill.
-      const wrap = document.createElement('div');
-      wrap.className = 'choice-cards';
-      for (const cat of field.categories || []) {
-        const card = document.createElement('button');
-        card.type = 'button';
-        card.className = 'choice-card' + (pendingSectionValues[field.id] === cat.label ? ' active' : '');
-        card.innerHTML = `<span class="choice-card-label">${escapeHtml(cat.label)}</span>`
-          + (cat.blurb ? `<span class="choice-card-blurb">${escapeHtml(cat.blurb)}</span>` : '');
-        card.addEventListener('click', () => {
-          pendingSectionValues[field.id] = cat.label;
-          wrap.querySelectorAll('.choice-card').forEach((c) => c.classList.remove('active'));
-          card.classList.add('active');
-          if (field.id === 'jobCategory') applyJobCategoryPrefill(cat.label);
-        });
-        wrap.appendChild(card);
-      }
-      row.appendChild(wrap);
-    } else if (field.type === 'yesno') {
-      const wrap = document.createElement('div');
-      wrap.className = 'yesno-toggle';
-      for (const opt of ['Yes', 'No']) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'yesno-btn' + (pendingSectionValues[field.id] === opt ? ' active' : '');
-        btn.textContent = opt;
-        btn.addEventListener('click', () => {
-          pendingSectionValues[field.id] = opt;
-          wrap.querySelectorAll('.yesno-btn').forEach((b) => b.classList.remove('active'));
-          btn.classList.add('active');
-          refreshVisibility();
-        });
-        wrap.appendChild(btn);
-      }
-      row.appendChild(wrap);
-    } else if (field.type === 'multiselect') {
-      const current = new Set(pendingSectionValues[field.id] || []);
-      const wrap = document.createElement('div');
-      wrap.className = 'multiselect-list';
-
-      function addChip(opt, isCustom) {
-        const chip = document.createElement('label');
-        chip.className = 'checkbox-chip';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = current.has(opt);
-        cb.addEventListener('change', () => {
-          if (cb.checked) current.add(opt); else current.delete(opt);
-          pendingSectionValues[field.id] = Array.from(current);
-        });
-        chip.appendChild(cb);
-        chip.appendChild(document.createTextNode(opt + (isCustom ? ' (custom)' : '')));
-        wrap.insertBefore(chip, wrap.lastElementChild); // keep the add-row pinned at the bottom
-      }
-
-      const addRow = document.createElement('div');
-      addRow.className = 'row gap multiselect-add-row';
-      const addInput = document.createElement('input');
-      addInput.type = 'text';
-      addInput.placeholder = 'Add other…';
-      const addBtn = document.createElement('button');
-      addBtn.type = 'button';
-      addBtn.className = 'btn btn-secondary';
-      addBtn.textContent = '+ Add';
-      addBtn.addEventListener('click', () => {
-        const val = addInput.value.trim();
-        if (!val || current.has(val)) return;
-        current.add(val);
-        pendingSectionValues[field.id] = Array.from(current);
-        addInput.value = '';
-        addChip(val, true);
-      });
-      addRow.appendChild(addInput);
-      addRow.appendChild(addBtn);
-      wrap.appendChild(addRow);
-
-      for (const opt of field.options) addChip(opt, false);
-      // Already-saved values not in the fixed option list (added via "+ Add"
-      // on a previous edit) still need to render, or they'd silently vanish
-      // from view despite still being part of the saved value.
-      for (const val of current) {
-        if (!field.options.includes(val)) addChip(val, true);
-      }
-
-      row.appendChild(wrap);
-    } else if (field.type === 'photos') {
-      row.appendChild(renderPhotosField(field));
-    } else if (field.type === 'signature') {
-      row.appendChild(renderSignatureField(field));
-    } else if (field.type === 'sketch') {
-      row.appendChild(renderSketchField(field));
-    } else if (field.type === 'productList') {
-      row.appendChild(renderProductListField(field));
-    } else if (field.type === 'stationList') {
-      row.appendChild(renderStationListField(field));
-    }
-
-    sectionFieldsEl.appendChild(row);
-  }
-
 
   // Per-station records for a termite baiting system service.
   //
@@ -2846,65 +2714,6 @@
     return wrap;
   }
 
-  function renderSignatureField(field) {
-    const wrap = document.createElement('div');
-    wrap.className = 'signature-field';
-    const canvas = document.createElement('canvas');
-    canvas.width = 320;
-    canvas.height = 130;
-    canvas.className = 'signature-canvas';
-    wrap.appendChild(canvas);
-
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-
-    let hasSignature = false;
-    const existing = pendingSectionValues[field.id];
-    if (existing) {
-      const img = new Image();
-      img.onload = () => ctx.drawImage(img, 0, 0);
-      img.src = existing;
-      hasSignature = true;
-    }
-
-    let drawing = false;
-    function pos(e) {
-      const rect = canvas.getBoundingClientRect();
-      const point = e.touches ? e.touches[0] : e;
-      return { x: (point.clientX - rect.left) * (canvas.width / rect.width), y: (point.clientY - rect.top) * (canvas.height / rect.height) };
-    }
-    function start(e) { drawing = true; hasSignature = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
-    function move(e) { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
-    function end() {
-      if (!drawing) return;
-      drawing = false;
-      pendingSectionValues[field.id] = hasSignature ? canvas.toDataURL('image/png') : '';
-    }
-    canvas.addEventListener('mousedown', start);
-    canvas.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', end);
-    canvas.addEventListener('touchstart', start, { passive: false });
-    canvas.addEventListener('touchmove', move, { passive: false });
-    canvas.addEventListener('touchend', end);
-
-    const clearBtn = document.createElement('button');
-    clearBtn.type = 'button';
-    clearBtn.className = 'btn btn-secondary';
-    clearBtn.textContent = 'Clear Signature';
-    clearBtn.addEventListener('click', () => {
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      hasSignature = false;
-      pendingSectionValues[field.id] = '';
-    });
-    wrap.appendChild(clearBtn);
-    return wrap;
-  }
 
   function renderSketchField(field) {
     const wrap = document.createElement('div');
