@@ -2729,3 +2729,40 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 /* ---- Client link panel ------------------------------------------------- */
 .client-link-panel { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .client-link-panel .calendar-feed-hint { padding: 0; }
+
+/* ---- Update banner ------------------------------------------------------
+   Sits above everything, because its whole job is to be noticed by somebody
+   who does not know they are running an old build. It never reloads on its
+   own: an automatic refresh mid-inspection throws away whatever is half
+   typed into a section. */
+.update-banner {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px calc(12px + var(--safe-bottom));
+  background: var(--bg-elev);
+  border-top: 2px solid var(--accent);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+  font-size: 0.9rem;
+}
+.update-banner span { flex: 1 1 auto; min-width: 0; }
+.update-banner .btn { flex: 0 0 auto; }
+
+/* A sketch with no aerial to trace. Marked as a problem rather than phrased
+   as one — the old message read exactly like the ordinary instructions above
+   it, so a blank mud map looked broken instead of explained. */
+.sketch-needs-address {
+  border-left: 3px solid var(--warning);
+  background: var(--bg-elev);
+  padding: 10px 12px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+/* Take Photo and Import side by side in every photo field. */
+.photo-field-buttons { margin-top: 8px; }

@@ -722,6 +722,125 @@
     assertEqual(station.action, '');
   });
 
+  // ---------- Field feedback from the first real job ----------
+  test('Photos: every photo field offers Import as well as Take Photo', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Photo Buttons Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(async () => !!doc.querySelector('.report-section-item'), 'the report should open');
+    Array.from(doc.querySelectorAll('.report-section-item')).find((li) => /Findings/.test(li.textContent)).click();
+    await wait(500);
+
+    const field = doc.querySelector('#report-section-fields .photo-field');
+    assert(field, 'the findings section has a photo field');
+    const labels = Array.from(field.querySelectorAll('button')).map((b) => b.textContent.trim());
+    assert(labels.some((l) => /Take Photo/.test(l)), `expected a camera button, got ${labels.join(' | ')}`);
+    assert(labels.some((l) => /Import/.test(l)), `expected an import button, got ${labels.join(' | ')}`);
+
+    // Two inputs, and they must differ: `capture` forces the camera and skips
+    // the gallery, which is exactly what makes a second input necessary.
+    const inputs = Array.from(field.querySelectorAll('input[type="file"]'));
+    assertEqual(inputs.length, 2, 'one for the camera, one for the gallery');
+    const camera = inputs.find((i) => i.hasAttribute('capture'));
+    const importer = inputs.find((i) => !i.hasAttribute('capture'));
+    assert(camera, 'the camera input sets capture');
+    assert(importer, 'the import input must NOT set capture, or it opens the camera too');
+    assertEqual(importer.multiple, true, 'importing is usually a batch');
+  });
+
+  test('Photos: adding one sends nothing to the AI', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // The complaint this fixes: analysis fired the moment a photo was added,
+    // spending data on a phone with one bar and drawing conclusions from a
+    // section that was half photographed.
+    let aiCalls = 0;
+    const realAI = win.AI;
+    win.AI = {
+      analyzeSectionPhotos: async () => { aiCalls++; return { draftFields: {} }; },
+      analyzeInspectionPhotos: async () => { aiCalls++; return { draftFields: {} }; },
+    };
+    try {
+      const field = doc.querySelector('#report-section-fields .photo-field');
+      const importer = Array.from(field.querySelectorAll('input[type="file"]')).find((i) => !i.hasAttribute('capture'));
+      const file = new win.File([new Uint8Array([1, 2, 3])], 'a.jpg', { type: 'image/jpeg' });
+      const dt = new win.DataTransfer();
+      dt.items.add(file);
+      importer.files = dt.files;
+      importer.dispatchEvent(new win.Event('change', { bubbles: true }));
+      await wait(700);
+
+      assert(field.querySelectorAll('.photo-field-tile').length >= 1, 'the photo is attached');
+      assertEqual(aiCalls, 0, 'and nothing was sent anywhere');
+    } finally {
+      win.AI = realAI;
+    }
+  });
+
+  test('Photos: the AI button says what it is about to send, and asks first', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // Photographs of the inside of somebody's house leaving the phone should
+    // be a decision, not a side effect.
+    //
+    // AI is switched off in test mode, so it is stubbed BEFORE the report is
+    // reopened — the button's label is decided when the screen renders, and
+    // with no AI it correctly reads "not configured".
+    const realAI = win.AI;
+    const realConfirm = win.Dialog.confirm;
+    let asked = null;
+    let aiCalls = 0;
+    win.AI = { analyzeInspectionPhotos: async () => { aiCalls++; return { draftFields: {} }; },
+               analyzeSectionPhotos: async () => { aiCalls++; return { draftFields: {} }; } };
+    win.Dialog.confirm = (msg, opts) => { asked = { msg, opts }; return Promise.resolve(false); };
+    try {
+      const job = await win.DB.addJob({ name: 'AI Button Job', jobType: 'termite' });
+      await win.DB.addCapture({ jobId: job.id, type: 'photo', photoBlob: new win.Blob([new Uint8Array([1])], { type: 'image/jpeg' }) });
+      await win.ReportUI.openReview(job.id);
+      await wait(400);
+
+      const btn = doc.getElementById('ai-draft-btn');
+      assert(/Read my photos/.test(btn.textContent),
+        `the button should say what it does in plain words, got: ${btn.textContent}`);
+      doc.getElementById('ai-draft-btn').click();
+      await wait(700);
+      assert(asked, 'it must ask before sending anything');
+      assert(/will be sent to the AI/.test(asked.msg), `it says where they go: ${asked.msg}`);
+      assert(/never fills the report on its own/.test(asked.msg),
+        'and that the AI suggests rather than decides');
+      assertEqual(aiCalls, 0, 'declining sends nothing');
+    } finally {
+      win.AI = realAI;
+      win.Dialog.confirm = realConfirm;
+    }
+  });
+
+  test('Updates: a device running an old build is told, and never reloaded from under them', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // The bug behind this: a browser was found running v80 while its own
+    // cache and the network both held v92, and bug reports were being written
+    // against a build twelve versions old.
+    doc.getElementById('update-banner')?.remove();
+    win.showUpdateBanner();
+    const bar = doc.getElementById('update-banner');
+    assert(bar, 'a banner should appear');
+    assert(/newer version/i.test(bar.textContent), 'and say what it is about');
+
+    const buttons = Array.from(bar.querySelectorAll('button')).map((b) => b.textContent.trim());
+    assert(buttons.some((b) => /Update now/.test(b)), 'with a way to take it');
+    assert(buttons.some((b) => /Not now/.test(b)),
+      'and a way to refuse — reloading mid-inspection would throw away a half-typed section');
+
+    // Calling it twice must not stack banners.
+    win.showUpdateBanner();
+    assertEqual(doc.querySelectorAll('#update-banner').length, 1);
+
+    Array.from(bar.querySelectorAll('button')).find((b) => /Not now/.test(b.textContent)).click();
+    assertEqual(doc.getElementById('update-banner'), null, 'dismissing removes it');
+  });
+
   // ---------- Clients ----------
   test('Clients: the same person is matched by phone OR email, not both', () => {
     const C = window.Clients;
@@ -2860,9 +2979,13 @@
     li.click();
     await wait(200);
 
-    const fileInputs = doc.querySelectorAll('.photo-field input[type="file"]');
-    const treeFileInput = fileInputs[1]; // conducivePhotos is first, treePhotos second
-    assert(treeFileInput, 'tree photo field should render');
+    // Selected by the field it belongs to, not by a global index. Every photo
+    // field now renders TWO file inputs — a camera one and an import one — so
+    // counting across the whole screen picked the wrong field entirely.
+    const treeRow = doc.querySelector('[data-field-row="treePhotos"]');
+    assert(treeRow, 'tree photo field should render');
+    const treeFileInput = treeRow.querySelector('input[type="file"][capture]');
+    assert(treeFileInput, 'and offer a camera input');
     const file = new win.File(['x'], 'tree.jpg', { type: 'image/jpeg' });
     const dt = new win.DataTransfer();
     dt.items.add(file);

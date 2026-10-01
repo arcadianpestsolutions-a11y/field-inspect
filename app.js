@@ -1808,6 +1808,24 @@
         return;
       }
 
+      // The cover is a wide block on an A4 page. A portrait shot gets
+      // letterboxed into it with the house small in the middle, and a house
+      // is wider than it is tall anyway — so this is checked rather than only
+      // asked for, because a prompt read once at the start of a job is a
+      // prompt that stops being read.
+      //
+      // It warns and keeps the photo. Refusing it would be worse: the shot is
+      // taken, the technician has moved on, and a usable-but-tall cover beats
+      // no cover at all.
+      try {
+        const bitmap = await createImageBitmap(blob);
+        const portrait = bitmap.height > bitmap.width;
+        bitmap.close();
+        if (portrait) {
+          toast('That cover photo is portrait — turn the phone sideways and take it again for a better report cover.');
+        }
+      } catch (e) { /* some browsers refuse createImageBitmap on a fresh blob — not worth a message */ }
+
       // Mark it so a later visit doesn't ask for the cover shot again, and
       // put it straight into the report's cover field rather than making the
       // technician find it in the gallery and attach it by hand.
@@ -2394,5 +2412,51 @@
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     });
+
+    // TELLING SOMEBODY A NEW VERSION IS READY.
+    //
+    // Without this, a device can run an old build for days and nothing says
+    // so. The service worker downloads the new one and activates it, but the
+    // page already open keeps running the code it started with — so the next
+    // deploy only reaches the technician when they happen to close the app
+    // and reopen it.
+    //
+    // That is not theoretical. A browser was found running v80 while its own
+    // cache and the network both held v92, and bug reports were being written
+    // against a build twelve versions old.
+    //
+    // It does NOT reload on its own. An automatic refresh in the middle of an
+    // inspection would throw away whatever is half typed into a section, so
+    // the choice stays with the person holding the phone.
+    let hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // On a first-ever load the controller arrives for the first time, which
+      // is not an update — there is no older version to be stuck on.
+      if (!hadController) { hadController = true; return; }
+      showUpdateBanner();
+    });
   }
+
+  function showUpdateBanner() {
+    if (document.getElementById('update-banner')) return;
+    const bar = document.createElement('div');
+    bar.id = 'update-banner';
+    bar.className = 'update-banner';
+    bar.innerHTML = '<span>A newer version of Scope is ready.</span>';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-primary';
+    btn.textContent = 'Update now';
+    btn.addEventListener('click', () => window.location.reload());
+    const later = document.createElement('button');
+    later.type = 'button';
+    later.className = 'link-btn';
+    later.textContent = 'Not now';
+    later.addEventListener('click', () => bar.remove());
+    bar.append(btn, later);
+    document.body.appendChild(bar);
+  }
+
+  // Exposed so the suite can assert on it without a real service worker.
+  window.showUpdateBanner = showUpdateBanner;
 })();

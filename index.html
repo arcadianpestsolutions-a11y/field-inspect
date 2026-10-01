@@ -221,7 +221,10 @@
     <video id="inspection-video" playsinline autoplay muted></video>
     <div id="inspection-prompt" class="inspection-prompt hidden">
       <span class="inspection-prompt-title">Photograph the front of the property</span>
-      <span class="inspection-prompt-sub">This becomes the report cover, and fills in most of the property details for you.</span>
+      <!-- Landscape, and said first. The cover is a wide block on an A4 page,
+           so a portrait shot gets letterboxed with the house small in the
+           middle — and a house is wider than it is tall anyway. -->
+      <span class="inspection-prompt-sub"><strong>Turn the phone sideways.</strong> This becomes the report cover, and fills in most of the property details for you.</span>
     </div>
     <div class="camera-zone-pill" id="inspection-zone-pill"></div>
     <div id="inspection-checklist-row" class="inspection-checklist-row hidden"></div>

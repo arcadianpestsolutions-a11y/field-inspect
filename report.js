@@ -242,6 +242,7 @@
   // forgotten so recordAiReview can count them as a rejected suggestion.
   let aiDeclinedFieldIds = new Set();
   let aiDraftInProgress = false;
+  let aiDraftProgressText = '';
   const objectUrls = [];
 
   function trackUrl(url) { objectUrls.push(url); return url; }
@@ -921,8 +922,37 @@
       return;
     }
     aiDraftBtn.disabled = aiDraftInProgress;
-    if (aiDraftInProgress) { aiDraftBtn.textContent = '🤖 Analyzing photos…'; return; }
-    aiDraftBtn.textContent = currentReport && currentReport.aiDraft ? '🤖 Regenerate AI Draft' : '🤖 Generate AI Draft';
+    if (aiDraftInProgress) { aiDraftBtn.textContent = aiDraftProgressText || '🤖 Reading your photos…'; return; }
+    aiDraftBtn.textContent = currentReport && currentReport.aiDraft
+      ? '🤖 Read my photos again'
+      : '🤖 Read my photos and fill the report';
+  }
+
+  // Every photograph attached to a section, gathered for the one analysis
+  // run the technician asks for.
+  //
+  // This used to happen on its own: adding a photo to a Findings or
+  // Conducive Conditions field fired an AI call immediately. That was wrong
+  // on a real job. It spends data on a phone with one bar, it analyses a
+  // section that is half photographed and draws conclusions from an
+  // incomplete picture, and it does all of it while somebody is still
+  // kneeling in a subfloor taking the next shot. Photographs are now taken
+  // first and read once, when the button is pressed.
+  function sectionPhotoFieldsWithPhotos() {
+    const out = [];
+    if (!currentReport || !currentReport.sections) return out;
+    for (const section of currentSchema()) {
+      const values = currentReport.sections[section.id];
+      if (!values) continue;
+      for (const field of section.fields) {
+        if (field.type !== 'photos' || !field.triggersAiFill) continue;
+        const photos = values[field.id];
+        if (Array.isArray(photos) && photos.some((p) => p && p.blob)) {
+          out.push({ sectionId: section.id, fieldId: field.id, photos: photos.filter((p) => p && p.blob) });
+        }
+      }
+    }
+    return out;
   }
 
   aiDraftBtn.addEventListener('click', async () => {
@@ -933,22 +963,73 @@
     // better input anyway: considered, framed shots with a zone attached,
     // rather than motion-blurred stills pulled out of a walkthrough.
     const captures = (await DB.getCaptures(currentJobId)).filter((c) => c.photoBlob);
-    if (!captures.length) {
-      toast('No photos on this job yet — run Start Inspection and take some first.');
+    const sectionPhotos = sectionPhotoFieldsWithPhotos();
+
+    if (!captures.length && !sectionPhotos.length) {
+      toast('No photos on this job yet — take some first, then press this.');
       return;
     }
 
+    // Said plainly before anything is sent, because this is the moment
+    // photographs of the inside of somebody's house leave the phone, and it
+    // should be a decision rather than a side effect of taking them.
+    const total = captures.length + sectionPhotos.reduce((n, f) => n + f.photos.length, 0);
+    const ok = await askConfirm(
+      `${total} photo${total === 1 ? '' : 's'} will be sent to the AI to draft this report. `
+      + 'It suggests answers for you to accept or reject — it never fills the report on its own.',
+      { title: 'Read these photos?', okLabel: 'Go ahead' }
+    );
+    if (!ok) return;
+
     aiDraftInProgress = true;
+    let done = 0;
+    const steps = (captures.length ? 1 : 0) + sectionPhotos.length;
+    const step = (what) => {
+      done++;
+      aiDraftProgressText = `🤖 ${what} (${done} of ${steps})…`;
+      updateAiDraftButton();
+    };
+
+    aiDraftProgressText = '🤖 Reading your photos…';
     updateAiDraftButton();
+    let failures = 0;
     try {
-      const result = await window.AI.analyzeInspectionPhotos(captures, currentJob && currentJob.jobType);
-      await ReportUI.applyAiDraft(currentJobId, result);
-      toast('AI draft ready — suggested values will appear when you open each section');
+      if (captures.length) {
+        step('Reading the inspection photos');
+        const result = await window.AI.analyzeInspectionPhotos(captures, currentJob && currentJob.jobType);
+        await ReportUI.applyAiDraft(currentJobId, result);
+      }
+
+      // Each section's own photographs, one call per section. One failing
+      // must not lose the ones that worked — a technician who waited for
+      // this should not be told to start again because one section timed out.
+      for (const fieldPhotos of sectionPhotos) {
+        step('Reading section photos');
+        try {
+          const result = await window.AI.analyzeSectionPhotos(
+            fieldPhotos.photos.map((p) => p.blob),
+            fieldPhotos.sectionId,
+            currentJob && currentJob.jobType
+          );
+          await applySectionPhotoAiResults(
+            fieldPhotos.sectionId,
+            (result.draftFields && result.draftFields[fieldPhotos.sectionId]) || {}
+          );
+        } catch (err) {
+          failures++;
+          console.warn('[ai draft] section photos failed:', fieldPhotos.sectionId, err.message || err);
+        }
+      }
+
+      toast(failures
+        ? `Draft ready, but ${failures} section${failures === 1 ? '' : 's'} could not be read — press again to retry those.`
+        : 'Draft ready — suggested answers appear when you open each section, for you to accept or reject.');
     } catch (err) {
       console.error('[ai draft]', err);
-      toast('AI draft failed: ' + aiErrorText(err));
+      toast('Could not read the photos: ' + aiErrorText(err));
     } finally {
       aiDraftInProgress = false;
+      aiDraftProgressText = '';
       updateAiDraftButton();
     }
   });
@@ -2518,57 +2599,72 @@
       });
     }
     redrawGrid();
+    // The AI status used to live here, because analysis started the moment a
+    // photo was added. It is on the report screen's own button now — one
+    // place, pressed once, when the technician has finished photographing.
 
-    let aiStatusEl = null;
-    let aiAnalysisInFlight = false;
-    if (field.triggersAiFill) {
-      aiStatusEl = document.createElement('p');
-      aiStatusEl.className = 'photo-field-ai-status hidden';
-      wrap.appendChild(aiStatusEl);
-    }
 
-    async function runAiFillFromPhotos() {
-      if (!field.triggersAiFill || !window.AI || !photos.length || aiAnalysisInFlight) return;
-      aiAnalysisInFlight = true;
-      const sectionIdAtStart = currentSectionId;
-      aiStatusEl.textContent = '🤖 Analyzing photo' + (photos.length === 1 ? '' : 's') + '…';
-      aiStatusEl.classList.remove('hidden');
-      try {
-        const result = await window.AI.analyzeSectionPhotos(photos.map((p) => p.blob), sectionIdAtStart, currentJob && currentJob.jobType);
-        await applySectionPhotoAiResults(sectionIdAtStart, (result.draftFields && result.draftFields[sectionIdAtStart]) || {});
-      } catch (err) {
-        console.warn('[report] photo-driven AI fill failed:', err.message || err);
-        toast('Could not analyze those photos: ' + aiErrorText(err));
-      } finally {
-        aiAnalysisInFlight = false;
-        if (aiStatusEl) aiStatusEl.classList.add('hidden');
+    // Two inputs, because one cannot do both jobs. `capture` tells a phone to
+    // open the camera and skip the gallery entirely — which is right when you
+    // are standing in front of the thing, and wrong when the photograph is
+    // already on the phone, taken earlier or sent by the client. Without a
+    // second input there was no way to attach one.
+    function addFiles(list) {
+      let added = 0;
+      for (const file of Array.from(list || [])) {
+        if (!file) continue;
+        photos.push({ id: DB.uid(), blob: file });
+        added++;
       }
-    }
-
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = 'image/*';
-    fileInput.capture = 'environment';
-    fileInput.className = 'hidden';
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files[0];
-      if (!file) return;
-      photos.push({ id: DB.uid(), blob: file });
+      if (!added) return;
       pendingSectionValues[field.id] = photos;
       redrawGrid();
-      fileInput.value = '';
-      runAiFillFromPhotos();
-    });
+      // Nothing is sent anywhere here, deliberately. See the note on the
+      // AI button below: analysis happens once, when the technician says so.
+    }
+
+    const cameraInput = document.createElement('input');
+    cameraInput.type = 'file';
+    cameraInput.accept = 'image/*';
+    // setAttribute, not the property. `capture` is what tells a phone to open
+    // the camera rather than the gallery, and assigning the property does not
+    // reliably reflect to the attribute — which is how this ends up opening
+    // the photo library on the one device nobody tested.
+    cameraInput.setAttribute('capture', 'environment');
+    cameraInput.className = 'hidden';
+    cameraInput.addEventListener('change', () => { addFiles(cameraInput.files); cameraInput.value = ''; });
+
+    const importInput = document.createElement('input');
+    importInput.type = 'file';
+    importInput.accept = 'image/*';
+    // No `capture`, so this opens the gallery or the file picker. Multiple,
+    // because importing is usually a batch — a set of shots taken before the
+    // report was started, or a handful the client emailed through.
+    importInput.multiple = true;
+    importInput.className = 'hidden';
+    importInput.addEventListener('change', () => { addFiles(importInput.files); importInput.value = ''; });
+
+    const buttonRow = document.createElement('div');
+    buttonRow.className = 'row gap photo-field-buttons';
 
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
-    addBtn.className = 'btn btn-outline';
-    addBtn.textContent = '📷 Add Photo';
-    addBtn.addEventListener('click', () => fileInput.click());
+    addBtn.className = 'btn btn-outline flex1';
+    addBtn.textContent = '📷 Take Photo';
+    addBtn.addEventListener('click', () => cameraInput.click());
+
+    const importBtn = document.createElement('button');
+    importBtn.type = 'button';
+    importBtn.className = 'btn btn-secondary flex1';
+    importBtn.textContent = '🖼 Import';
+    importBtn.addEventListener('click', () => importInput.click());
+
+    buttonRow.append(addBtn, importBtn);
 
     wrap.appendChild(grid);
-    wrap.appendChild(addBtn);
-    wrap.appendChild(fileInput);
+    wrap.appendChild(buttonRow);
+    wrap.appendChild(cameraInput);
+    wrap.appendChild(importInput);
 
     // A focused species-level read of one field's photos, separate from
     // triggersAiFill's whole-section drafting above — see identifiesInsects
@@ -2934,7 +3030,16 @@
       // with nothing said about why. Resolve the address now instead.
       const coords = await window.Geo.ensureJobCoords(currentJob);
       if (!coords) {
-        hint.textContent = 'No map location for this address yet, so there is no aerial backdrop. Draw the outline by hand, or check the address on the job.';
+        // Marked as a problem rather than phrased as one. This message is why
+        // the sketch "doesn't work" — it comes up blank with an explanation
+        // nobody reads, because it looks exactly like the ordinary
+        // instructions above it.
+        hint.className = 'empty-hint sketch-needs-address';
+        hint.textContent = (currentJob && currentJob.address)
+          ? `No map location found for “${currentJob.address}”, so there is no aerial photo to trace. `
+            + 'Check the address on the job — re-pick it from the suggestions — or draw the outline by hand.'
+          : 'This job has no address, so there is no aerial photo to trace. '
+            + 'Add the property address to the job, or draw the outline by hand.';
         return;
       }
       try {
