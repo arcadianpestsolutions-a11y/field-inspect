@@ -424,3 +424,8 @@ enabled = true
 # redeploy and is visible to whoever reads this next.
 [functions.calendar-feed]
 verify_jwt = false
+
+# Same arrangement as calendar-feed: the provider that posts replies here has
+# no login, and a secret in the URL (SMS_INBOUND_TOKEN) is the credential.
+[functions.sms-inbound]
+verify_jwt = false

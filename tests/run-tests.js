@@ -6182,6 +6182,95 @@
     assertEqual(org.escapeHtml(null), '');
   });
 
+  // ---------- STOP replies ----------
+  let __optMod = null;
+  async function OPTOUT() {
+    if (__optMod) return __optMod;
+    try {
+      __optMod = await import('../supabase/functions/_shared/sms-optout.js');
+    } catch (e) {
+      throw new Error('Could not load sms-optout.js. Serve the project over http. Original error: ' + (e && e.message));
+    }
+    return __optMod;
+  }
+
+  test('STOP: the usual spellings of a request to stop are all recognised', async () => {
+    const o = await OPTOUT();
+    for (const msg of ['STOP', 'stop', 'Stop.', '  STOP  ', 'Unsubscribe', 'UNSUBSCRIBE!', 'stop all',
+      'STOPALL', 'opt out', 'Opt-Out', 'optout', 'cancel', 'QUIT', 'end', 'remove me',
+      'STOP please', 'stop texting me', 'Stop sending me these messages', 'unsubscribe me from this']) {
+      assertEqual(o.classifyReply(msg), 'opt_out', `"${msg}" is a request to stop`);
+    }
+  });
+
+  test('STOP: a person writing about an appointment is not unsubscribed by accident', async () => {
+    const o = await OPTOUT();
+    for (const msg of ['Can you stop by at 3 instead?', 'cancel tomorrow please', 'Please cancel my booking',
+      "I can't make it, end of the week works", 'Thanks, see you tomorrow', 'yes', '',
+      'stop by the side gate and knock', null, undefined]) {
+      assertEqual(o.classifyReply(msg), 'other', `"${msg}" must go to a human, not the opt-out list`);
+    }
+  });
+
+  test('STOP: the reply is read from JSON, form or query-string field names', async () => {
+    const o = await OPTOUT();
+    assertEqual(o.inboundFields({ from: '+61412345678', body: 'STOP' }).body, 'STOP');
+    assertEqual(o.inboundFields({ from: '0412345678', message: 'STOP' }).body, 'STOP', '`message` is the other name for it');
+    assertEqual(o.inboundFields({ From: '+61412345678', Body: 'STOP' }).from, '+61412345678');
+    assertEqual(o.inboundFields({ from: '+61412345678', body: '  ', message: 'STOP' }).body, 'STOP',
+      'an empty body does not hide a real message');
+    assertEqual(o.inboundFields(null).from, '');
+    assertEqual(o.inboundFields({ message_id: 'abc' }).messageId, 'abc');
+  });
+
+  test('STOP: only an Australian mobile has a key, in the same form reminders are sent to', async () => {
+    const o = await OPTOUT();
+    assertEqual(o.phoneKey('+61412345678'), '+61412345678');
+    assertEqual(o.phoneKey('61412345678'), '+61412345678', 'providers drop the plus');
+    assertEqual(o.phoneKey('0412 345 678'), '+61412345678', 'and jobs hold it however it was typed');
+    assertEqual(o.phoneKey('02 4655 1234'), null, 'a landline cannot be the sender of a reply to our SMS');
+    assertEqual(o.phoneKey(''), null);
+    assertEqual(o.phoneKey(undefined), null);
+  });
+
+  test('STOP: a job booked AFTER the reply is still suppressed, by phone number', async () => {
+    const o = await OPTOUT();
+    const jobs = [
+      { id: 'old', client_phone: '0412 345 678', comms_opt_out: false },
+      { id: 'new', client_phone: '+61 412 345 678', comms_opt_out: false },
+      { id: 'other', client_phone: '0433 999 000', comms_opt_out: false },
+      { id: 'landline', client_phone: '02 4655 1234', comms_opt_out: false },
+      { id: 'nophone', client_phone: '', comms_opt_out: false },
+      { id: 'manual', client_phone: '0455 111 222', comms_opt_out: true },
+    ];
+    o.applyPhoneOptOuts(jobs, new Set(['+61412345678']));
+    const flagged = Object.fromEntries(jobs.map((j) => [j.id, j.comms_opt_out]));
+    assertEqual(flagged.old, true);
+    assertEqual(flagged.new, true, 'the whole point: opt-out follows the person, not the job');
+    assertEqual(flagged.other, false, 'a different client is untouched');
+    assertEqual(flagged.landline, false);
+    assertEqual(flagged.nophone, false, 'no phone must never match an empty key');
+    assertEqual(flagged.manual, true, 'a flag a technician set is never cleared');
+    assertEqual(o.applyPhoneOptOuts(null, new Set(['+61412345678'])), null, 'no jobs is not an error');
+  });
+
+  test('STOP: with nobody opted out, nothing is marked', async () => {
+    const o = await OPTOUT();
+    const jobs = [{ id: 'a', client_phone: '0412 345 678', comms_opt_out: false }];
+    o.applyPhoneOptOuts(jobs, new Set());
+    assertEqual(jobs[0].comms_opt_out, false);
+  });
+
+  test('STOP: the webhook secret is compared whole, and an unset secret matches nothing', async () => {
+    const o = await OPTOUT();
+    assertEqual(o.tokensMatch('s3cret-value', 's3cret-value'), true);
+    assertEqual(o.tokensMatch('s3cret-valuX', 's3cret-value'), false);
+    assertEqual(o.tokensMatch('s3cret', 's3cret-value'), false, 'a prefix is not a match');
+    assertEqual(o.tokensMatch('', ''), false, 'with no secret configured, an empty token must not get in');
+    assertEqual(o.tokensMatch(undefined, undefined), false);
+    assertEqual(o.tokensMatch('anything', ''), false);
+  });
+
   // ---------- Route ordering ----------
   // Four real Macarthur suburbs, so the distances are the ones a technician
   // would actually drive rather than numbers chosen to make the test pass.

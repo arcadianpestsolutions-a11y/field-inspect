@@ -62,6 +62,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // textable number are covered by the suite rather than living only here,
 // where nothing on this machine can run them.
 import { composeReminder } from '../_shared/reminder-sms.js';
+import { applyPhoneOptOuts } from '../_shared/sms-optout.js';
 
 // Read as "string or empty", never with a non-null assertion. The assertion
 // does not check anything at runtime — it only stops the compiler asking — so
@@ -450,6 +451,36 @@ async function sendSmsOne(kind: string, job: JobRow, triggeredBy: string | null)
   };
 }
 
+// Phone numbers this business has been told to stop texting (see the
+// sms-inbound function and migration 030). Paged, because PostgREST caps a
+// read at max_rows and a silently truncated opt-out list is a client who
+// asked to be left alone and was not.
+//
+// Failing to read it is a refusal, not a shrug. Sending anyway would turn a
+// transient database error into a message to somebody who said stop.
+async function optedOutPhones(orgId: string): Promise<Set<string>> {
+  const keys = new Set<string>();
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await admin
+      .from('sms_opt_outs').select('phone').eq('org_id', orgId)
+      .order('id').range(from, from + pageSize - 1);
+    // A table that does not exist yet means migration 030 has not been run,
+    // and nothing can have been recorded in it — so there is no list to
+    // honour, and refusing every message until the migration is applied would
+    // take the confirmation and report emails down with it. Any OTHER error
+    // is not that, and still refuses.
+    if (error && (error.code === '42P01' || error.code === 'PGRST205')) {
+      console.warn('[send-client-message] sms_opt_outs does not exist — run migration 030.');
+      return keys;
+    }
+    if (error) throw new Error(`Could not read the opt-out list: ${error.message}`);
+    for (const r of data || []) keys.add((r as { phone: string }).phone);
+    if (!data || data.length < pageSize) break;
+  }
+  return keys;
+}
+
 // One business's sweep. org_id is a required argument rather than an optional
 // filter, which is the whole point: there is no way to call this and end up
 // with a query that spans businesses, however it is reached.
@@ -475,7 +506,10 @@ async function sweepOneOrg(
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const jobs = (data || []) as JobRow[];
+  // A STOP is about the person, not the job, so it also covers a job booked
+  // after they replied. Marked in memory with the same flag a technician sets
+  // by hand, which refuse() already honours.
+  const jobs = applyPhoneOptOuts((data || []) as JobRow[], await optedOutPhones(orgId)) as JobRow[];
   const sendable = jobs.filter((j) => refuse(kind, j) === null);
   const sms = isSmsKind(kind);
 
@@ -511,7 +545,7 @@ async function sweepOneOrg(
     // is left out because it is not a problem, it is the dedupe working.
     const needsAPhoneCall = jobs
       .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j) }))
-      .filter((s) => s.reason !== null && s.reason !== 'already-sent');
+      .filter((s) => s.reason !== null && s.reason !== 'already-sent' && s.reason !== 'opted-out');
 
     return {
       sweep: kind, dryRun: true, channel: sms ? 'sms' : 'email',
@@ -531,7 +565,7 @@ async function sweepOneOrg(
   // Even on a live run, whoever could not be reached is the actionable half.
   const needsAPhoneCall = jobs
     .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j) }))
-    .filter((s) => s.reason !== null && s.reason !== 'already-sent');
+    .filter((s) => s.reason !== null && s.reason !== 'already-sent' && s.reason !== 'opted-out');
 
   return {
     sweep: kind, dryRun: false, channel: sms ? 'sms' : 'email',
@@ -716,6 +750,11 @@ Deno.serve(async (req) => {
     if (callerOrgId && job.org_id !== callerOrgId) {
       return json({ error: 'job-not-found', sent: false }, 404);
     }
+
+    // The same STOP list the sweeps use, for the one-job path as well: a
+    // technician tapping "send" on a job for somebody who replied STOP last
+    // month gets a refusal, not a text.
+    if (job.org_id) applyPhoneOptOuts([job], await optedOutPhones(job.org_id));
 
     // A refusal is a normal outcome, not a failure. The app shows these to a
     // technician as plain sentences, so they stay machine-readable here.
