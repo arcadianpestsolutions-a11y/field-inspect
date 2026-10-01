@@ -177,6 +177,19 @@
         <input id="client-link-url" type="text" class="hidden" readonly aria-label="Client link" />
         <button id="client-link-copy" class="btn btn-secondary hidden">Copy</button>
       </div>
+      <!-- Asking the client to accept is opt-in, not inferred from the
+           document type: an action plan is often sent as the record of works
+           already agreed to in person, with the acceptance signed in wet ink,
+           and asking a second time muddies which acceptance is the real one.
+           See supabase-migration-030. -->
+      <label id="client-link-ask-row" class="client-link-ask hidden">
+        <input id="client-link-ask" type="checkbox" />
+        <span>Ask the client to accept the quote on this page</span>
+      </label>
+      <div id="client-link-accepted" class="client-link-accepted hidden">
+        <p id="client-link-accepted-text"></p>
+        <button id="client-link-apply" class="btn btn-outline full">Put this signature on the report</button>
+      </div>
       <button id="client-link-create" class="btn btn-outline full hidden">Create a link</button>
       <button id="client-link-revoke" class="btn btn-secondary full hidden">Revoke this link</button>
     </div>

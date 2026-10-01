@@ -660,6 +660,57 @@
       await DB.saveReport(report);
       if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
     },
+    // Puts a signature the client gave through their own link onto the
+    // document itself.
+    //
+    // THIS IS THE ONLY THING THAT WRITES A REMOTE ACCEPTANCE INTO A REPORT,
+    // and it runs here — in the app, as a signed-in user, who gets named in
+    // the audit trail — rather than in the public endpoint that collected it.
+    // Migration 030 explains at length why the endpoint with no login is not
+    // allowed to touch a finalised compliance document. The short version: a
+    // finalised report says what it said when it was signed, and the weakest
+    // credential in the system must not be the thing that can change that.
+    //
+    // Refuses rather than overwrites. A signature already in the
+    // acknowledgement section was taken in person, and the person standing in
+    // the room wins over a link.
+    async applyClientAcceptance(jobId, acceptance) {
+      if (!acceptance || !acceptance.signature) return { ok: false, reason: 'nothing' };
+      const report = await DB.getReport(jobId);
+      if (!report) return { ok: false, reason: 'no-report' };
+
+      const section = { ...(report.sections.acknowledgement || {}) };
+      if (String(section.clientSignature || '').trim()) {
+        return { ok: false, reason: 'already-signed' };
+      }
+
+      section.clientAckName = acceptance.name || '';
+      section.clientSignature = acceptance.signature;
+      // The date the CLIENT accepted, not today. The document should say when
+      // they agreed, not when somebody got around to filing it.
+      //
+      // Built from LOCAL date parts, not toISOString(). Sydney runs 10 or 11
+      // hours ahead of UTC, so anything accepted before mid-morning converts
+      // to the previous day — and this is the one date on the document that
+      // somebody might later argue about. The test for this failed on the
+      // first run with exactly that one-day slip.
+      const at = new Date(acceptance.at || Date.now());
+      const pad = (n) => String(n).padStart(2, '0');
+      section.clientAckDate = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+      report.sections.acknowledgement = section;
+
+      appendAudit(report, {
+        event: 'client-acceptance-applied',
+        sectionId: 'acknowledgement',
+        fieldId: 'clientSignature',
+        from: '(blank)',
+        to: `accepted by ${acceptance.name || 'client'}`,
+        reason: 'Accepted by the client through their own link, then applied here.',
+      });
+      await DB.saveReport(report);
+      if (currentJobId === jobId) { currentReport = report; renderSectionList(); renderAuditTrail(); }
+      return { ok: true };
+    },
     // The jobCategory picked on Client Details (pest treatment jobs only) —
     // read by app.js at Start Inspection to pick which photo checklist to
     // show (photo-checklists.js). Returns null for termite jobs and for any

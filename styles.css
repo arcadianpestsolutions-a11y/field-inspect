@@ -2779,3 +2779,15 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Client link: asking for acceptance, and what comes back. */
+.client-link-ask {
+  display: flex; align-items: flex-start; gap: 9px;
+  font-size: .9rem; line-height: 1.4; cursor: pointer; padding: 2px 0;
+}
+.client-link-ask input { margin: 2px 0 0; flex: 0 0 auto; width: 18px; height: 18px; }
+.client-link-accepted {
+  display: flex; flex-direction: column; gap: 8px;
+  border-left: 3px solid var(--accent); padding-left: 10px;
+}
+.client-link-accepted p { margin: 0; font-size: .9rem; line-height: 1.45; }

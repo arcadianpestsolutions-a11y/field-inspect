@@ -1145,15 +1145,45 @@
       .map((s) => s.replace(/^\.select\('|'\)$/g, ''));
     assert(selects.length >= 3, `expected the queries to name their columns, found ${selects.length}`);
     const everyColumn = selects.join(',').split(/\s*,\s*/);
-    for (const forbidden of ['notes', 'sections', 'audit_log', 'ai_draft', 'client_phone', 'client_email', 'org_id']) {
+    for (const forbidden of ['notes', 'audit_log', 'ai_draft', 'client_phone', 'client_email']) {
       assert(!everyColumn.includes(forbidden),
         `the portal must not read ${forbidden} — it is the client's report, not the file on them`);
     }
     assert(everyColumn.includes('inspection_ended_at'), 'but it does read the visit date');
+
+    // `sections` and `org_id` ARE read, and that is the exception this test
+    // used to forbid outright. Both are needed: sections to know what quote
+    // the client is being asked to accept and whether it was already signed in
+    // person, org_id so an acceptance row is written into the right business
+    // rather than landing orphaned (the trap migration 029 fell into, because
+    // the column default reads auth.uid() and this function has no user).
+    //
+    // So the rule moves from "never read" to "never hand back", which is the
+    // rule that was always the point. Both are checked against the response
+    // side instead: a `sections:` key anywhere in this file would mean the
+    // technician's findings, notes and photographs are being returned, and
+    // org_id may appear only in the row being inserted.
+    assert(!/\bsections:/.test(src),
+      'sections is read to build the quote and must never be a key in anything returned');
+    assertEqual((src.match(/\borg_id:/g) || []).length, 1,
+      'org_id belongs in the acceptance insert and nowhere else — never in a response');
     // Expired, revoked and never-existed all answer the same way, so the
     // portal cannot be used to confirm which tokens exist.
     assert(/const REFUSAL/.test(src) && (src.match(/json\(REFUSAL, 404\)/g) || []).length >= 4,
       'every refusal path returns the same answer');
+
+    // THE CLAIM THIS WHOLE DESIGN RESTS ON. An endpoint with no login must
+    // never alter a finalised compliance document — a client's signature
+    // reaches the report only when the business applies it from inside the
+    // app, as a signed-in user, with an audit entry. The grant in migration
+    // 030 enforces it in Postgres; this notices it in the code first.
+    assert(!/from\('reports'\)[^;]*\.(update|insert|upsert|delete)\(/.test(src),
+      'the public portal must never write to reports — see supabase-migration-030');
+    // The only table it writes a new row to.
+    const inserts = (src.match(/from\('([a-z_]+)'\)[^;]*\.insert\(/g) || [])
+      .map((s) => s.replace(/^from\('|'\)[\s\S]*$/g, ''));
+    assertEqual(inserts.join(','), 'client_acceptances',
+      `an endpoint with no login should insert into exactly one table, found: ${inserts.join(',') || 'none'}`);
   });
 
   // ---------- Pipeline ----------
@@ -6749,6 +6779,211 @@
     setTextInput(win, phoneInput, '');
     await waitFor(() => panel.classList.contains('hidden'),
       'clearing the field must hide it again, not leave a stale match showing');
+  });
+
+  // ---------- Remote client acceptance ----------
+  // Shared with the client-portal Edge Function, which runs under Deno, so it
+  // is a real ES module and has to be pulled in with a dynamic import rather
+  // than a script tag. That needs a real origin: opening run-tests.html
+  // straight off the disk will fail here, which is what the error message says
+  // rather than leaving it to be guessed at.
+  let __accept = null;
+  async function Accept() {
+    if (__accept) return __accept;
+    try {
+      __accept = await import('../supabase/functions/_shared/acceptance.js');
+    } catch (e) {
+      throw new Error('Could not load acceptance.js. Serve the project over http '
+        + '(preview_start "scope-local", then open http://localhost:8787/tests/run-tests.html) '
+        + 'instead of opening this file directly. Original error: ' + (e && e.message));
+    }
+    return __accept;
+  }
+
+  // A realistic finalised Action Plan, plus the things that must never leave
+  // the building alongside it.
+  function actionPlanSections() {
+    return {
+      proposedWorks: {
+        managementMethod: ['Chemical soil treatment', 'Baiting system'],
+        treatmentExtent: 'Full perimeter',
+        estimatedDuration: 'One day',
+        drillingDetail: 'Concrete path on the eastern side, patched with colour-matched mortar.',
+        // Must never reach the client as data.
+        untreatableAreas: 'Owner refused access to the rear store room.',
+      },
+      warranty: {
+        warrantyOffered: 'Yes',
+        warrantyPeriod: '5 years',
+        warrantyConditions: ['Annual inspection by a licensed technician', 'Do not disturb the treated zone'],
+        reinspectionInterval: '12 months',
+        quotedAmount: '$4,180 inc GST',
+        quoteValidUntil: '2031-03-01',
+      },
+      findings: {
+        // The kind of thing a technician writes for the file and nobody else.
+        findingsSummary: 'Suspect the neighbour is the source. Owner is difficult.',
+        termiteSpecies: 'Coptotermes acinaciformis',
+      },
+      acknowledgement: {},
+    };
+  }
+
+  test('Client acceptance: only the named quote fields leave the building', async () => {
+    const a = await Accept();
+    const sections = actionPlanSections();
+    const quote = a.quoteFrom(sections);
+    assert(quote, 'an action plan with a quoted amount has a quote to show');
+
+    // The real test. This function runs inside an endpoint with no login that
+    // anybody holding a link can call, and it is handed the whole report —
+    // findings, internal notes and all. A refactor that turns it into a spread
+    // or a loop over keys turns that endpoint into a leak, and it would leak
+    // quietly. So: assert on what came out, not on what was asked for.
+    const serialised = JSON.stringify(quote);
+    for (const secret of [
+      'Owner is difficult',
+      'Owner refused access',
+      'neighbour is the source',
+      'colour-matched mortar',
+    ]) {
+      assert(!serialised.includes(secret),
+        `the client was shown a technician's own note: ${secret}`);
+    }
+
+    const keys = Object.keys(quote).sort().join(',');
+    assertEqual(keys,
+      'amount,duration,extent,method,reinspection,validUntil,warrantyConditions,warrantyPeriod',
+      'the shape of the quote is fixed — a new key here is a new thing being published');
+  });
+
+  test('Client acceptance: a document with no price has no quote to accept', async () => {
+    const a = await Accept();
+    // A monitoring visit or an inspection report is not a quote. Showing an
+    // "Accept this quote" card with no price on it invites somebody to agree
+    // to a blank.
+    assertEqual(a.quoteFrom({ warranty: { warrantyPeriod: '12 months' } }), null,
+      'no quoted amount means no quote');
+    assertEqual(a.quoteFrom(null), null, 'a report with no sections at all is not a quote');
+    assertEqual(a.quoteFrom({}), null, 'an empty report is not a quote');
+  });
+
+  test('Client acceptance: a warranty that was not offered is not shown as one', async () => {
+    const a = await Accept();
+    const sections = actionPlanSections();
+    // Changed his mind: no warranty on this job. The period and conditions
+    // fields still hold what was typed before the switch flipped, because
+    // nothing clears a hidden field.
+    sections.warranty.warrantyOffered = 'No';
+    const quote = a.quoteFrom(sections);
+    assertEqual(quote.warrantyPeriod, null,
+      'a leftover "5 years" next to "no warranty" is a promise nobody made');
+    assertEqual(quote.warrantyConditions.length, 0,
+      'conditions for a warranty that does not exist are not conditions');
+    assertEqual(quote.amount, '$4,180 inc GST', 'the price is still the price');
+  });
+
+  test('Client acceptance: a quote already signed in person is not offered again', async () => {
+    const a = await Accept();
+    const sections = actionPlanSections();
+    assertEqual(a.signedOnSite(sections), false, 'nothing signed yet');
+    sections.acknowledgement.clientSignature = 'data:image/png;base64,iVBORw0KGgo=';
+    assertEqual(a.signedOnSite(sections), true,
+      'the technician got a signature on the day — asking again produces two '
+      + 'acceptances of one quote and an argument about which one counts');
+    // Whitespace is not a signature. An empty-string field that has been
+    // through a round of JSON must not read as signed either way.
+    sections.acknowledgement.clientSignature = '   ';
+    assertEqual(a.signedOnSite(sections), false, 'blank is blank');
+  });
+
+  test('Client acceptance: only a real name and a real PNG signature count', async () => {
+    const a = await Accept();
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+
+    assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: png }), null,
+      'a typed name and a drawn signature is an acceptance');
+
+    assertEqual(a.checkAcceptance({ name: '', signature: png }), 'need-name', 'nobody signed');
+    assertEqual(a.checkAcceptance({ name: '   ', signature: png }), 'need-name', 'spaces are not a name');
+    assertEqual(a.checkAcceptance({ name: 'T', signature: png }), 'need-name', 'one letter is not a name');
+    assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: '' }), 'need-signature', 'nothing was drawn');
+
+    // The signature is stored and later rendered on a document. Anything that
+    // is not a base64 PNG has no business being put there, and an endpoint
+    // with no login is the wrong place to be relaxed about it.
+    for (const bad of [
+      'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+      'data:text/html;base64,PHNjcmlwdD4=',
+      'javascript:alert(1)',
+      '<img src=x onerror=alert(1)>',
+      'https://example.com/signature.png',
+      'data:image/png;base64,iVBOR"onload="alert(1)',
+    ]) {
+      assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: bad }), 'need-signature',
+        `accepted something that is not a PNG: ${bad}`);
+    }
+
+    // Bounded, because without a cap this endpoint takes an arbitrarily large
+    // string from anybody holding a link.
+    const huge = 'data:image/png;base64,' + 'A'.repeat(a.MAX_SIGNATURE_CHARS + 1);
+    assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: huge }), 'signature-too-big',
+      'there has to be a ceiling');
+  });
+
+  test('Client acceptance: the applied signature goes on as the date the client agreed', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Acceptance Apply Job', address: '1 Accept St' });
+    await win.DB.saveReport({
+      jobId: job.id,
+      documentType: 'termite_action_plan',
+      sections: { acknowledgement: {} },
+      finalizedAt: Date.now(),
+      auditLog: [],
+      createdAt: Date.now(),
+    });
+
+    // Accepted on a fixed day in 2031, filed by the business some time after.
+    // Deliberately not "today": a document that records when somebody got
+    // around to filing an acceptance instead of when the client gave it is
+    // wrong about the only date on it that matters.
+    const acceptedAt = new Date(2031, 2, 14, 9, 30).getTime();
+    const signature = 'data:image/png;base64,iVBORw0KGgo=';
+    const result = await win.ReportUI.applyClientAcceptance(job.id,
+      { name: 'Jane Homeowner', signature, at: acceptedAt });
+    assert(result && result.ok, 'it should have gone on');
+
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.sections.acknowledgement.clientSignature, signature, 'the signature is on the document');
+    assertEqual(saved.sections.acknowledgement.clientAckName, 'Jane Homeowner', 'and who gave it');
+    assertEqual(saved.sections.acknowledgement.clientAckDate, '2031-03-14',
+      'the date on the document is the date the client accepted');
+    assert((saved.auditLog || []).some((e) => e.event === 'client-acceptance-applied'),
+      'amending a finalised report without an audit entry is the thing the audit trail exists for');
+  });
+
+  test('Client acceptance: a signature taken in person is never overwritten by a link', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Acceptance Wet Ink Job', address: '2 Accept St' });
+    const inPerson = 'data:image/png;base64,WETINK';
+    await win.DB.saveReport({
+      jobId: job.id,
+      documentType: 'termite_action_plan',
+      sections: { acknowledgement: { clientAckName: 'Signed On Site', clientSignature: inPerson } },
+      finalizedAt: Date.now(),
+      auditLog: [],
+      createdAt: Date.now(),
+    });
+
+    const result = await win.ReportUI.applyClientAcceptance(job.id,
+      { name: 'Somebody Else', signature: 'data:image/png;base64,FROMLINK', at: Date.now() });
+    assert(result && !result.ok, 'it must refuse');
+    assertEqual(result.reason, 'already-signed', 'and say why');
+
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.sections.acknowledgement.clientSignature, inPerson,
+      'the person standing in the room wins over a link');
+    assertEqual(saved.sections.acknowledgement.clientAckName, 'Signed On Site', 'including their name');
   });
 
   async function runAll() {

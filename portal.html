@@ -60,6 +60,42 @@
   .msg strong { display: block; color: var(--ink); font-size: 1.1rem; margin-bottom: 6px; }
   .contact { text-align: center; font-size: .86rem; color: var(--dim); margin-top: 24px; }
   .contact a { color: var(--accent); }
+  .btn[disabled] { opacity: .55; cursor: default; }
+  .btn-quiet {
+    background: transparent; color: var(--dim); border: 1px solid var(--line);
+    font-weight: 500; padding: 9px; font-size: .86rem;
+  }
+  /* The quote, laid out as a list of what is being agreed to rather than as a
+     paragraph. Somebody signing should be able to see the whole of it at a
+     glance without reading prose. */
+  .terms { margin: 0 0 14px; }
+  .terms dt { color: var(--dim); font-size: .82rem; }
+  .terms dd { margin: 0 0 9px; }
+  .amount { font-size: 1.6rem; font-weight: 700; letter-spacing: -.01em; }
+  .valid { color: var(--warn); font-size: .84rem; }
+  ul.cond { margin: 4px 0 0; padding-left: 20px; font-size: .88rem; }
+  ul.cond li { margin-bottom: 3px; }
+  label.f { display: block; font-size: .82rem; color: var(--dim); margin: 14px 0 5px; }
+  input.t {
+    width: 100%; padding: 12px; font-size: 1rem; font-family: inherit;
+    border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
+  }
+  /* touch-action: none, or a finger drawing a signature scrolls the page
+     underneath it instead and the client cannot sign at all on a phone. */
+  canvas.sig {
+    width: 100%; height: 150px; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; display: block; touch-action: none; cursor: crosshair;
+  }
+  .sigrow { display: flex; justify-content: flex-end; margin: 6px 0 2px; }
+  .sigrow button {
+    background: none; border: 0; color: var(--dim); font: inherit; font-size: .84rem;
+    text-decoration: underline; cursor: pointer; padding: 2px 0;
+  }
+  .accepted {
+    border-left: 3px solid var(--accent); padding-left: 12px; margin: 2px 0 0;
+  }
+  .accepted strong { display: block; }
+  .err { color: #a4262c; font-size: .86rem; margin: 10px 0 0; }
 </style>
 </head>
 <body>
@@ -127,10 +163,188 @@
       return fail('Could not load your report. Check your connection and try again.');
     }
 
-    render(data);
+    render(data, token);
   }
 
-  function render(d) {
+  // -------------------------------------------------------------------------
+  // Accepting a quote.
+  //
+  // Only ever shown when the server says this link was issued asking for it.
+  // The page does not decide that for itself, and there is no state here that
+  // makes the button appear — the absence of d.acceptance is the absence of
+  // the card.
+  // -------------------------------------------------------------------------
+
+  const fmtWhen = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+  };
+
+  function acceptedCard(accepted) {
+    return `<div class="card"><h2>Accepted</h2>
+      <p class="accepted"><strong>${esc(accepted.name)}</strong>
+      accepted this on ${esc(fmtWhen(accepted.at))}.</p>
+      <p class="note">We have it. There is nothing else you need to do — we will be in touch
+      to book the work in.</p></div>`;
+  }
+
+  function quoteTerms(q) {
+    if (!q) {
+      return `<p class="note">The plan, the price and the warranty are all in the report above.
+        Please read it before you accept.</p>`;
+    }
+    const rows = [];
+    rows.push(`<dt>Price</dt><dd class="amount">${esc(q.amount)}</dd>`);
+    if (q.validUntil) rows.push(`<dt>This price holds until</dt><dd class="valid">${esc(fmtDate(q.validUntil))}</dd>`);
+    if (q.method.length) rows.push(`<dt>What we will do</dt><dd>${esc(q.method.join(', '))}</dd>`);
+    if (q.extent) rows.push(`<dt>How much of the property</dt><dd>${esc(q.extent)}</dd>`);
+    if (q.duration) rows.push(`<dt>Time on site</dt><dd>${esc(q.duration)}</dd>`);
+    if (q.warrantyPeriod) rows.push(`<dt>Warranty</dt><dd>${esc(q.warrantyPeriod)}</dd>`);
+    if (q.warrantyConditions.length) {
+      rows.push(`<dt>To keep the warranty you must</dt><dd><ul class="cond">${
+        q.warrantyConditions.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></dd>`);
+    }
+    if (q.reinspection) rows.push(`<dt>Inspection needed every</dt><dd>${esc(q.reinspection)}</dd>`);
+    return `<dl class="terms">${rows.join('')}</dl>
+      <p class="note">The full terms are in the report above.</p>`;
+  }
+
+  function acceptanceCard(a) {
+    if (a.accepted) return acceptedCard(a.accepted);
+
+    // The technician already got a signature on the day. Saying so is kinder
+    // than silently showing nothing, and two signatures on one quote is
+    // exactly the confusion worth avoiding.
+    if (a.signedOnSite) {
+      return `<div class="card"><h2>Accepted</h2>
+        <p class="note">This was already signed in person, so there is nothing more to do here.</p></div>`;
+    }
+    if (!a.ready) {
+      return `<div class="card"><h2>Your quote</h2>
+        <p class="note">Your quote is still being finished. We will let you know the moment it is ready.</p></div>`;
+    }
+    return `<div class="card" id="accept-card">
+      <h2>Accept this quote</h2>
+      ${quoteTerms(a.quote)}
+      <label class="f" for="acc-name">Your full name</label>
+      <input class="t" id="acc-name" type="text" autocomplete="name"
+             enterkeyhint="done" placeholder="First and last name" />
+      <label class="f" for="acc-sig">Sign below with your finger or your mouse</label>
+      <canvas class="sig" id="acc-sig" width="320" height="130"
+              aria-label="Signature box"></canvas>
+      <div class="sigrow"><button type="button" id="acc-clear">Start the signature again</button></div>
+      <button class="btn" id="acc-go" style="margin-top:12px">I accept this quote</button>
+      <p class="note">When you tap that, we save your name, your signature, the date and time,
+        and basic details about the device you used. That is what makes this count as
+        your signature, the same as signing on paper.</p>
+      <p class="err" id="acc-err" hidden></p>
+    </div>`;
+  }
+
+  // Drawing. Deliberately the same 320x130 canvas the app's own signature pad
+  // uses, so what comes out of here is the same shape and size as a signature
+  // taken on the tablet and can go onto the document unchanged.
+  function wireSignature(canvas) {
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    let drawn = false;
+    let drawing = false;
+
+    // The canvas is 320 wide in its own coordinates but stretched to the width
+    // of the card, so every pointer position has to be scaled or the line
+    // lands away from the finger.
+    function pos(e) {
+      const r = canvas.getBoundingClientRect();
+      const p = e.touches ? e.touches[0] : e;
+      return {
+        x: (p.clientX - r.left) * (canvas.width / r.width),
+        y: (p.clientY - r.top) * (canvas.height / r.height),
+      };
+    }
+    const start = (e) => { drawing = true; drawn = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
+    const move = (e) => { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); };
+    const end = () => { drawing = false; };
+
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', start, { passive: false });
+    canvas.addEventListener('touchmove', move, { passive: false });
+    canvas.addEventListener('touchend', end);
+
+    return {
+      value: () => (drawn ? canvas.toDataURL('image/png') : ''),
+      clear: () => {
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawn = false;
+      },
+    };
+  }
+
+  function wireAcceptance(token) {
+    const card = document.getElementById('accept-card');
+    if (!card) return;
+    const nameEl = document.getElementById('acc-name');
+    const errEl = document.getElementById('acc-err');
+    const goBtn = document.getElementById('acc-go');
+    const pad = wireSignature(document.getElementById('acc-sig'));
+    document.getElementById('acc-clear').addEventListener('click', pad.clear);
+
+    const fail = (m) => { errEl.textContent = m; errEl.hidden = false; };
+
+    goBtn.addEventListener('click', async () => {
+      errEl.hidden = true;
+      const name = (nameEl.value || '').trim();
+      // Checked here so the obvious mistakes never leave the phone, and again
+      // on the server because this check is the client's and can be skipped.
+      if (name.length < 2) { fail('Please type your full name first.'); nameEl.focus(); return; }
+      const signature = pad.value();
+      if (!signature) { fail('Please sign in the box first.'); return; }
+
+      goBtn.disabled = true;
+      goBtn.textContent = 'Sending…';
+      let data = null;
+      let res = null;
+      try {
+        res = await fetch(`${window.PORTAL_ENDPOINT}?t=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ action: 'accept', name, signature }),
+        });
+        data = await res.json().catch(() => null);
+      } catch (e) {
+        goBtn.disabled = false;
+        goBtn.textContent = 'I accept this quote';
+        fail('Could not send that. Check your connection and try again.');
+        return;
+      }
+
+      // Somebody already accepted — a second tap, or a second tab. Showing the
+      // acceptance is the truth and stops them trying again.
+      if (data && data.error === 'already-accepted' && data.accepted) {
+        card.outerHTML = acceptedCard(data.accepted);
+        return;
+      }
+      if (!res.ok || !data || !data.accepted) {
+        goBtn.disabled = false;
+        goBtn.textContent = 'I accept this quote';
+        fail((data && data.message) || 'Could not send that. Please try again, or give us a call.');
+        return;
+      }
+      card.outerHTML = acceptedCard(data.accepted);
+    });
+  }
+
+  function render(d, token) {
     const parts = [];
     parts.push(`<p class="biz">${esc(d.business.name)}</p>`);
     parts.push(`<h1>${esc(SERVICE[d.visit.jobType] || 'Your service')}</h1>`);
@@ -152,6 +366,8 @@
       parts.push(`<div class="card"><h2>Your report</h2>
         <p class="note">Your report is not finished yet. We will let you know as soon as it is.</p></div>`);
     }
+
+    if (d.acceptance) parts.push(acceptanceCard(d.acceptance));
 
     const visitRows = [];
     if (d.visit.date || d.visit.completedAt) {
@@ -186,6 +402,9 @@
     parts.push(`<p class="contact">Any questions about this report — ${bits.join(' · ') || 'get in touch'}.</p>`);
 
     wrap.innerHTML = parts.join('');
+    // After the HTML is in the document, because the signature pad needs a
+    // canvas that actually exists to get a drawing context from.
+    if (d.acceptance) wireAcceptance(token);
   }
 
   load();
