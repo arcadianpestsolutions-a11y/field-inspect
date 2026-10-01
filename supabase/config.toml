@@ -173,7 +173,18 @@ enable_refresh_token_rotation = true
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
-enable_signup = true
+#
+# OFF, on purpose. Scope is invite-only: a business's admin adds its people
+# through the invite-user function, and nobody signs themselves up. Left on,
+# a stranger can create a login, and several Edge Functions (analyze-inspection,
+# send-report-email) only check that the caller is signed in, so a stranger's
+# login can spend the business's AI credit and send email from its domain.
+# The invite and create-user admin APIs are unaffected by this switch.
+#
+# This file configures the LOCAL stack and `supabase config push`. The hosted
+# project's own switch (Authentication settings, "Allow new users to sign up")
+# has to be turned off there as well.
+enable_signup = false
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
@@ -217,8 +228,8 @@ web3 = 30
 # secret = ""
 
 [auth.email]
-# Allow/disallow new user signups via email to your project.
-enable_signup = true
+# Allow/disallow new user signups via email to your project. Off — see above.
+enable_signup = false
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true

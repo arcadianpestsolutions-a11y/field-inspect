@@ -6271,6 +6271,80 @@
     assertEqual(o.tokensMatch('anything', ''), false);
   });
 
+  // ---------- Team: invites and removal ----------
+  let __teamMod = null;
+  async function TEAM() {
+    if (__teamMod) return __teamMod;
+    try {
+      __teamMod = await import('../supabase/functions/_shared/team.js');
+    } catch (e) {
+      throw new Error('Could not load team.js. Serve the project over http. Original error: ' + (e && e.message));
+    }
+    return __teamMod;
+  }
+
+  test('Team: an invite is cleaned up and defaults to the restricted role', async () => {
+    const t = await TEAM();
+    const r = t.validateInvite({ email: '  New.Tech@Example.com ', displayName: '  Sam  ' });
+    assert(r.ok, 'a plain email is a valid invite');
+    assertEqual(r.value.email, 'new.tech@example.com', 'emails compare case-insensitively everywhere else');
+    assertEqual(r.value.role, 'technician', 'nobody is made an admin by leaving a field out');
+    assertEqual(r.value.displayName, 'Sam');
+    assertEqual(r.value.temporaryPassword, null);
+  });
+
+  test('Team: bad invites are refused with a sentence', async () => {
+    const t = await TEAM();
+    assert(!t.validateInvite({}).ok, 'no email');
+    assert(!t.validateInvite(null).ok, 'no request at all');
+    assert(!t.validateInvite({ email: 'not-an-email' }).ok);
+    const badRole = t.validateInvite({ email: 'a@b.co', role: 'owner' });
+    assert(!badRole.ok && /admin, technician/.test(badRole.error), 'an unknown role names the real ones');
+    const shortPw = t.validateInvite({ email: 'a@b.co', temporaryPassword: 'short' });
+    assert(!shortPw.ok && /at least 10/.test(shortPw.error), 'a weak temporary password is refused');
+    assert(t.validateInvite({ email: 'a@b.co', temporaryPassword: '0123456789' }).ok, 'ten characters is enough');
+    assert(t.validateInvite({ email: 'a@b.co', role: 'ADMIN' }).value.role === 'admin', 'role is case-insensitive');
+  });
+
+  test('Team: an account in another business is never attached by inviting its email', async () => {
+    const t = await TEAM();
+    assertEqual(t.attachDecision(null, 'orgA').action, 'attach', 'a login with no role yet');
+    assertEqual(t.attachDecision({ org_id: null }, 'orgA').action, 'attach', 'detached, e.g. after a failed invite');
+    assertEqual(t.attachDecision({ org_id: 'orgA' }, 'orgA').action, 'attach', 'already ours: update the role');
+    assertEqual(t.attachDecision({ org_id: 'orgB' }, 'orgA').action, 'refuse', 'somebody else\'s person');
+    assertEqual(t.attachDecision(null, null).action, 'refuse', 'a caller with no business attaches nobody');
+    assertEqual(t.attachDecision(null, '').action, 'refuse');
+  });
+
+  test('Team: removal is same-business only, never yourself, and indistinguishable from not-found', async () => {
+    const t = await TEAM();
+    const mine = { user_id: 'u2', org_id: 'orgA' };
+    assert(t.removalDecision(mine, 'u1', 'orgA').ok, 'an admin can remove a colleague');
+    assertEqual(t.removalDecision(mine, 'u2', 'orgA').reason, 'cannot-remove-yourself');
+    const theirs = t.removalDecision({ user_id: 'u9', org_id: 'orgB' }, 'u1', 'orgA');
+    const missing = t.removalDecision(null, 'u1', 'orgA');
+    assertEqual(theirs.reason, 'not-found');
+    assertEqual(theirs.reason, missing.reason, 'another business\'s id must look exactly like one that does not exist');
+    assertEqual(t.removalDecision(mine, 'u1', null).ok, false, 'no business, no removals');
+  });
+
+  test('Org helpers: role comes with the business, and absence is never admin', async () => {
+    const org = await ORG();
+    const admin = fakeAdmin({ user_roles: [
+      { user_id: 'a', org_id: 'orgA', role: 'admin' },
+      { user_id: 't', org_id: 'orgA', role: 'technician' },
+      { user_id: 'd', org_id: null, role: 'admin' },
+    ] }, []);
+    const a = await org.orgAndRoleForUser(admin, 'a');
+    assertEqual(a.orgId, 'orgA'); assertEqual(a.role, 'admin');
+    assertEqual((await org.orgAndRoleForUser(admin, 't')).role, 'technician');
+    const detached = await org.orgAndRoleForUser(admin, 'd');
+    assertEqual(detached.orgId, null, 'an admin of no business is handled by callers as refused');
+    const ghost = await org.orgAndRoleForUser(admin, 'ghost');
+    assertEqual(ghost.role, null);
+    assertEqual((await org.orgAndRoleForUser(admin, '')).orgId, null);
+  });
+
   // ---------- Route ordering ----------
   // Four real Macarthur suburbs, so the distances are the ones a technician
   // would actually drive rather than numbers chosen to make the test pass.

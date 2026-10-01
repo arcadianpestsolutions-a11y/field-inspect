@@ -82,3 +82,14 @@ export function escapeHtml(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 }
+
+// The caller's business and role together, for functions that only an admin
+// may use. Same rule as orgIdForUser: a missing row, or one attached to no
+// business, is "not an admin of anything", never "an admin of everything".
+export async function orgAndRoleForUser(admin, userId) {
+  if (!userId) return { orgId: null, role: null };
+  const { data, error } = await admin
+    .from('user_roles').select('org_id, role').eq('user_id', userId).maybeSingle();
+  if (error) throw new Error(`Could not look up the caller's role: ${error.message}`);
+  return { orgId: (data && data.org_id) || null, role: (data && data.role) || null };
+}
