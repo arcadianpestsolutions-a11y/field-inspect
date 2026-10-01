@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v95 · **316 tests passing**
+**Current build:** v96 · **329 tests passing**
 
 ---
 
@@ -89,7 +89,8 @@ certificate of installation, monitoring) · `swms-schema.js` (WHS Reg 2017 NSW)
 `app.js` (job list, job view, camera) · `report.js` (the report editor —
 **4,182 lines, the largest piece of structural debt**) · `scheduler.js` ·
 `swms-ui.js` · `leads-ui.js` · `business-ui.js` · `assets-ui.js` ·
-`invoice-ui.js` · `reminders-ui.js` · `client-link.js` · `qr-scan.js`
+`team-ui.js` (admin only, behind More) · `password-ui.js` (choosing a password
+after an emailed link) · `invoice-ui.js` · `reminders-ui.js` · `client-link.js` · `qr-scan.js`
 
 ### Shared with the Edge Functions (`supabase/functions/_shared/`)
 
@@ -230,11 +231,18 @@ write that live termites *were* found without that framing being handled.
 - Business details (ABN, address, website) are blank and **print on reports**
 
 **Known open issues:**
-- No screens for the team: an admin adds or removes people by calling
-  `invite-user` directly. Still to build: a Team screen, and a set-your-password
-  screen for people who arrive by an emailed invitation (the app has no
-  password-setting flow, so today an emailed invitee has a session but no
-  password; creating them with a temporary password avoids it).
+- The team screens exist (v96) but have **not been used against a real
+  Supabase project**: Team (More → Team, admin only) lists people and calls
+  `invite-user`; a set-your-password screen appears for anyone who arrives from
+  an invitation or reset link; the login screen has "Forgot your password?".
+  Two things have to be right in the hosted project for the emailed paths to
+  work: the app's address (`https://arcadianpestsolutions-a11y.github.io/field-inspect/`)
+  must be in Authentication → URL Configuration (site URL / redirect URLs), and
+  the project must be able to send email. Set the `APP_URL` secret to the same
+  address so invitations land on the app. Detection of an invitation link
+  assumes `type=invite` or `type=recovery` arrives in the URL; if a link ever
+  signs somebody in without showing the screen, that assumption is the first
+  thing to check. Creating the person with a temporary password avoids all of it.
 - A second *business* still cannot be created from anywhere. `invite-user` adds
   people to an existing one. Who creates a business, and how, is undecided.
 - Business name still has a hardcoded default (`'Arcadian Pest Solutions'`) in

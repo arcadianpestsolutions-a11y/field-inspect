@@ -148,6 +148,23 @@
 
   window.SyncPaging = { fetchAllRows, PAGE_ROWS, MAX_PAGES, TABLE_KEYS };
 
+  // Which kind of emailed link, if any, a page was opened from. Supabase puts
+  // `type=invite` or `type=recovery` in the URL fragment (or the query string,
+  // depending on the flow) and then removes it as soon as the client reads it,
+  // so this has to be asked before the client is created. Pure and above the
+  // test/demo guard for the same reason as the helpers above: the suite can
+  // exercise it without a live Supabase session.
+  function emailLinkKind(hash, search) {
+    const pattern = /(?:^|[#?&])type=(invite|recovery)(?:&|$)/;
+    const m = pattern.exec(String(hash || '')) || pattern.exec(String(search || ''));
+    return m ? m[1] : null;
+  }
+  window.SyncAuthLink = { emailLinkKind };
+  const arrivedByEmailLink = emailLinkKind(
+    typeof location !== 'undefined' ? location.hash : '',
+    typeof location !== 'undefined' ? location.search : '',
+  );
+
   // Test and demo modes never touch the cloud. Syncing from a browser that
   // holds a real session would pull production records into the sandbox and
   // push every fixture back up to the live database.
@@ -168,6 +185,11 @@
   window.supabaseClient = supabaseClient;
 
   let currentSession = null;
+  // True from the moment somebody lands from an invitation or reset link until
+  // they have chosen a password. The link signs them in, but with no password
+  // of their own, so without this the app would carry on as though everything
+  // were fine and their next login would be a dead end.
+  let passwordSetupPending = !!arrivedByEmailLink;
   let authListeners = [];
   let statusListeners = [];
   let syncStatus = { state: 'idle', lastSyncedAt: null, error: null };
@@ -229,8 +251,10 @@
   function role() { return currentRole; }
   function isAdmin() { return currentRole === 'admin'; }
 
-  supabaseClient.auth.onAuthStateChange((_event, session) => {
+  supabaseClient.auth.onAuthStateChange((event, session) => {
     currentSession = session;
+    if (event === 'PASSWORD_RECOVERY') passwordSetupPending = true;
+    if (event === 'SIGNED_OUT') passwordSetupPending = false;
     // Role first, then listeners: app.js rebuilds its UI from these, and
     // doing it the other way round renders the wrong buttons for a moment.
     refreshRole().finally(() => {
@@ -1287,6 +1311,31 @@
   async function signOut() {
     await supabaseClient.auth.signOut();
     currentSession = null;
+    passwordSetupPending = false;
+  }
+
+  function needsPasswordSetup() { return passwordSetupPending && !!currentSession; }
+
+  // Sets the signed-in user's own password. Supabase enforces its own minimum;
+  // password-ui.js enforces ours first so the person is told before a round trip.
+  async function setPassword(password) {
+    const { error } = await supabaseClient.auth.updateUser({ password });
+    if (error) throw error;
+    passwordSetupPending = false;
+    // The token is gone from the URL already; this drops whatever is left
+    // (the `type=` marker) so a refresh does not look like a second arrival.
+    try { history.replaceState(null, '', location.pathname); } catch (e) { /* not worth failing over */ }
+  }
+
+  // Emails a reset link. Always resolves the same way whether or not the
+  // address has an account, because "no such account" is information about who
+  // uses this business's software. The link lands back on this page and goes
+  // through the same set-a-password screen as an invitation does.
+  async function requestPasswordReset(email) {
+    const redirectTo = `${location.origin}${location.pathname}`;
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo });
+    // A rate limit or an unreachable server is worth saying; an unknown address is not an error.
+    if (error && !/not found|no user|unknown/i.test(error.message || '')) throw error;
   }
 
   window.addEventListener('online', () => { pullAll(); });
@@ -1296,6 +1345,9 @@
     currentUser,
     signIn,
     signOut,
+    needsPasswordSetup,
+    setPassword,
+    requestPasswordReset,
     onAuthChange,
     onStatusChange,
     pullAll,

@@ -405,6 +405,32 @@
     if (e.key === 'Enter') loginBtn.click();
   });
 
+  // Sends a reset link. The reply reads the same whether or not the address has
+  // an account — "no such account" is information about who uses this business.
+  const forgotBtn = document.getElementById('login-forgot-btn');
+  const loginNoticeEl = document.getElementById('login-notice');
+  if (forgotBtn) {
+    forgotBtn.addEventListener('click', async () => {
+      const email = loginEmailInput.value.trim();
+      hide(loginErrorEl);
+      if (loginNoticeEl) hide(loginNoticeEl);
+      if (!email) { showLoginError('Type your email address above first.'); return; }
+      if (!window.Sync || !Sync.requestPasswordReset) { showLoginError('Not connected to the server.'); return; }
+      forgotBtn.disabled = true;
+      try {
+        await Sync.requestPasswordReset(email);
+        if (loginNoticeEl) {
+          loginNoticeEl.textContent = 'If that address has an account, a link to choose a new password is on its way.';
+          show(loginNoticeEl);
+        }
+      } catch (err) {
+        showLoginError(err.message || 'Could not send the email just now. Try again in a minute.');
+      } finally {
+        forgotBtn.disabled = false;
+      }
+    });
+  }
+
   logoutBtn.addEventListener('click', async () => {
     if (window.Sync) await Sync.signOut();
   });
@@ -2363,6 +2389,12 @@
       if (session) {
         showLoggedInUI(session);
         showJobListView();
+        // Somebody who arrived from an invitation or reset link is signed in
+        // but has no password of their own yet. Put the choosing-one screen
+        // over the diary; the sync below carries on behind it.
+        if (Sync.needsPasswordSetup && Sync.needsPasswordSetup() && window.PasswordUI) {
+          window.PasswordUI.show();
+        }
         // Business details and the team roster, before the job list draws —
         // they decide what a report header says and whose name appears on a
         // job. Not awaited: a cached profile is already on hand, and the app

@@ -6393,6 +6393,264 @@
     assertEqual(A.diffSection(section, { live: 'No' }, { live: 'No' }).length, 0);
   });
 
+  // ---------- Team screen and choosing a password ----------
+  // These stub window.Sync and window.supabaseClient INSIDE the app frame, which
+  // test mode never creates, so every one reloads the frame afterwards: a stub
+  // left behind would make the rest of the suite think it was signed in.
+  function fakeInviteClient(calls, reply) {
+    return {
+      functions: {
+        async invoke(name, opts) {
+          calls.push({ name, body: opts && opts.body });
+          return reply(opts && opts.body);
+        },
+      },
+      from() { return { select() { return { async order() { return { data: [], error: null }; } }; } }; },
+    };
+  }
+
+  test('Team: the roster shows everyone, and offers Remove on everyone but you', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    try {
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => true };
+      win.TeamUI.render([
+        { user_id: 'me', email: 'boss@x.test', role: 'admin', display_name: 'The Boss' },
+        { user_id: 'u2', email: 'sam@x.test', role: 'technician', display_name: 'Sam' },
+        { user_id: 'u3', email: 'noname@x.test', role: 'technician', display_name: '' },
+      ]);
+      const rows = Array.from(frame.contentDocument.querySelectorAll('#team-list .report-section-item'));
+      assertEqual(rows.length, 3);
+      assertEqual(frame.contentDocument.querySelectorAll('#team-list .team-remove').length, 2,
+        'you cannot remove yourself, so you are not offered it');
+      assert(rows[0].textContent.includes('The Boss') && rows[0].textContent.includes('you'), 'you are marked');
+      assert(rows[1].textContent.includes('sam@x.test') && rows[1].textContent.includes('Technician'),
+        'a named person shows their email and role');
+      assert(rows[2].textContent.includes('noname@x.test'), 'an unnamed person is shown by their email');
+      assertEqual(frame.contentDocument.getElementById('team-subtitle').textContent, '3 people');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Team: adding a person sends exactly what was typed, and never names a business', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      const calls = [];
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => true };
+      win.supabaseClient = fakeInviteClient(calls, (b) => ({
+        data: { status: 'created', email: b.email, userId: 'new1', role: b.role }, error: null,
+      }));
+      setTextInput(win, doc.getElementById('team-email'), 'new.tech@x.test');
+      setTextInput(win, doc.getElementById('team-name'), 'New Tech');
+      doc.getElementById('team-role').value = 'admin';
+      setTextInput(win, doc.getElementById('team-password'), 'a-long-temp-password');
+      doc.getElementById('team-add-btn').click();
+
+      await waitFor(() => calls.length === 1, 'the add button must call invite-user');
+      assertEqual(calls[0].name, 'invite-user');
+      assertEqual(calls[0].body.action, 'invite');
+      assertEqual(calls[0].body.email, 'new.tech@x.test');
+      assertEqual(calls[0].body.displayName, 'New Tech');
+      assertEqual(calls[0].body.role, 'admin');
+      assertEqual(calls[0].body.temporaryPassword, 'a-long-temp-password');
+      assert(!('orgId' in calls[0].body) && !('org_id' in calls[0].body),
+        'there is no way to choose a business from this screen — the server uses the caller\'s');
+      await waitFor(() => doc.getElementById('team-email').value === '', 'the form clears once it has worked');
+      assertEqual(doc.getElementById('team-password').value, '', 'and a temporary password is not left on screen');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Team: a refusal from the server is shown in its own words, and nothing is cleared', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      const calls = [];
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => true };
+      win.supabaseClient = fakeInviteClient(calls, () => ({
+        data: null,
+        error: { message: 'Edge Function returned a non-2xx status code',
+          // A real Response has both; the code checks for json() before it clones.
+          context: {
+            json: async () => ({ error: 'That email address cannot be added.' }),
+            clone() { return this; },
+          } },
+      }));
+      setTextInput(win, doc.getElementById('team-email'), 'taken@x.test');
+      doc.getElementById('team-add-btn').click();
+      const err = doc.getElementById('team-error');
+      await waitFor(() => !err.classList.contains('hidden'), 'the refusal must be shown');
+      assertEqual(err.textContent, 'That email address cannot be added.',
+        'the server\'s sentence, not the generic HTTP one');
+      assertEqual(doc.getElementById('team-email').value, 'taken@x.test', 'so it can be corrected and retried');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Team: an empty email is caught before anything is sent', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      const calls = [];
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => true };
+      win.supabaseClient = fakeInviteClient(calls, () => ({ data: {}, error: null }));
+      doc.getElementById('team-add-btn').click();
+      const err = doc.getElementById('team-error');
+      await waitFor(() => !err.classList.contains('hidden'));
+      assertEqual(calls.length, 0, 'no round trip for a blank form');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Team: removing someone asks first, and sends their id', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      const calls = [];
+      let asked = null;
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => true };
+      win.Dialog = { confirm: async (msg) => { asked = msg; return true; } };
+      win.supabaseClient = fakeInviteClient(calls, () => ({ data: { removed: true }, error: null }));
+      win.TeamUI.render([
+        { user_id: 'me', email: 'boss@x.test', role: 'admin', display_name: '' },
+        { user_id: 'u2', email: 'sam@x.test', role: 'technician', display_name: 'Sam' },
+      ]);
+      doc.querySelector('#team-list .team-remove').click();
+      await waitFor(() => calls.length === 1, 'confirming must send the removal');
+      assert(/Sam/.test(asked), 'the confirmation names who is being removed');
+      assertEqual(calls[0].body.action, 'remove');
+      assertEqual(calls[0].body.userId, 'u2');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Team: declining the confirmation removes nobody', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      const calls = [];
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => true };
+      win.Dialog = { confirm: async () => false };
+      win.supabaseClient = fakeInviteClient(calls, () => ({ data: { removed: true }, error: null }));
+      win.TeamUI.render([{ user_id: 'u2', email: 'sam@x.test', role: 'technician', display_name: 'Sam' }]);
+      doc.querySelector('#team-list .team-remove').click();
+      await wait(150);
+      assertEqual(calls.length, 0);
+    } finally { await reloadFrame(); }
+  });
+
+  test('Team: only a signed-in admin is offered it', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    try {
+      assertEqual(win.TeamUI.canManageTeam(), false, 'no cloud session at all (test/demo/local-only)');
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => false };
+      assertEqual(win.TeamUI.canManageTeam(), false, 'a technician');
+      win.Sync = { currentUserId: () => null, isAdmin: () => true };
+      assertEqual(win.TeamUI.canManageTeam(), false, 'an admin role with nobody signed in');
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => true };
+      assertEqual(win.TeamUI.canManageTeam(), true);
+      const doc = frame.contentDocument;
+      const openBtn = doc.getElementById('open-team-btn');
+      assert(openBtn.classList.contains('hidden'), 'hidden until the More sheet is opened');
+      doc.getElementById('open-more-btn').click();
+      assert(!openBtn.classList.contains('hidden'), 'offered to an admin when More opens');
+      win.Sync = { currentUserId: () => 'me', isAdmin: () => false };
+      doc.getElementById('open-more-btn').click();
+      assert(openBtn.classList.contains('hidden'), 'and taken away again if the role is not admin');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Team: each outcome tells the admin what to do next', async () => {
+    await reloadFrame();
+    const T = frame.contentWindow.TeamUI;
+    assert(/emailed/.test(T.describeResult({ status: 'invited', email: 'a@b.test' })));
+    assert(/password you chose/.test(T.describeResult({ status: 'created', email: 'a@b.test' })),
+      'a created account is useless until the admin passes the password on');
+    assert(/already/.test(T.describeResult({ status: 'updated', email: 'a@b.test' })));
+    assert(/a@b\.test/.test(T.describeResult({}, 'a@b.test')), 'falls back to what was typed');
+  });
+
+  test('Password: the rules are the same ones the server applies to a temporary password', async () => {
+    await reloadFrame();
+    const P = frame.contentWindow.PasswordUI;
+    assertEqual(P.validate('', '').ok, false);
+    assert(/at least 10/.test(P.validate('short', 'short').error));
+    assertEqual(P.validate('0123456789', '0123456789').ok, true, 'ten characters is enough');
+    assert(/do not match/.test(P.validate('0123456789', '0123456780').error));
+  });
+
+  test('Password: nothing is sent until both boxes agree, then it is sent once and the diary opens', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      const sent = [];
+      win.Sync = { setPassword: async (pw) => { sent.push(pw); } };
+      win.PasswordUI.show();
+      const view = doc.getElementById('view-password');
+      assert(!view.classList.contains('hidden'), 'show() puts the screen up');
+
+      setTextInput(win, doc.getElementById('password-new'), 'a-good-long-one');
+      setTextInput(win, doc.getElementById('password-confirm'), 'a-good-long-two');
+      doc.getElementById('password-save-btn').click();
+      const err = doc.getElementById('password-error');
+      await waitFor(() => !err.classList.contains('hidden'), 'a mismatch is reported');
+      assertEqual(sent.length, 0, 'and nothing leaves the device');
+
+      setTextInput(win, doc.getElementById('password-confirm'), 'a-good-long-one');
+      doc.getElementById('password-save-btn').click();
+      await waitFor(() => sent.length === 1, 'a matching, long-enough pair is sent');
+      assertEqual(sent[0], 'a-good-long-one');
+      await waitFor(() => view.classList.contains('hidden'), 'and the screen goes away');
+      assertEqual(doc.getElementById('password-new').value, '', 'leaving no password in a field');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Password: a failure from the server is shown and the screen stays up', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      win.Sync = { setPassword: async () => { throw new Error('Password is too common.'); } };
+      win.PasswordUI.show();
+      setTextInput(win, doc.getElementById('password-new'), 'a-good-long-one');
+      setTextInput(win, doc.getElementById('password-confirm'), 'a-good-long-one');
+      doc.getElementById('password-save-btn').click();
+      const err = doc.getElementById('password-error');
+      await waitFor(() => !err.classList.contains('hidden'));
+      assertEqual(err.textContent, 'Password is too common.');
+      assert(!doc.getElementById('view-password').classList.contains('hidden'), 'they can try another');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Password: a background refresh does not wipe a half-typed password', async () => {
+    await reloadFrame();
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      win.PasswordUI.show();
+      setTextInput(win, doc.getElementById('password-new'), 'half-typed');
+      win.PasswordUI.show(); // what a token refresh re-running the auth listener does
+      assertEqual(doc.getElementById('password-new').value, 'half-typed');
+    } finally { await reloadFrame(); }
+  });
+
+  test('Password: only an invitation or reset link counts as arriving to choose one', async () => {
+    await reloadFrame();
+    const kind = frame.contentWindow.SyncAuthLink.emailLinkKind;
+    assertEqual(kind('#access_token=abc&refresh_token=def&type=invite', ''), 'invite');
+    assertEqual(kind('#access_token=abc&type=recovery', ''), 'recovery');
+    assertEqual(kind('', '?type=invite'), 'invite', 'the query-string form of the same link');
+    assertEqual(kind('#type=recovery&access_token=abc', ''), 'recovery', 'wherever in the fragment it sits');
+    assertEqual(kind('#access_token=abc&type=signup', ''), null, 'a normal sign-in is not one');
+    assertEqual(kind('#access_token=abc&subtype=invite', ''), null, 'a longer key that merely ends the same way is not one');
+    assertEqual(kind('', '?code=xero123'), null, 'the Xero redirect is not one');
+    assertEqual(kind('', ''), null);
+    assertEqual(kind(undefined, undefined), null);
+  });
+
   // ---------- Route ordering ----------
   // Four real Macarthur suburbs, so the distances are the ones a technician
   // would actually drive rather than numbers chosen to make the test pass.

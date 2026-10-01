@@ -26,7 +26,27 @@
       <button id="login-btn" class="btn btn-primary full">Log In</button>
       <p id="login-error" class="login-error hidden"></p>
       <p class="login-hint">Don't have an account yet? Ask your admin to set one up for you.</p>
+      <button id="login-forgot-btn" class="link-btn">Forgot your password?</button>
+      <p id="login-notice" class="login-hint hidden"></p>
       <p id="build-version-label" class="build-version-label"></p>
+    </div>
+  </main>
+</section>
+
+<!-- ============ CHOOSE A PASSWORD ============ -->
+<!-- Shown when somebody arrives from an emailed invitation or a password
+     reset link. They are already signed in by the link itself, but with no
+     password of their own, so without this screen the next login is a dead
+     end. See password-ui.js. -->
+<section id="view-password" class="view hidden">
+  <main class="content login-content">
+    <div class="login-card">
+      <h1 class="login-title">Choose a password</h1>
+      <p class="login-sub">You are signed in. Pick a password so you can sign in again next time.</p>
+      <input id="password-new" type="password" placeholder="New password" autocomplete="new-password" />
+      <input id="password-confirm" type="password" placeholder="Type it again" autocomplete="new-password" />
+      <button id="password-save-btn" class="btn btn-primary full">Save password</button>
+      <p id="password-error" class="login-error hidden"></p>
     </div>
   </main>
 </section>
@@ -50,6 +70,8 @@
       <button id="open-swms-btn" class="more-item"><span>🦺</span> Safety statements</button>
       <button id="open-assets-btn" class="more-item"><span>🏷</span> Station register</button>
       <button id="open-business-btn" class="more-item"><span>📊</span> Business figures</button>
+      <!-- Admins only, and only when signed in: team-ui.js decides each time the sheet opens. -->
+      <button id="open-team-btn" class="more-item hidden"><span>🧑‍🤝‍🧑</span> Team</button>
       <button id="open-archive-btn" class="more-item"><span>🗂</span> Saved reports</button>
       <button id="more-close-btn" class="btn btn-secondary full">Close</button>
     </div>
@@ -520,6 +542,42 @@
   </main>
 </section>
 
+<!-- ============ TEAM ============ -->
+<!-- The people who can sign in to this business. Admin only: the screen is
+     hidden from everyone else, and the invite-user function refuses them
+     anyway — the database, not this button, is what enforces it. -->
+<section id="view-team" class="view hidden">
+  <header class="topbar">
+    <button id="team-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Team</h1>
+      <span id="team-subtitle" class="subtitle"></span>
+    </div>
+  </header>
+  <main class="content">
+    <ul id="team-list" class="report-section-list"></ul>
+
+    <h2 class="business-heading">Add a person</h2>
+    <div class="card">
+      <label class="field-label" for="team-email">Email</label>
+      <input id="team-email" type="email" autocomplete="off" placeholder="name@example.com" />
+      <label class="field-label" for="team-name">Name</label>
+      <input id="team-name" type="text" autocomplete="off" placeholder="Shown on jobs and reports" />
+      <label class="field-label" for="team-role">Role</label>
+      <select id="team-role">
+        <option value="technician">Technician — can edit their own jobs</option>
+        <option value="admin">Admin — can edit everything, invoice and add people</option>
+      </select>
+      <label class="field-label" for="team-password">Temporary password (optional)</label>
+      <input id="team-password" type="text" autocomplete="off" placeholder="Leave blank to email an invitation" />
+      <p class="business-note">With a password, the account is ready now and you tell them the password
+        yourself. Without one, they are emailed an invitation link.</p>
+      <button id="team-add-btn" class="btn btn-primary full">Add person</button>
+      <p id="team-error" class="login-error hidden"></p>
+    </div>
+  </main>
+</section>
+
 <!-- ============ SAFE WORK METHOD STATEMENTS ============ -->
 <!-- Three views, mirroring the report flow a technician already knows:
      the register, one statement's sections, and one section being filled in.
@@ -831,6 +889,8 @@
 <script src="assets-ui.js"></script>
 <script src="leads-ui.js"></script>
 <script src="clients-ui.js"></script>
+<script src="team-ui.js"></script>
+<script src="password-ui.js"></script>
 <script src="client-link.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>
