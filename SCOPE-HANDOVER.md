@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v91 · **283 tests passing**
+**Current build:** v95 · **316 tests passing**
 
 ---
 
@@ -71,6 +71,7 @@ a phone, in a subfloor, with no signal.
 
 | File | What it owns |
 |---|---|
+| `report-audit.js` | The pure rules of the audit trail (summarise a value, are two answers the same, diff a section) and the AI kept-versus-corrected totals. Came out of `report.js` in v95. |
 | `form-render.js` | Turns a schema section into controls. Used by reports, SWMS and leads. Host supplies `customFields` and a `decorateRow` hook. |
 | `camera.js` | Opening a camera, and failing with a cause. Shared by the inspection screen and the QR scanner. |
 | `db.js` | IndexedDB. All stores, all CRUD, tombstones. |
@@ -86,9 +87,22 @@ certificate of installation, monitoring) · `swms-schema.js` (WHS Reg 2017 NSW)
 ### Screens
 
 `app.js` (job list, job view, camera) · `report.js` (the report editor —
-**4,108 lines, the largest piece of structural debt**) · `scheduler.js` ·
+**4,182 lines, the largest piece of structural debt**) · `scheduler.js` ·
 `swms-ui.js` · `leads-ui.js` · `business-ui.js` · `assets-ui.js` ·
 `invoice-ui.js` · `reminders-ui.js` · `client-link.js` · `qr-scan.js`
+
+### Shared with the Edge Functions (`supabase/functions/_shared/`)
+
+Plain ES modules with no dependencies, imported by Deno in the functions and by
+`tests/run-tests.js` with a dynamic `import()` — so they need the suite served
+over http, not opened from disk.
+
+| File | What it owns |
+|---|---|
+| `reminder-sms.js` | The words of the day-before SMS, the GSM-7 cost rules, AU mobile normalisation. |
+| `org.js` | Which business a signed-in user belongs to, its name, and HTML-safe sign-offs. Every function that runs on `service_role` should start here. |
+| `sms-optout.js` | What counts as a STOP reply, parsing the provider's payload, marking jobs by phone number. |
+| `team.js` | Who may be invited, whether an existing login may be attached, whether someone may be removed. |
 
 ### Client-facing (outside the app)
 
@@ -99,7 +113,7 @@ database client, no key. It can only call the `client-portal` Edge Function.
 
 ## Edge Functions
 
-All require a signed-in user's bearer token **except** the two noted.
+All require a signed-in user's bearer token **except** the three noted (`calendar-feed`, `client-portal`, `sms-inbound`).
 
 | Function | Notes |
 |---|---|
@@ -110,6 +124,8 @@ All require a signed-in user's bearer token **except** the two noted.
 | `calendar-feed` | **JWT verification OFF.** Token in query = credential. |
 | `client-portal` | **JWT verification OFF.** Token in query = credential. |
 | `schedule-agent` | Tool-using assistant over the diary |
+| `invite-user` | Admin only. Adds a person to the **caller's** business (emailed invite, or created with a temporary password) or removes one (detach + ban). |
+| `sms-inbound` | **JWT verification OFF** (set in `config.toml`). `SMS_INBOUND_TOKEN` in the query is the credential. Receives replies from the SMS provider and records STOP. |
 | `check-email-status`, `xero` | |
 
 ---
@@ -132,6 +148,18 @@ being evidence.
 
 **The client portal is one link per job, not an account.** Expiring, revocable,
 and the blast radius of a leak is one report the client already had.
+
+**Invite-only.** A business's admin adds its people; nobody signs themselves
+up, and public signup is off in `config.toml`. Several functions only check
+that the caller is signed in, so with signup open a stranger's login can spend
+the AI credit and send email from the business's domain. A new person is always
+attached to the *caller's* business, never one named in the request.
+
+**A STOP follows the person, not the job.** It is stored per business against
+the phone number (`sms_opt_outs`, migration 030) and also flags that client's
+existing jobs. `send-client-message` checks the list on every send, so a job
+booked after the reply is still suppressed. `CANCEL`/`END`/`QUIT` opt out only
+as the whole message, because "cancel tomorrow" is an appointment.
 
 **AI offers rather than asserts.** Fields carry `confirmBeforeUse`; the model's
 answer is shown as a suggestion with its reason, and declining records a graded
@@ -181,22 +209,50 @@ write that live termites *were* found without that framing being handled.
 
 **Waiting on the operator (not code):**
 - ~~Run migrations 024-028~~ — applied 1 Oct 2026 via `supabase db query --linked`
+- **Run migration 030** (`sms_opt_outs`, `record_sms_opt_out`). Until it runs,
+  STOP replies cannot be recorded; `send-client-message` treats the missing
+  table as an empty list and logs a warning rather than refusing to send.
+- **Deploy** `sms-inbound` and `invite-user` (new), and redeploy
+  `send-client-message`, `send-due-reminders`, `send-report-email` and
+  `schedule-agent` (changed). All import `_shared/`, so deploy with the CLI
+  rather than pasting into the dashboard.
+- Set `SMS_INBOUND_TOKEN` in Supabase secrets, then add a ClickSend inbound
+  rule pointing at `.../functions/v1/sms-inbound?token=<it>`. Text STOP from
+  your own phone and check `public.sms_opt_outs` **before** trusting it. The
+  function reads `from` and `body`/`message`; confirm that matches what
+  ClickSend's rule actually posts — this has not been run against ClickSend.
+- **Turn off "Allow new users to sign up" in the hosted project's Authentication
+  settings.** `config.toml` now says off, but it configures the local stack and
+  `supabase config push`, not the live project by itself.
 - Set `CLICKSEND_USERNAME` / `CLICKSEND_API_KEY` in Supabase secrets — until
   then day-before reminders go by email instead of SMS
 - Verify the sending domain at Resend
 - Business details (ABN, address, website) are blank and **print on reports**
 
 **Known open issues:**
-- `send-due-reminders` has **no org filter** — the last known tenancy leak
-- Business name is hardcoded in several Edge Functions
-- STOP replies land in the SMS provider's inbox, not in Scope
-- No signup or invites; a second user or business cannot be added
-- `report.js` at 4,108 lines
+- No screens for the team: an admin adds or removes people by calling
+  `invite-user` directly. Still to build: a Team screen, and a set-your-password
+  screen for people who arrive by an emailed invitation (the app has no
+  password-setting flow, so today an emailed invitee has a session but no
+  password; creating them with a temporary password avoids it).
+- A second *business* still cannot be created from anywhere. `invite-user` adds
+  people to an existing one. Who creates a business, and how, is undecided.
+- Business name still has a hardcoded default (`'Arcadian Pest Solutions'`) in
+  `client-portal` and `send-client-message`, read from `BUSINESS_NAME` when set.
+  The other three functions now read the organisation row.
+- Other replies to a reminder ("can't make it tomorrow") still land only in the
+  SMS provider's inbox. STOP is handled; conversation is not.
+- A STOP is never reversed by `START`. Re-subscribing a client is a manual edit.
+- `report.js` is 4,182 lines. The audit rules are out (v95); the next
+  candidates are the PDF building (`buildReportBodyHtml` and friends) and the
+  station/product list renderers.
 
 **Not built:** quote → accept → pay online (Stripe), 2FA/SSO, Zapier.
 
 **The largest unknown: the app has never been used on a real inspection.**
-Every claim above is a claim until it survives a day in a subfloor.
+Every claim above is a claim until it survives a day in a subfloor. The Edge
+Function changes in this round were syntax-checked and their pure logic is
+under test, but none has been deployed or run against Supabase or ClickSend.
 
 ---
 
