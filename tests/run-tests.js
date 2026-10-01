@@ -6345,6 +6345,54 @@
     assertEqual((await org.orgAndRoleForUser(admin, '')).orgId, null);
   });
 
+  // ---------- Audit rules (report-audit.js) ----------
+  // The same functions report.js uses, called directly. They were reachable
+  // only through a full report before they moved out; now the rules for what
+  // counts as a change are tested without opening one.
+  test('Audit: a value is summarised, never stored verbatim', () => {
+    const A = window.ReportAudit;
+    assertEqual(A.summariseValue(''), '(blank)');
+    assertEqual(A.summariseValue(null), '(blank)');
+    assertEqual(A.summariseValue([]), '(none)');
+    assertEqual(A.summariseValue(['a', 'b']), 'a, b');
+    assertEqual(A.summariseValue([{ blob: 1 }, { blob: 2 }]), '2 photos');
+    assertEqual(A.summariseValue([{ blob: 1 }]), '1 photo');
+    assertEqual(A.summariseValue([{ productName: 'Termidor' }]), '1 product: Termidor');
+    assertEqual(A.summariseValue([{ x: 1 }, { x: 2 }, { x: 3 }]), '3 items');
+    assertEqual(A.summariseValue('data:image/png;base64,AAAA'), '(image)', 'a sketch must not land in the log as 200KB of text');
+    const long = 'x'.repeat(A.AUDIT_TEXT_LIMIT + 50);
+    assertEqual(A.summariseValue(long).length, A.AUDIT_TEXT_LIMIT + 1, 'cut at the limit, plus the ellipsis');
+  });
+
+  test('Audit: opening and saving a section does not manufacture a change', () => {
+    const A = window.ReportAudit;
+    assert(A.valuesEqual(undefined, ''), 'unanswered is unanswered however it is spelled');
+    assert(A.valuesEqual(null, undefined));
+    assert(A.valuesEqual('Yes', 'Yes'));
+    assert(!A.valuesEqual('Yes', 'No'));
+    assert(!A.valuesEqual('', 'No'), 'a first answer IS a change');
+    assert(A.valuesEqual(['a', 'b'], ['a', 'b']));
+    assert(!A.valuesEqual(['a'], ['a', 'b']));
+    const blob = {};
+    assert(A.valuesEqual([{ blob, id: 'p1' }], [{ blob, id: 'p1' }]), 'the same photo is not a change');
+    assert(!A.valuesEqual([{ blob, id: 'p1' }], [{ blob: {}, id: 'p2' }]), 'a swapped photo is');
+    assert(A.valuesEqual({ a: 1 }, { a: 1 }));
+    assert(!A.valuesEqual({ a: 1 }, { a: 2 }));
+  });
+
+  test('Audit: a section diff names what changed, with the label a person reads', () => {
+    const A = window.ReportAudit;
+    const section = { fields: [{ id: 'live', label: 'Live termites found' }, { id: 'notes', label: 'Notes' }] };
+    const changes = A.diffSection(section, { live: 'No', notes: 'same' }, { live: 'Yes', notes: 'same', extra: 'new' });
+    assertEqual(changes.length, 2, 'only live and extra changed');
+    const live = changes.find((c) => c.fieldId === 'live');
+    assertEqual(live.label, 'Live termites found');
+    assertEqual(live.from, 'No'); assertEqual(live.to, 'Yes');
+    assertEqual(changes.find((c) => c.fieldId === 'extra').label, 'extra', 'a field the schema does not know falls back to its id');
+    assertEqual(A.diffSection(section, undefined, undefined).length, 0);
+    assertEqual(A.diffSection(section, { live: 'No' }, { live: 'No' }).length, 0);
+  });
+
   // ---------- Route ordering ----------
   // Four real Macarthur suburbs, so the distances are the ones a technician
   // would actually drive rather than numbers chosen to make the test pass.
