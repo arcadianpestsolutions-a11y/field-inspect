@@ -2766,3 +2766,16 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 
 /* Take Photo and Import side by side in every photo field. */
 .photo-field-buttons { margin-top: 8px; }
+
+/* Why a gated section is on the list. Only appears on sections that are
+   there because of an answer — "something triggered the action plan and I
+   don't know what" is not a question the app should leave somebody with. */
+.section-why {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

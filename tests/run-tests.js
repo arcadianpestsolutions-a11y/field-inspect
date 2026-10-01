@@ -722,6 +722,80 @@
     assertEqual(station.action, '');
   });
 
+  test('Sections: a page that appears because of an answer says so, then and later', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // The report behind this: "something triggered the action plan and I
+    // don't know what". Answering one question in Findings adds two whole
+    // sections, and the cause was never shown next to the effect.
+    const job = await win.DB.addJob({ name: 'Gate Explain Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(async () => !!doc.querySelector('#report-section-list .report-section-item'), 'report opens');
+
+    const titles = () => Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .map((li) => li.querySelector('.section-name').textContent);
+    assert(!titles().some((t) => /Proposed Termite Management/.test(t)),
+      'the action plan is not there before the question is answered');
+
+    let toasted = '';
+    const realToast = win.appToast;
+    win.appToast = (m) => { toasted = m; };
+    try {
+      Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((li) => /Findings/.test(li.textContent)).click();
+      await wait(500);
+      const sel = doc.querySelector('[data-field-row="managementSystemStatus"] select');
+      sel.value = 'None present — management plan proposed';
+      sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+      doc.getElementById('section-save-btn').click();
+      await waitFor(async () => titles().some((t) => /Proposed Termite Management/.test(t)),
+        'answering it should add the action plan');
+    } finally {
+      win.appToast = realToast;
+    }
+
+    // Named at the moment it happens, while the answer is the last thing done.
+    assert(/Proposed Termite Management/.test(toasted), `it should name what appeared, got: ${toasted}`);
+    assert(/added to this report/.test(toasted), 'and say they were added');
+    assert(/you answered/.test(toasted), `and why, got: ${toasted}`);
+    assert(/None present/.test(toasted), 'quoting the answer itself');
+
+    // And permanently, because the question actually gets asked an hour later.
+    const row = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((li) => /Proposed Termite Management/.test(li.textContent));
+    const why = row.querySelector('.section-why');
+    assert(why && /Because you answered/.test(why.textContent),
+      `the row should carry its reason, got: ${why && why.textContent}`);
+
+    // A section that is always shown carries no note — one against every row
+    // would just be noise.
+    const alwaysOn = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((li) => /Client Details/.test(li.textContent));
+    assert(!alwaysOn.querySelector('.section-why'), 'ungated sections stay quiet');
+  });
+
+  test('Sections: changing the answer back says they are no longer needed', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    let toasted = '';
+    const realToast = win.appToast;
+    win.appToast = (m) => { toasted = m; };
+    try {
+      Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((li) => /Findings/.test(li.textContent)).click();
+      await wait(500);
+      const sel = doc.querySelector('[data-field-row="managementSystemStatus"] select');
+      sel.value = 'Adequate — no further works proposed';
+      sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+      doc.getElementById('section-save-btn').click();
+      await wait(800);
+    } finally {
+      win.appToast = realToast;
+    }
+    assert(/no longer needed/.test(toasted),
+      `removing a section should be explained too, got: ${toasted}`);
+  });
+
   // ---------- Field feedback from the first real job ----------
   test('Photos: every photo field offers Import as well as Take Photo', async () => {
     const win = frame.contentWindow;

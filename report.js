@@ -1604,10 +1604,15 @@
 
       const li = document.createElement('li');
       li.className = 'report-section-item';
+      // A section that is only here because of an answer says so, permanently.
+      // The toast at the moment it appeared explains it once; this answers the
+      // same question an hour later, which is when it actually gets asked.
+      const why = reasonSectionIsShown(section);
       li.innerHTML = `
         <span class="section-icon" style="background:${section.color}">${section.icon}</span>
         <span class="section-info">
           <span class="section-name">${displayNumber}. ${escapeHtml(section.title)}</span>
+          ${why ? `<span class="section-why">${escapeHtml(why)}</span>` : ''}
         </span>
         <span class="section-status ${status === 'green' ? 'status-dot-green' : 'status-dot-yellow'}">
           ${status === 'green' ? '✓' : '✎'}
@@ -3929,6 +3934,19 @@
     }
 
     recordAiReview();
+
+    // Which sections are on screen BEFORE this save, so a change in that list
+    // can be explained rather than just happening.
+    //
+    // Answering "Is the existing termite management system adequate?" with
+    // anything other than "Adequate" adds two whole sections — a proposed
+    // works page and a warranty page. That is correct behaviour and it is
+    // also how a technician ends up back at the report asking what triggered
+    // the action plan, because the answer that caused it was three fields up
+    // in a different section and may well have been an AI suggestion they
+    // tapped. The cause and the effect were never shown together.
+    const sectionsBefore = new Set(visibleSchema(currentSchema(), currentReport).map((s) => s.id));
+
     currentReport.sections[currentSectionId] = pendingSectionValues;
     await DB.saveReport(currentReport);
     stopAutosave();
@@ -3937,7 +3955,63 @@
     renderSectionList();
     show(viewReport);
     if (reason) toast(`Amendment recorded (${changes.length} field${changes.length === 1 ? '' : 's'}).`);
+
+    announceSectionChanges(sectionsBefore, section);
   });
+
+  // Why a gated section is on screen, in the words of the answer that put it
+  // there. Returns '' for a section that is always shown, which is most of
+  // them — a note against every row would just be noise.
+  function reasonSectionIsShown(section) {
+    const cond = section && section.showIf;
+    if (!cond || !currentReport || !currentReport.sections) return '';
+    const sourceSection = currentSchema().find((s) => s.id === cond.section);
+    const field = sourceSection && sourceSection.fields.find((f) => f.id === cond.field);
+    const answer = (currentReport.sections[cond.section] || {})[cond.field];
+    if (!field || !answer) return '';
+    return `Because you answered “${answer}”`;
+  }
+
+  // Says which sections just appeared or disappeared, and because of what.
+  //
+  // Named at the moment it happens, while the answer that caused it is still
+  // the last thing the technician did. A section quietly appearing in a list
+  // of eleven is not noticed until later, and then it is a mystery.
+  function announceSectionChanges(beforeIds, savedSection) {
+    const after = visibleSchema(currentSchema(), currentReport);
+    const afterIds = new Set(after.map((s) => s.id));
+
+    const added = after.filter((s) => !beforeIds.has(s.id));
+    const removed = Array.from(beforeIds).filter((id) => !afterIds.has(id));
+    if (!added.length && !removed.length) return;
+
+    // The field in the section just saved whose answer did it. There is only
+    // ever one gate per section in this schema, so naming the first is
+    // naming the cause.
+    const trigger = added.concat(
+      // A removed section's own showIf still tells us what controlled it.
+      removed.map((id) => (currentSchema().find((s) => s.id === id))).filter(Boolean)
+    ).map((s) => s.showIf).find((c) => c && c.section === (savedSection && savedSection.id));
+
+    let because = '';
+    if (trigger && savedSection) {
+      const field = savedSection.fields.find((f) => f.id === trigger.field);
+      const answer = pendingSectionValues[trigger.field];
+      if (field && answer) {
+        because = ` — you answered “${String(answer)}” to “${field.label}”`;
+      }
+    }
+
+    if (added.length) {
+      const names = added.map((s) => s.title).join(' and ');
+      toast(`${names} ${added.length === 1 ? 'has' : 'have'} been added to this report${because}.`);
+    } else {
+      const names = removed
+        .map((id) => (currentSchema().find((s) => s.id === id) || {}).title || id)
+        .join(' and ');
+      toast(`${names} ${removed.length === 1 ? 'is' : 'are'} no longer needed${because}.`);
+    }
+  }
 
   // The header arrow is the most instinctive "go back" affordance there is —
   // and until this, tapping it silently threw away anything typed or
