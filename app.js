@@ -2079,6 +2079,10 @@
   }
 
   if (businessDetailsBtn) businessDetailsBtn.addEventListener('click', openBusinessDetails);
+  // Exposed so the report's pre-send checks can send somebody straight here.
+  // The ABN and the business address print on every report, and a blank one
+  // is only noticed by whoever receives the document.
+  window.openBusinessDetails = openBusinessDetails;
 
   // ---------- Which document is this job producing? ----------
   // Termite work is five different documents, not one. The job screen offers

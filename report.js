@@ -1442,6 +1442,44 @@
     inspectorLicence: 'A pest report without a licence number is not much of a document.',
   };
 
+  // Business details that print on this document but are not filled in.
+  //
+  // These are `static` fields fed from the business record, so they are never
+  // "required" in the schema sense and no validation error fires — the field
+  // simply renders empty and the report goes out with a blank where the ABN
+  // should be. The only person who notices is whoever receives it.
+  //
+  // Read off the document's OWN schema rather than a fixed list, so it flags
+  // what actually appears on the thing being sent: the SWMS carries an ABN,
+  // the inspection report carries an address, and neither should be warned
+  // about a field it does not print.
+  function missingBusinessDetails() {
+    if (!window.Org || typeof window.Org.provider !== 'function') return [];
+    const provider = window.Org.provider();
+    const seen = new Set();
+    const out = [];
+    for (const section of visibleSchema(currentSchema(), currentReport)) {
+      for (const field of section.fields) {
+        if (!field.orgField || seen.has(field.orgField)) continue;
+        seen.add(field.orgField);
+        const value = String(provider[field.orgField] || '').trim();
+        if (value) continue;
+        out.push({
+          sectionId: section.id,
+          sectionTitle: 'Business details',
+          fieldId: field.orgField,
+          message: `${field.label} is blank, and it prints on this report`,
+          why: 'Filled in once under Business, then it appears on every document.',
+          // Sending somebody to the Findings section to fix their own ABN
+          // would be useless — this one opens the business record instead.
+          opensBusinessDetails: true,
+          compliance: true,
+        });
+      }
+    }
+    return out;
+  }
+
   function preflightItems() {
     const schema = currentSchema();
     const utils = window.ReportSchemaUtils;
@@ -1453,6 +1491,7 @@
         compliance: COMPLIANCE_FIELDS.has(error.fieldId),
         why: WHY_IT_MATTERS[error.fieldId] || '',
       }))
+      .concat(missingBusinessDetails())
       .sort((a, b) => (b.compliance ? 1 : 0) - (a.compliance ? 1 : 0));
   }
 
@@ -1476,7 +1515,7 @@
       : `${items.length} to fix before sending`;
 
     const rows = items.map((item, i) => `
-      <li class="preflight-item${item.compliance ? ' preflight-compliance' : ''}" data-section="${escapeHtml(item.sectionId)}" data-index="${i}">
+      <li class="preflight-item${item.compliance ? ' preflight-compliance' : ''}" data-section="${escapeHtml(item.sectionId)}" data-index="${i}"${item.opensBusinessDetails ? ' data-opens-business="1"' : ''}>
         <span class="preflight-where">${escapeHtml(item.sectionTitle)}</span>
         <span class="preflight-what">${escapeHtml(item.message)}</span>
         ${item.why ? `<span class="preflight-why">${escapeHtml(item.why)}</span>` : ''}
@@ -1488,6 +1527,10 @@
     // technician find it again.
     preflightBody.querySelectorAll('.preflight-item').forEach((el) => {
       el.addEventListener('click', () => {
+        if (el.getAttribute('data-opens-business') && window.openBusinessDetails) {
+          window.openBusinessDetails();
+          return;
+        }
         const sectionId = el.getAttribute('data-section');
         if (sectionId) openSectionEditor(sectionId);
       });

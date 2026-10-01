@@ -722,6 +722,53 @@
     assertEqual(station.action, '');
   });
 
+  test('Pre-send: a blank ABN is caught before the report goes out, not after', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // Business details are `static` fields fed from the business record, so
+    // they are never "required" in the schema sense and no validation error
+    // fires. The field just renders empty and the report goes out with a
+    // blank where the ABN should be — noticed only by whoever receives it.
+    const realProvider = win.Org.provider;
+    const realInspector = win.Org.inspector;
+    try {
+      win.Org.provider = () => ({ providerName: 'Arcadian Pest Solutions', providerAddress: '', providerAbn: '' });
+      win.Org.inspector = () => ({ inspectorName: 'T. Pavlich' });
+
+      const job = await win.DB.addJob({ name: 'Blank ABN Job', jobType: 'termite' });
+      await win.ReportUI.openReview(job.id);
+      await waitFor(async () => !!doc.querySelector('.preflight-item'), 'pre-send checks should render');
+
+      const text = doc.getElementById('preflight-body').textContent;
+      assert(/prints on this report/.test(text),
+        `a blank business field should be flagged, got: ${text.slice(0, 200)}`);
+      assert(/Business details/.test(text), 'and say where to fix it');
+
+      // Tapping it must open the business record, not send somebody to a
+      // report section to fix their own ABN.
+      const row = Array.from(doc.querySelectorAll('.preflight-item'))
+        .find((li) => /prints on this report/.test(li.textContent));
+      assert(row.getAttribute('data-opens-business'), 'it opens the business record');
+
+      // Only what this document actually prints. A field the schema never
+      // shows must not be warned about.
+      // Every orgField this schema prints, or the check correctly flags the
+      // ones still blank — which is the behaviour, not a test problem.
+      win.Org.provider = () => ({
+        providerName: 'Arcadian Pest Solutions', providerAddress: '1 Real St',
+        providerPhone: '02 9127 1320', providerEmail: 'tal@example.com',
+        signedOnBehalfOf: 'Arcadian Pest Solutions', providerAbn: '11 222 333 444',
+      });
+      await win.ReportUI.openReview(job.id);
+      await wait(400);
+      assert(!/prints on this report/.test(doc.getElementById('preflight-body').textContent),
+        'filled-in details raise nothing');
+    } finally {
+      win.Org.provider = realProvider;
+      win.Org.inspector = realInspector;
+    }
+  });
+
   test('Sections: a page that appears because of an answer says so, then and later', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
