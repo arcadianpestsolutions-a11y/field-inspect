@@ -614,6 +614,8 @@
       notes: previous.notes,
       clientPhone: previous.clientPhone,
       clientEmail: previous.clientEmail,
+      // A recurring visit belongs to the same client as the one it follows.
+      clientId: previous.clientId || null,
       jobType: previous.jobType,
       recurringFromId: previous.id,
       scheduledAt: autoWhen,
@@ -1023,6 +1025,31 @@
       const clear = await window.Scheduler.confirmNoOverlap(null, newScheduledAt, 60);
       if (!clear) return;
     }
+    const phone = jobPhoneInput.value.trim();
+    const email = jobEmailInput.value.trim();
+
+    // Find or create the client, so grouping happens without anybody having
+    // to think about it. The returning-client panel on this form has already
+    // matched them by phone or email; this is the same rule, writing the
+    // result down instead of only showing it.
+    //
+    // Best effort: a job must never fail to save because a client record
+    // could not be made. An unlinked job is a tidiness problem, a lost job is
+    // not.
+    let clientId = null;
+    try {
+      if (phone || email) {
+        const existing = window.Clients
+          ? window.Clients.matchClient(await DB.getClients(), { phone, email })
+          : null;
+        clientId = existing
+          ? existing.id
+          : (await DB.addClient({ name, phone, email })).id;
+      }
+    } catch (err) {
+      console.warn('[app] could not link a client to this job:', err.message || err);
+    }
+
     const job = await DB.addJob({
       name,
       jobType: selectedJobType,
@@ -1031,8 +1058,9 @@
       addressLat: selectedAddressCoords ? selectedAddressCoords.lat : null,
       addressLng: selectedAddressCoords ? selectedAddressCoords.lng : null,
       notes: jobNotesInput.value.trim(),
-      clientPhone: jobPhoneInput.value.trim(),
-      clientEmail: jobEmailInput.value.trim(),
+      clientPhone: phone,
+      clientEmail: email,
+      clientId,
       scheduledAt: newScheduledAt,
     });
     hide(jobForm);
@@ -2351,6 +2379,16 @@
   }
 
   initAuth();
+
+  // Groups jobs that pre-date client records into clients, once. Idempotent —
+  // it only touches jobs with no clientId, so after the first run it finds
+  // nothing and costs a single read. Deliberately not awaited and unable to
+  // fail loudly: tidying history is never a reason for the app not to open.
+  if (window.Clients) {
+    DB.backfillClients()
+      .then((r) => { if (r && r.created) console.info(`[clients] grouped ${r.linked} jobs into ${r.created} clients`); })
+      .catch((err) => console.warn('[clients] backfill skipped:', err.message || err));
+  }
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

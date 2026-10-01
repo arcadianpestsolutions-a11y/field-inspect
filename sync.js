@@ -121,6 +121,7 @@
     invoices: ['id'],
     swms: ['id'],
     leads: ['id'],
+    clients: ['id'],
     deletions: ['table_name', 'record_id'], // composite — neither half is unique alone
   };
 
@@ -259,6 +260,7 @@
       scheduled_at: job.scheduledAt || null,
       scheduled_duration_mins: job.scheduledDurationMins || null,
       recurring_from_id: job.recurringFromId || null,
+      client_id: job.clientId || null,
       created_by: currentUserId(),
       created_at: job.createdAt,
       updated_at: job.updatedAt,
@@ -320,6 +322,7 @@
       scheduledAt: rj.scheduled_at || null,
       scheduledDurationMins: rj.scheduled_duration_mins || 60,
       recurringFromId: rj.recurring_from_id || null,
+      clientId: rj.client_id || null,
       assignedTo: rj.assigned_to || '',
       createdAt: rj.created_at,
       updatedAt: rj.updated_at,
@@ -828,6 +831,57 @@
     };
   }
 
+  // ---------- Clients ----------
+  function localClientToRemote(client) {
+    return {
+      id: client.id,
+      name: client.name || '',
+      phone: client.phone || '',
+      email: client.email || '',
+      address: client.address || '',
+      notes: client.notes || '',
+      created_by: currentUserId(),
+      created_at: client.createdAt,
+      updated_at: client.updatedAt,
+    };
+  }
+
+  function remoteClientToLocal(rc) {
+    return {
+      id: rc.id,
+      name: rc.name || '',
+      phone: rc.phone || '',
+      email: rc.email || '',
+      address: rc.address || '',
+      notes: rc.notes || '',
+      createdAt: rc.created_at,
+      updatedAt: rc.updated_at,
+    };
+  }
+
+  async function pushClient(client) {
+    if (!isReady()) return;
+    try {
+      const { data, error } = await supabaseClient
+        .from('clients').upsert(localClientToRemote(client)).select('id');
+      if (error) throw error;
+      if (refusedByPolicy(data)) reportPolicyRefusal('client', client.id);
+    } catch (e) {
+      if (isMissingTableError(e)) {
+        console.warn('[sync] the clients table is not in the database yet — run supabase-migration-029-clients.sql. Clients stay on this device until then.');
+        return;
+      }
+      console.warn('[sync] push client failed, will retry on next sync:', e.message || e);
+    }
+  }
+
+  async function deleteClientRemote(id) {
+    if (!isReady()) return;
+    try { await supabaseClient.from('clients').delete().eq('id', id); }
+    catch (e) { console.warn('[sync] delete client failed:', e.message || e); }
+    await pushTombstone('clients', id);
+  }
+
   // ---------- Leads ----------
   function localLeadToRemote(lead) {
     return {
@@ -1162,6 +1216,16 @@
           push: pushSwms,
         },
         {
+          // Pulled BEFORE jobs below would need them: a job carries a
+          // client_id, and a client that has not arrived yet makes that
+          // pointer dangle until the next sync.
+          table: 'clients',
+          localAll: () => DB.getClients(),
+          toLocal: remoteClientToLocal,
+          putRaw: (rec) => DB.putClientRaw(rec),
+          push: pushClient,
+        },
+        {
           table: 'leads',
           localAll: () => DB.getLeads(),
           toLocal: remoteLeadToLocal,
@@ -1241,11 +1305,13 @@
     pushInvoice,
     pushSwms,
     pushLead,
+    pushClient,
     deleteJobRemote,
     deleteCaptureRemote,
     deleteInvoiceRemote,
     deleteSwmsRemote,
     deleteLeadRemote,
+    deleteClientRemote,
     currentUserId,
     isOnline,
     getStatus: () => syncStatus,

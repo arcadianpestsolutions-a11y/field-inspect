@@ -722,6 +722,134 @@
     assertEqual(station.action, '');
   });
 
+  // ---------- Clients ----------
+  test('Clients: the same person is matched by phone OR email, not both', () => {
+    const C = window.Clients;
+    // A returning client often gives a different phone — a new number, or a
+    // partner booking this time — while keeping the same email. Requiring
+    // both to match would split one client into several.
+    assert(C.isSameClient({ phone: '0412 345 678' }, { phone: '(04) 1234-5678' }),
+      'the same number written two ways is one number');
+    assert(C.isSameClient({ email: 'Jane@X.com' }, { email: 'jane@x.com' }),
+      'email is compared case-insensitively');
+    assert(C.isSameClient({ phone: '0400 111 222', email: 'a@b.com' }, { phone: '0499 999 999', email: 'a@b.com' }),
+      'a new phone number with the same email is still the same person');
+    assert(!C.isSameClient({ phone: '0400 111 222' }, { phone: '0499 999 999' }),
+      'but two different numbers and no shared email is not');
+    // Nothing to compare must never match everything.
+    assert(!C.isSameClient({ phone: '', email: '' }, { phone: '', email: '' }),
+      'two blank records are not the same person');
+    assertEqual(C.matchClient([{ id: 'x', phone: '', email: '' }], { phone: '', email: '' }), null);
+  });
+
+  test('Clients: a client is not a property', () => {
+    const C = window.Clients;
+    const client = { id: 'c1', name: 'Macarthur Strata' };
+    const jobs = [
+      { id: 'j1', clientId: 'c1', address: '12 Smith St, Camden', createdAt: 100, inspectionEndedAt: 100 },
+      // Same place written differently. One property, not two.
+      { id: 'j2', clientId: 'c1', address: '12 Smith Street, Camden', createdAt: 200, inspectionEndedAt: 200 },
+      { id: 'j3', clientId: 'c1', address: '9 Hill Rd, Narellan', createdAt: 300, inspectionEndedAt: 300 },
+      { id: 'j4', clientId: 'other', address: 'Someone else', createdAt: 400 },
+    ];
+    const s = C.summarise(client, jobs);
+    assertEqual(s.jobCount, 3, 'only their own jobs');
+    assertEqual(s.properties.length, 2, '"Smith St" and "Smith Street" are one place');
+    assertEqual(s.properties[0].address, '9 Hill Rd, Narellan', 'most recently visited first');
+    const smith = s.properties.find((p) => /Smith/.test(p.address));
+    assertEqual(smith.jobs, 2, 'and it counts both visits to it');
+    assertEqual(smith.address, '12 Smith Street, Camden', 'named as it was written most recently');
+  });
+
+  test('Clients: editing a client does not rewrite what a report already said', async () => {
+    const win = frame.contentWindow;
+    // The whole reason jobs keep their own copy. A finalised report is a
+    // compliance document and the client block on it is part of what was
+    // signed — correcting a phone number must not change last year's report.
+    const client = await win.DB.addClient({ name: 'Original Name', phone: '0412 000 111' });
+    const job = await win.DB.addJob({
+      name: 'Original Name', clientPhone: '0412 000 111', clientId: client.id, address: '1 Old St',
+    });
+
+    await win.DB.saveClient({ ...client, name: 'Changed Name', phone: '0499 888 777' });
+
+    const unchanged = await win.DB.getJob(job.id);
+    assertEqual(unchanged.name, 'Original Name', 'the job still says what it said');
+    assertEqual(unchanged.clientPhone, '0412 000 111', 'including the number that was on the report');
+    assertEqual(unchanged.clientId, client.id, 'while still being grouped under the client');
+  });
+
+  test('Clients: booking a job for somebody new creates them, and a repeat reuses them', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const before = (await win.DB.getClients()).length;
+
+    const book = async (name, phone, address) => {
+      doc.getElementById('new-job-btn').click();
+      await wait(300);
+      doc.getElementById('job-name').value = name;
+      doc.getElementById('job-phone').value = phone;
+      doc.getElementById('job-address').value = address;
+      doc.getElementById('job-form-save').click();
+      await wait(600);
+    };
+
+    await book('Delaney Property', '0455 123 456', '7 First St');
+    await waitFor(async () => (await win.DB.getClients()).length === before + 1,
+      'a job for somebody new should create a client');
+
+    // Same person, second property, number written differently.
+    await book('Delaney Property', '(0455) 123-456', '22 Second Ave');
+    await wait(400);
+    assertEqual((await win.DB.getClients()).length, before + 1,
+      'a repeat client must not be created twice');
+
+    const created = (await win.DB.getClients()).find((c) => /Delaney/.test(c.name));
+    const theirJobs = await win.DB.getJobsForClient(created.id);
+    assertEqual(theirJobs.length, 2, 'both jobs group under the one client');
+    const summary = win.Clients.summarise(created, await win.DB.getJobs());
+    assertEqual(summary.properties.length, 2, 'as two separate properties');
+  });
+
+  test('Clients: the backfill groups old jobs and leaves unguessable ones alone', async () => {
+    const win = frame.contentWindow;
+    // Jobs that pre-date client records: no clientId at all.
+    const a = await win.DB.addJob({ name: 'Backfill One', clientPhone: '0466 777 888', address: 'A' });
+    const b = await win.DB.addJob({ name: 'Backfill One', clientPhone: '0466 777 888', address: 'B' });
+    const c = await win.DB.addJob({ name: 'No Contact Details', address: 'C' });
+
+    const result = await win.DB.backfillClients();
+    assert(result.created >= 1, 'it should create at least the one client');
+
+    const linkedA = await win.DB.getJob(a.id);
+    const linkedB = await win.DB.getJob(b.id);
+    assert(linkedA.clientId, 'the old job is now linked');
+    assertEqual(linkedA.clientId, linkedB.clientId, 'and both jobs went to the same client');
+
+    const noContact = await win.DB.getJob(c.id);
+    assertEqual(noContact.clientId, null,
+      'a job with no phone and no email is left unlinked rather than merged into a guess');
+
+    // Running it again must do nothing.
+    const second = await win.DB.backfillClients();
+    assertEqual(second.created, 0, 'the backfill is idempotent');
+    assertEqual(second.linked, 0);
+  });
+
+  test('Clients: deleting a client keeps the work', async () => {
+    const win = frame.contentWindow;
+    const client = await win.DB.addClient({ name: 'To Delete', phone: '0477 555 444' });
+    const job = await win.DB.addJob({ name: 'To Delete', clientPhone: '0477 555 444', clientId: client.id });
+
+    await win.DB.deleteClient(client.id);
+
+    const survived = await win.DB.getJob(job.id);
+    assert(survived, 'the job and its report must survive the client record going');
+    assertEqual(survived.clientId, null, 'it simply stops pointing at a record that has gone');
+    assertEqual(survived.clientPhone, '0477 555 444', 'and still knows who it was for');
+    assertEqual(await win.DB.isDeleted('clients', client.id), true, 'the delete is recorded so it stays deleted');
+  });
+
   // ---------- Client portal ----------
   test('Client portal: the page carries no key, no client data and asks not to be indexed', async () => {
     // The portal is a public page whose URL contains a credential. Three

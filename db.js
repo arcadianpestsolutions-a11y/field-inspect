@@ -41,7 +41,7 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // has to leave something behind. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.
-const DB_VERSION = 8;
+const DB_VERSION = 9;
 
 let dbPromise = null;
 
@@ -88,6 +88,13 @@ function openDB() {
       if (!db.objectStoreNames.contains('leads')) {
         const store = db.createObjectStore('leads', { keyPath: 'id' });
         store.createIndex('stage', 'stage', { unique: false });
+      }
+      // DB v9 adds 'clients'. A client is who you talk to and who pays; the
+      // property is where the work happens, and stays on the job. Jobs gain a
+      // `clientId` POINTER and keep their own copy of the contact details —
+      // see the note on backfillClients below for why that is not redundant.
+      if (!db.objectStoreNames.contains('clients')) {
+        db.createObjectStore('clients', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('invoices')) {
         const store = db.createObjectStore('invoices', { keyPath: 'id' });
@@ -139,7 +146,7 @@ const DB = {
   JOB_STATUS_LABELS,
 
   // ---------- Jobs ----------
-  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, jobType, preferredDocumentType, recurringFromId, scheduledAt, scheduledDurationMins, recurrenceMonths }) {
+  async addJob({ name, address, addressLat, addressLng, notes, clientPhone, clientEmail, clientId, jobType, preferredDocumentType, recurringFromId, scheduledAt, scheduledDurationMins, recurrenceMonths }) {
     const store = await tx('jobs', 'readwrite');
     const now = Date.now();
     const job = {
@@ -187,6 +194,12 @@ const DB = {
       scheduledDurationMins: typeof scheduledDurationMins === 'number' ? scheduledDurationMins : 60,
       // The job this one was raised from, so a property's inspection history
       // can be walked backwards.
+      // A POINTER to the client record, not a replacement for the three
+      // fields above. Those stay, because a finalised report is a compliance
+      // document and the client block printed on it is part of what was
+      // signed - reading it live would mean correcting a phone number
+      // silently rewrote every report ever issued.
+      clientId: clientId || null,
       recurringFromId: recurringFromId || null,
       // The property is on a standing plan: re-inspect every N months, and
       // the next visit is raised automatically when this one is completed.
@@ -655,6 +668,112 @@ const DB = {
     const store = await tx('reports', 'readonly');
     const all = await reqToPromise(store.getAll());
     return all.sort((a, b) => (b.finalizedAt || b.updatedAt || 0) - (a.finalizedAt || a.updatedAt || 0));
+  },
+
+  // ---------- Clients ----------
+  async addClient({ name, phone, email, address, notes }) {
+    const store = await tx('clients', 'readwrite');
+    const now = Date.now();
+    const record = {
+      id: uid(),
+      name: name || '',
+      phone: phone || '',
+      email: email || '',
+      // The billing or postal address, which is NOT where the work happens.
+      // A strata manager in the city has properties all over Macarthur.
+      address: address || '',
+      notes: notes || '',
+      createdAt: now,
+      updatedAt: now,
+    };
+    await reqToPromise(store.put(record));
+    if (window.Sync) window.Sync.pushClient(record);
+    return record;
+  },
+
+  async saveClient(client) {
+    const store = await tx('clients', 'readwrite');
+    const toSave = { ...client, updatedAt: Date.now() };
+    await reqToPromise(store.put(toSave));
+    if (window.Sync) window.Sync.pushClient(toSave);
+    return toSave;
+  },
+
+  // Low-level put used only by the sync layer — never re-triggers a push.
+  async putClientRaw(client) {
+    const store = await tx('clients', 'readwrite');
+    await reqToPromise(store.put(client));
+    return client;
+  },
+
+  async getClient(id) {
+    if (!id) return undefined;
+    const store = await tx('clients', 'readonly');
+    return reqToPromise(store.get(id));
+  },
+
+  async getClients() {
+    const store = await tx('clients', 'readonly');
+    const all = await reqToPromise(store.getAll());
+    return all.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  },
+
+  // Deleting a client does NOT delete their work, and the jobs keep their own
+  // copy of who it was for — they simply stop pointing at a record that has
+  // gone. Mirrors ON DELETE SET NULL in migration 029.
+  async deleteClient(id) {
+    const store = await tx('clients', 'readwrite');
+    await reqToPromise(store.delete(id));
+    const jobs = await this.getJobs();
+    for (const job of jobs) {
+      if (job.clientId === id) await this.updateJob(job.id, { clientId: null });
+    }
+    await this.recordDeletion('clients', id);
+    if (window.Sync) window.Sync.deleteClientRemote(id);
+  },
+
+  async getJobsForClient(clientId) {
+    if (!clientId) return [];
+    const all = await this.getJobs();
+    return all.filter((j) => j.clientId === clientId)
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  },
+
+  // Groups the jobs that already exist into clients, using the same rule the
+  // app and migration 029 use: same person if EITHER the digits of the phone
+  // match OR the lowercased email matches.
+  //
+  // Only ever touches jobs whose clientId is still unset, so running it twice
+  // creates nothing the second time. Jobs with neither a phone nor an email
+  // are left unlinked rather than merged into a guess.
+  async backfillClients() {
+    const jobs = (await this.getJobs())
+      .filter((j) => !j.clientId && (j.clientPhone || j.clientEmail))
+      // Newest first, so where details changed over the years the client
+      // record ends up holding the most recent version of them.
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    if (!jobs.length) return { created: 0, linked: 0 };
+
+    const clients = await this.getClients();
+    let created = 0;
+    let linked = 0;
+
+    for (const job of jobs) {
+      const details = { phone: job.clientPhone, email: job.clientEmail };
+      let match = window.Clients ? window.Clients.matchClient(clients, details) : null;
+      if (!match) {
+        match = await this.addClient({
+          name: job.name || '',
+          phone: job.clientPhone || '',
+          email: job.clientEmail || '',
+        });
+        clients.push(match);
+        created++;
+      }
+      await this.updateJob(job.id, { clientId: match.id });
+      linked++;
+    }
+    return { created, linked };
   },
 
   // ---------- Leads ----------
