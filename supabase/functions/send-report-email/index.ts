@@ -16,11 +16,15 @@
 // sends real email per call.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { businessNameForUser, escapeHtml, fromBusiness, signOff } from '../_shared/org.js';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
 const RESEND_FROM_ADDRESS = Deno.env.get('RESEND_FROM_ADDRESS') || '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
+// Only used to read the caller's own business name. Not in missingSecrets():
+// without it the sign-off loses the name, but the report still goes out.
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 // A non-null assertion checks nothing at runtime — it only quiets the
 // compiler. Reading these as "string or empty" and naming what is missing
@@ -64,6 +68,15 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
 
+    // The business is the caller's, not a constant. The name used to be typed
+    // into this template, which is correct for exactly one business.
+    const businessName = SERVICE_ROLE_KEY
+      ? await businessNameForUser(
+          createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }),
+          user.id,
+        )
+      : '';
+
     const body = await req.json();
     const { recipientEmail, recipientName, jobName, jobType, documentKind, pdfBase64 } = body;
 
@@ -77,21 +90,21 @@ Deno.serve(async (req) => {
 
     const reportLabel = isPestTreatment ? 'General Pest Treatment Report' : 'Termite Inspection Report';
     const subject = isInvoice
-      ? `Tax Invoice${jobName ? ' ' + jobName : ''} — Arcadian Pest Solutions`
+      ? `Tax Invoice${jobName ? ' ' + jobName : ''}${businessName ? ' — ' + businessName : ''}`
       : `${reportLabel}${jobName ? ' — ' + jobName : ''}`;
 
     const html = isInvoice
       ? `
-      <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
-      <p>Please find attached your tax invoice from Arcadian Pest Solutions.</p>
+      <p>Hi${recipientName ? ' ' + escapeHtml(recipientName) : ''},</p>
+      <p>Please find attached your tax invoice${fromBusiness(businessName)}.</p>
       <p>If you have any questions about this invoice, please get in touch.</p>
-      <p>Kind regards,<br>Arcadian Pest Solutions</p>
+      <p>${signOff(businessName)}</p>
     `
       : `
-      <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
-      <p>Please find attached your ${isPestTreatment ? 'pest treatment report' : 'termite inspection report'} from Arcadian Pest Solutions.</p>
+      <p>Hi${recipientName ? ' ' + escapeHtml(recipientName) : ''},</p>
+      <p>Please find attached your ${isPestTreatment ? 'pest treatment report' : 'termite inspection report'}${fromBusiness(businessName)}.</p>
       <p>If you have any questions about this report, please get in touch.</p>
-      <p>Kind regards,<br>Arcadian Pest Solutions</p>
+      <p>${signOff(businessName)}</p>
     `;
 
     const attachmentFilename = isInvoice

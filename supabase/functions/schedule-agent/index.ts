@@ -17,10 +17,13 @@
 // Requires ANTHROPIC_API_KEY (already set for analyze-inspection).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { businessNameForUser } from '../_shared/org.js';
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+// Optional: only used to read the caller's business name for the prompt.
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -94,8 +97,8 @@ const TOOLS = [
   },
 ];
 
-function systemPrompt(today: string, dayName: string) {
-  return `You are the booking assistant inside Scope, a pest control app used by Arcadian Pest Solutions in New South Wales, Australia. You help the technician read and fill their diary.
+function systemPrompt(today: string, dayName: string, businessName: string) {
+  return `You are the booking assistant inside Scope, a pest control app${businessName ? ` used by ${businessName}` : ''} in New South Wales, Australia. You help the technician read and fill their diary.
 
 Today is ${dayName}, ${today}. All dates and times are local Australian time. When the technician says "tomorrow", "next Tuesday" or "this week", work it out from today's date.
 
@@ -110,7 +113,7 @@ How to behave:
 - Travel time between jobs is real but you do not have distances. If two jobs are in obviously different suburbs back to back, mention it rather than silently packing them together.`;
 }
 
-async function callClaude(messages: unknown[], today: string, dayName: string) {
+async function callClaude(messages: unknown[], today: string, dayName: string, businessName: string) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -121,7 +124,7 @@ async function callClaude(messages: unknown[], today: string, dayName: string) {
     body: JSON.stringify({
       model: 'claude-sonnet-5',
       max_tokens: 1024,
-      system: systemPrompt(today, dayName),
+      system: systemPrompt(today, dayName, businessName),
       tools: TOOLS,
       messages,
     }),
@@ -148,7 +151,14 @@ Deno.serve(async (req) => {
       return json({ error: 'messages[] is required' }, 400);
     }
 
-    const reply = await callClaude(messages, today || '', dayName || '');
+    const businessName = SERVICE_ROLE_KEY
+      ? await businessNameForUser(
+          createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }),
+          user.id,
+        )
+      : '';
+
+    const reply = await callClaude(messages, today || '', dayName || '', businessName);
 
     // Hand the raw content blocks back so the client can execute any tool_use
     // and continue the loop. stop_reason tells it whether to keep going.

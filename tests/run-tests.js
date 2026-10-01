@@ -6081,6 +6081,107 @@
     assert(landline.text, 'the message is still composed, so the office can read it out on the phone');
   });
 
+  // ---------- Edge Function org helpers ----------
+  // The same module the Edge Functions import under Deno. These are the
+  // lookups that stand between a service_role query and another business's
+  // clients, so they are tested with a fake client that records what was asked.
+  let __orgMod = null;
+  async function ORG() {
+    if (__orgMod) return __orgMod;
+    try {
+      __orgMod = await import('../supabase/functions/_shared/org.js');
+    } catch (e) {
+      throw new Error('Could not load org.js. Serve the project over http. Original error: ' + (e && e.message));
+    }
+    return __orgMod;
+  }
+
+  // A stand-in for the supabase client: from(table).select().eq().maybeSingle(),
+  // answering from `rows` and noting each filter so a test can see what was asked.
+  function fakeAdmin(rows, calls, failWith) {
+    return {
+      from(table) {
+        const filters = {};
+        const q = {
+          select() { return q; },
+          eq(col, val) { filters[col] = val; return q; },
+          async maybeSingle() {
+            calls.push({ table, filters });
+            if (failWith) return { data: null, error: { message: failWith } };
+            const hit = (rows[table] || []).find((r) => Object.entries(filters).every(([k, v]) => r[k] === v));
+            return { data: hit || null, error: null };
+          },
+        };
+        return q;
+      },
+    };
+  }
+
+  test('Org helpers: the trading name wins, then the registered name, then nothing', async () => {
+    const org = await ORG();
+    assertEqual(org.businessNameOf({ name: 'Smith Holdings Pty Ltd', trading_name: 'Smith Pest' }), 'Smith Pest');
+    assertEqual(org.businessNameOf({ name: 'Smith Holdings Pty Ltd', trading_name: '  ' }), 'Smith Holdings Pty Ltd');
+    assertEqual(org.businessNameOf({ name: '', trading_name: '' }), '', 'never invents a name');
+    assertEqual(org.businessNameOf(null), '');
+  });
+
+  test('Org helpers: a user maps to their own org, and an unattached user to nothing', async () => {
+    const org = await ORG();
+    const calls = [];
+    const admin = fakeAdmin({ user_roles: [
+      { user_id: 'u1', org_id: 'orgA' },
+      { user_id: 'u2', org_id: null },
+    ] }, calls);
+    assertEqual(await org.orgIdForUser(admin, 'u1'), 'orgA');
+    assertEqual(await org.orgIdForUser(admin, 'u2'), null, 'attached to no business reads as null, which callers refuse');
+    assertEqual(await org.orgIdForUser(admin, 'ghost'), null, 'no role row at all is also null');
+    assertEqual(await org.orgIdForUser(admin, ''), null, 'and an empty id never even queries');
+    assertEqual(calls.length, 3, 'the empty id must not reach the database');
+    assertEqual(calls[0].filters.user_id, 'u1');
+  });
+
+  test('Org helpers: a failed lookup of the caller refuses rather than returning null quietly', async () => {
+    const org = await ORG();
+    let threw = false;
+    try { await org.orgIdForUser(fakeAdmin({}, [], 'boom'), 'u1'); } catch (e) { threw = /boom/.test(e.message); }
+    assert(threw, 'a database error is not the same thing as "no business" and must not be flattened into it');
+  });
+
+  test('Org helpers: the sign-off uses the business of the user asking, never another', async () => {
+    const org = await ORG();
+    const admin = fakeAdmin({
+      user_roles: [{ user_id: 'uA', org_id: 'orgA' }, { user_id: 'uB', org_id: 'orgB' }],
+      organisations: [
+        { id: 'orgA', name: 'Alpha Pest', trading_name: '' },
+        { id: 'orgB', name: 'Beta Termite Co', trading_name: 'Beta' },
+      ],
+    }, []);
+    assertEqual(await org.businessNameForUser(admin, 'uA'), 'Alpha Pest');
+    assertEqual(await org.businessNameForUser(admin, 'uB'), 'Beta');
+    assertEqual(await org.businessNameForUser(admin, 'nobody'), '');
+  });
+
+  test('Org helpers: a failed name lookup degrades the sign-off but does not throw', async () => {
+    const org = await ORG();
+    const realError = console.error;
+    console.error = () => {};
+    try {
+      assertEqual(await org.businessNameForUser(fakeAdmin({}, [], 'db down'), 'u1'), '',
+        'the report must still be sendable when only the name could not be read');
+    } finally { console.error = realError; }
+  });
+
+  test('Org helpers: email wording reads properly with and without a name, and escapes it', async () => {
+    const org = await ORG();
+    assertEqual(org.signOff('Beta'), 'Kind regards,<br>Beta');
+    assertEqual(org.signOff(''), 'Kind regards');
+    assertEqual(org.fromBusiness('Beta'), ' from Beta');
+    assertEqual(org.fromBusiness(''), '');
+    assertEqual(org.signOff('A & B <Pest>'), 'Kind regards,<br>A &amp; B &lt;Pest&gt;',
+      'a business name with markup in it must not become markup in a client email');
+    assertEqual(org.escapeHtml(null), '');
+  });
+
   // ---------- Route ordering ----------
   // Four real Macarthur suburbs, so the distances are the ones a technician
   // would actually drive rather than numbers chosen to make the test pass.

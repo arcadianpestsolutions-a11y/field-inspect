@@ -31,7 +31,7 @@
 //   1. Deploy this function and call it once with dryRun: true (the
 //      default) to see exactly who it WOULD email and what it would say,
 //      with nothing actually sent.
-//   2. Read that output. Adjust EMAIL_SUBJECT/emailHtml below if the
+//   2. Read that output. Adjust emailSubject/emailHtml below if the
 //      wording isn't right for the business.
 //   3. Only then call it with dryRun: false, or set up a schedule (Supabase
 //      dashboard → Edge Functions → this function → Cron) to call it daily.
@@ -46,6 +46,9 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  businessNameOf, escapeHtml, loadOrg, orgIdForUser, signOff,
+} from '../_shared/org.js';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
 const RESEND_FROM_ADDRESS = Deno.env.get('RESEND_FROM_ADDRESS') || '';
@@ -87,7 +90,11 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 // rather than a count-up from the inspection, since the due date is what's
 // actually stored (next_due_at) and what everything else is computed from.
 const EMAIL_MONTHS_BEFORE_DUE = 3;
-const EMAIL_SUBJECT = 'Your termite inspection is coming up — Arcadian Pest Solutions';
+function emailSubject(businessName: string): string {
+  return businessName
+    ? `Your termite inspection is coming up — ${businessName}`
+    : 'Your termite inspection is coming up';
+}
 
 // Real month arithmetic (setMonth), not a fixed day count — consistent with
 // how report.js's computeNextDueAt derives the due date itself. A fixed
@@ -99,14 +106,14 @@ function monthsBefore(epochMs: number, months: number): number {
   return d.getTime();
 }
 
-function emailHtml(clientName: string, dueDate: string) {
+function emailHtml(clientName: string, dueDate: string, businessName: string) {
   return `
-    <p>Hi${clientName ? ' ' + clientName : ''},</p>
+    <p>Hi${clientName ? ' ' + escapeHtml(clientName) : ''},</p>
     <p>Your annual termite re-inspection is due around <strong>${dueDate}</strong>.</p>
     <p>Regular re-inspection is what keeps your termite warranty valid and catches
     activity early, before it becomes expensive. Reply to this email or give us a
     call to book a time that suits.</p>
-    <p>Kind regards,<br>Arcadian Pest Solutions</p>
+    <p>${signOff(businessName)}</p>
   `;
 }
 
@@ -129,6 +136,15 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
 
+    // Which business the caller belongs to. Everything below runs on the
+    // service_role key, which bypasses row-level security — so "signed in" is
+    // not the same as "allowed to see this job". This query used to read every
+    // business's jobs and email every business's clients from any one login:
+    // the last known tenancy leak. A caller with no business gets nothing.
+    const orgId = await orgIdForUser(admin, user.id);
+    if (!orgId) return json({ error: 'Your account is not linked to a business yet.' }, 403);
+    const businessName = businessNameOf(await loadOrg(admin, orgId));
+
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dryRun !== false; // default TRUE — see the note at the top of this file
 
@@ -142,6 +158,7 @@ Deno.serve(async (req) => {
     const { data: jobs, error: jobsError } = await admin
       .from('jobs')
       .select('id, name, client_email, next_due_at, reminder_sent_for_due_at, reinspection_interval_months')
+      .eq('org_id', orgId)
       .eq('reinspection_interval_months', 12)
       .not('next_due_at', 'is', null)
       .not('client_email', 'is', null);
@@ -195,8 +212,8 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             from: RESEND_FROM_ADDRESS,
             to: [recipient],
-            subject: EMAIL_SUBJECT,
-            html: emailHtml(name, dueDate),
+            subject: emailSubject(businessName),
+            html: emailHtml(name, dueDate, businessName),
           }),
         });
         if (!res.ok) throw new Error(`Resend API error (${res.status}): ${await res.text()}`);
@@ -204,7 +221,11 @@ Deno.serve(async (req) => {
         // Mark sent only after a confirmed successful send — if this
         // function is interrupted or the send fails, the next run should
         // still try this job again, not silently skip it forever.
-        await admin.from('jobs').update({ reminder_sent_for_due_at: job.next_due_at }).eq('id', job.id);
+        // Scoped again on the write: the read above already is, but a write on
+        // the service_role key that names only an id is one refactor away from
+        // touching another business's row.
+        await admin.from('jobs').update({ reminder_sent_for_due_at: job.next_due_at })
+          .eq('id', job.id).eq('org_id', orgId);
         results.push({ jobId: job.id, emailed: recipient, dueDate, sent: true });
       } catch (err) {
         console.error(`[send-due-reminders] job ${job.id}:`, err);
