@@ -306,7 +306,7 @@
       recurrenceMonths: rj.recurrence_months || null,
       commsOptOut: !!rj.comms_opt_out,
       preferredDocumentType: rj.preferred_document_type || '',
-      // Only ever written server-side, by send-due-reminders — the app
+      // Only ever written server-side, by send-client-message — the app
       // itself never sets this locally, it only reads it back to decide
       // whether an overdue job in the backlog has already had its email
       // and should now read as "needs a call" rather than plain overdue.

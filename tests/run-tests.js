@@ -6986,6 +6986,145 @@
     assertEqual(saved.sections.acknowledgement.clientAckName, 'Signed On Site', 'including their name');
   });
 
+  // ---------- Annual re-inspection reminder timing ----------
+  // Shared with the send-client-message Edge Function, which runs under Deno,
+  // so it is a real ES module and needs a dynamic import and a real origin —
+  // same as reminder-sms.js and acceptance.js above.
+  //
+  // These rules decide whether an email goes to a real client UNPROMPTED,
+  // months after anybody last spoke to them. It is the only kind of message in
+  // the system that nothing a technician just did sets off, which is why the
+  // timing is worth pinning down rather than eyeballing.
+  let __due = null;
+  async function Due() {
+    if (__due) return __due;
+    try {
+      __due = await import('../supabase/functions/_shared/due-reminder.js');
+    } catch (e) {
+      throw new Error('Could not load due-reminder.js. Serve the project over http '
+        + '(preview_start "scope-local", then open http://localhost:8787/tests/run-tests.html) '
+        + 'instead of opening this file directly. Original error: ' + (e && e.message));
+    }
+    return __due;
+  }
+
+  // Fixed dates, never "today". A test that passes in October and fails in
+  // January is worse than no test — this suite has been bitten by that once
+  // already, when hardcoded fixtures collided with the month rolling over.
+  const DUE_DATE = new Date(2031, 5, 15).getTime();        // 15 June 2031
+  const annualJob = (over) => Object.assign({
+    next_due_at: DUE_DATE,
+    reinspection_interval_months: 12,
+    reminder_sent_for_due_at: null,
+  }, over || {});
+
+  test('Due reminder: nothing goes out until three months before the due date', async () => {
+    const d = await Due();
+    const job = annualJob();
+
+    // Four months out. Somebody who gets this is being asked to book an
+    // inspection a third of a year early, by an email they did not ask for.
+    assertEqual(d.dueReminderTiming(job, new Date(2031, 1, 15).getTime()), 'too-early',
+      'four months out is too early');
+    // The day before the window opens.
+    assertEqual(d.dueReminderTiming(job, new Date(2031, 2, 14).getTime()), 'too-early',
+      'the day before the window opens is still too early');
+    // The window opens exactly three months before.
+    assertEqual(d.dueReminderTiming(job, new Date(2031, 2, 15).getTime()), null,
+      'three months before the due date is when it goes out');
+    assertEqual(d.dueReminderTiming(job, new Date(2031, 4, 1).getTime()), null,
+      'and any time after that');
+  });
+
+  test('Due reminder: only a standard annual cycle gets one', async () => {
+    const d = await Due();
+    // A 3- or 6-month interval exists because a technician judged that
+    // property higher-risk. "Remind three months early" on a three-month cycle
+    // would fire before the previous visit was written up.
+    const now = new Date(2031, 3, 1).getTime();
+    assertEqual(d.dueReminderTiming(annualJob({ reinspection_interval_months: 3 }), now),
+      'not-an-annual-cycle', 'a quarterly cycle is not this policy');
+    assertEqual(d.dueReminderTiming(annualJob({ reinspection_interval_months: 6 }), now),
+      'not-an-annual-cycle', 'nor a six-month one');
+    // Jobs older than migration 012 have no interval recorded. Treated as not
+    // annual rather than assumed annual, because guessing wrong here sends an
+    // unsolicited email about a cycle nobody chose.
+    assertEqual(d.dueReminderTiming(annualJob({ reinspection_interval_months: null }), now),
+      'not-an-annual-cycle', 'an unknown interval is not assumed to be twelve months');
+    assertEqual(d.dueReminderTiming(annualJob({ next_due_at: null }), now),
+      'no-due-date', 'a job with no due date has nothing to be reminded about');
+  });
+
+  test('Due reminder: three months before the 31st does not land in the wrong month', async () => {
+    const d = await Due();
+    // setMonth on its own overflows: three months before 31 May is 31
+    // February, which JavaScript turns into 3 March — the window would open
+    // two days late every time a due date lands on the 29th, 30th or 31st.
+    const may31 = new Date(2031, 4, 31).getTime();
+    assertEqual(new Date(d.monthsBefore(may31, 3)).getDate(), 28,
+      'clamped to the last day of February, not spilled into March');
+    assertEqual(new Date(d.monthsBefore(may31, 3)).getMonth(), 1, 'still February');
+
+    // A leap year gets the 29th.
+    const may31Leap = new Date(2032, 4, 31).getTime();
+    assertEqual(new Date(d.monthsBefore(may31Leap, 3)).getDate(), 29, '2032 is a leap year');
+
+    // And it crosses the new year properly.
+    const feb10 = new Date(2031, 1, 10).getTime();
+    const back = new Date(d.monthsBefore(feb10, 3));
+    assertEqual(back.getFullYear(), 2030, 'three months before February is the previous year');
+    assertEqual(back.getMonth(), 10, 'November');
+  });
+
+  test('Due reminder: the ones to ring are the ones already emailed and still not booked', async () => {
+    const d = await Due();
+    const afterDue = new Date(2031, 6, 1).getTime(); // 1 July, past the due date
+
+    // Emailed about this exact due date, the date has passed, nothing booked.
+    assertEqual(d.needsAPhoneCall(annualJob({ reminder_sent_for_due_at: DUE_DATE }), afterDue), true,
+      'emailed, ignored, and now overdue — that is a phone call');
+
+    // Never emailed. Not a follow-up: the reminder itself still has to go.
+    assertEqual(d.needsAPhoneCall(annualJob(), afterDue), false,
+      'you cannot follow up a reminder you never sent');
+
+    // Emailed, but the due date has not arrived yet. Chasing now is chasing
+    // somebody who has not been given their chance to reply.
+    assertEqual(d.needsAPhoneCall(annualJob({ reminder_sent_for_due_at: DUE_DATE }),
+      new Date(2031, 3, 1).getTime()), false, 'not overdue yet');
+
+    // Rebooked. rebookJob clears next_due_at, so it drops out on its own with
+    // nothing to undo.
+    assertEqual(d.needsAPhoneCall(annualJob({ reminder_sent_for_due_at: DUE_DATE, next_due_at: null }), afterDue),
+      false, 'a rebooked job is not chased');
+
+    // Reminded about a PREVIOUS due date, then given a new one. The stamp no
+    // longer matches, so this is a job awaiting a fresh reminder, not a chase.
+    assertEqual(d.needsAPhoneCall(annualJob({ reminder_sent_for_due_at: DUE_DATE - 86400000 }), afterDue),
+      false, 'the stamp is per due date, not per job');
+  });
+
+  test('Due reminder: the function that leaked across businesses is retired, not patched', async () => {
+    // send-due-reminders authenticated a caller and then ran every query on
+    // the service_role key with NO org filter — one request from any signed-in
+    // account would read every business's client list, email all of them from
+    // this business's address, and stamp the reminder as sent on jobs it did
+    // not own. Asserted against the source, because there is no Deno here.
+    const src = await (await fetch('../supabase/functions/send-due-reminders/index.ts', { cache: 'reload' })).text();
+    assert(/RETIRED/.test(src), 'the file should say what it is');
+    assert(/410/.test(src), 'and answer Gone rather than pretending to work');
+    // The actual guarantee: it can no longer read or write anything at all.
+    assert(!/createClient|from\('jobs'\)|api\.resend\.com/.test(src),
+      'a retired function must hold no database client, no query and no mail call');
+
+    // And the survivor is the one that was already scoped.
+    const live = await (await fetch('../supabase/functions/send-client-message/index.ts', { cache: 'reload' })).text();
+    assert(/\.eq\('org_id', orgId\)/.test(live),
+      'every sweep query must be scoped to one business');
+    assert(/dueReminderTiming/.test(live),
+      'and it must now apply the timing rules that moved out of the retired function');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

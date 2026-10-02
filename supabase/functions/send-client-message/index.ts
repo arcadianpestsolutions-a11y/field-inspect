@@ -62,6 +62,17 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // textable number are covered by the suite rather than living only here,
 // where nothing on this machine can run them.
 import { composeReminder } from '../_shared/reminder-sms.js';
+// The timing rules for the annual re-inspection reminder, which used to live
+// in a second function of their own. See _shared/due-reminder.js.
+import { dueReminderTiming, needsAPhoneCall as stillNotRebooked } from '../_shared/due-reminder.js';
+
+// Reasons a job was skipped that are NOT something for a person to act on.
+// The skipped list is a call list — a landline, a missing mobile, a typo in an
+// email — so a job that is simply not due yet, or not on an annual cycle, must
+// not land on it. 'already-sent' is the dedupe working, not a failure.
+const NOT_WORTH_CHASING = new Set([
+  'already-sent', 'too-early', 'not-an-annual-cycle', 'no-due-date',
+]);
 
 // Read as "string or empty", never with a non-null assertion. The assertion
 // does not check anything at runtime — it only stops the compiler asking — so
@@ -205,6 +216,10 @@ type JobRow = {
   preferred_document_type: string | null;
   recurring_from_id: string | null;
   comms_opt_out: boolean | null;
+  // Added by migration 012. Null on jobs older than it, which is treated as
+  // "not an annual cycle" rather than assumed — see _shared/due-reminder.js.
+  reinspection_interval_months: number | null;
+  reminder_sent_for_due_at: number | null;
   org_id: string | null;
 };
 
@@ -294,9 +309,19 @@ function isSmsKind(kind: string): boolean {
   return kind === 'day_before' && SMS_CONFIGURED;
 }
 
-function refuse(kind: string, job: JobRow): string | null {
+function refuse(kind: string, job: JobRow, now: number = Date.now()): string | null {
   if (!job) return 'job-not-found';
   if (job.comms_opt_out) return 'opted-out';
+
+  // The annual re-inspection reminder is the only kind that is not triggered
+  // by something a technician just did — it goes out unprompted, months after
+  // the last visit, so WHEN is as much a part of whether to send it as who.
+  // Without this the sweep below selected every job with a due date set and
+  // would have emailed somebody eleven months early.
+  if (kind === 'due_reminder') {
+    const early = dueReminderTiming(job as unknown as Record<string, unknown>, now);
+    if (early) return early;
+  }
 
   if (isSmsKind(kind)) {
     // A mobile, not an email address, is what has to be on file. The refusal
@@ -476,7 +501,7 @@ async function sweepOneOrg(
   if (error) throw new Error(error.message);
 
   const jobs = (data || []) as JobRow[];
-  const sendable = jobs.filter((j) => refuse(kind, j) === null);
+  const sendable = jobs.filter((j) => refuse(kind, j, now) === null);
   const sms = isSmsKind(kind);
 
   if (dryRun) {
@@ -510,12 +535,22 @@ async function sweepOneOrg(
     // client hears nothing at all unless somebody rings them. 'already-sent'
     // is left out because it is not a problem, it is the dedupe working.
     const needsAPhoneCall = jobs
-      .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j) }))
-      .filter((s) => s.reason !== null && s.reason !== 'already-sent');
+      .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now) }))
+      .filter((s) => s.reason !== null && !NOT_WORTH_CHASING.has(s.reason));
+
+    // Reminded about this exact due date, and the date has now gone past
+    // with nothing rebooked. Nothing further is emailed — chasing somebody
+    // who ignored a reminder is a phone call, not a second email — so they
+    // are listed for a person to work through. This is the half of the old
+    // send-due-reminders function that was worth keeping.
+    const stillDue = kind === 'due_reminder'
+      ? jobs.filter((j) => stillNotRebooked(j as unknown as Record<string, unknown>, now))
+          .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, dueDate: j.next_due_at }))
+      : [];
 
     return {
       sweep: kind, dryRun: true, channel: sms ? 'sms' : 'email',
-      checked: jobs.length, wouldSend, needsAPhoneCall,
+      checked: jobs.length, wouldSend, needsAPhoneCall, stillDue,
     };
   }
 
@@ -530,12 +565,22 @@ async function sweepOneOrg(
   }
   // Even on a live run, whoever could not be reached is the actionable half.
   const needsAPhoneCall = jobs
-    .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j) }))
-    .filter((s) => s.reason !== null && s.reason !== 'already-sent');
+    .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now) }))
+    .filter((s) => s.reason !== null && !NOT_WORTH_CHASING.has(s.reason));
+
+  // Reminded about this exact due date, and the date has now gone past
+  // with nothing rebooked. Nothing further is emailed — chasing somebody
+  // who ignored a reminder is a phone call, not a second email — so they
+  // are listed for a person to work through. This is the half of the old
+  // send-due-reminders function that was worth keeping.
+  const stillDue = kind === 'due_reminder'
+    ? jobs.filter((j) => stillNotRebooked(j as unknown as Record<string, unknown>, now))
+        .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, dueDate: j.next_due_at }))
+    : [];
 
   return {
     sweep: kind, dryRun: false, channel: sms ? 'sms' : 'email',
-    checked: jobs.length, results, needsAPhoneCall,
+    checked: jobs.length, results, needsAPhoneCall, stillDue,
   };
 }
 
@@ -608,7 +653,8 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null) {
 
 const JOB_COLUMNS = 'id, name, address, client_email, client_phone, scheduled_at, next_due_at, '
   + 'job_type, preferred_document_type, recurring_from_id, comms_opt_out, '
-  + 'confirmation_sent_for_at, day_before_sent_for_at, reminder_sent_for_due_at, org_id';
+  + 'confirmation_sent_for_at, day_before_sent_for_at, reminder_sent_for_due_at, org_id, '
+  + 'reinspection_interval_months';
 
 // ----------------------------------------------------------------- serve ---
 

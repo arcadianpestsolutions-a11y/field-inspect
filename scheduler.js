@@ -452,8 +452,8 @@
         const days = Math.round((job.nextDueAt - now) / 86400000);
         // A 12-month termite job that already got its 9-month reminder
         // email and is now past its due date anyway has had the automatic
-        // path exhausted — this is the point send-due-reminders' own
-        // comments call "flag for a phone call": the email didn't get it
+        // path exhausted — this is what send-client-message's due_reminder
+        // sweep reports back as `stillDue`: the email didn't get it
         // rebooked, so it stops being a due-date line and becomes a task
         // for a human to chase directly, which reads differently to a
         // technician than "just" overdue.

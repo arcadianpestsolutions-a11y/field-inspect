@@ -1785,7 +1785,7 @@
   // us nothing to go on — better to show no due date than to invent one.
   //
   // intervalMonths is kept alongside the date, not just derived from it,
-  // because send-due-reminders needs to know WHICH cycle produced this due
+  // because the re-inspection reminder needs to know WHICH cycle produced this
   // date — the 9-month email / 12-month phone-call escalation only applies
   // to a standard 12-month termite cycle, not a 3- or 6-month one flagged
   // for a higher-risk property, and not a pest-treatment follow-up at all.
