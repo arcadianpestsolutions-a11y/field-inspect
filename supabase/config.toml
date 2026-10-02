@@ -424,3 +424,27 @@ enabled = true
 # redeploy and is visible to whoever reads this next.
 [functions.calendar-feed]
 verify_jwt = false
+
+# client-portal serves one client their own report and takes their acceptance
+# of a quote. Same reason as calendar-feed: the person opening the link has no
+# account and never will, so the token in the query string IS the credential.
+# It is checked for shape before it is used in any query, every refusal path
+# answers identically, and the response is assembled field by field.
+#
+# This was previously only a dashboard toggle, which is a manual step that has
+# to be repeated and remembered — and if it is ever missed, every client's
+# link bounces with a 401 before this function's own code runs and the portal
+# simply looks broken.
+[functions.client-portal]
+verify_jwt = false
+
+# send-due-reminders is RETIRED and answers 410 Gone with a pointer to its
+# replacement. It holds no database client, no query and no mail call, so
+# there is nothing here for auth to protect.
+#
+# Verification is off deliberately: a cron entry, a bookmark or a note still
+# aimed at this URL should get the explanation, not "Missing authorization
+# header", which reads like a credentials problem somebody then goes and
+# tries to fix.
+[functions.send-due-reminders]
+verify_jwt = false
