@@ -16,6 +16,16 @@
 // sends real email per call.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { escapeHtml, loadBusiness, orgIdForUser } from '../_shared/business.js';
+
+// Who the email is signed as comes from the signed-in user's own business
+// record, not from a name typed into this file. These secrets are only a
+// fallback for a field the record leaves blank — see _shared/business.js.
+const BUSINESS_ENV = {
+  BUSINESS_NAME: Deno.env.get('BUSINESS_NAME') || '',
+  BUSINESS_REPLY_TO: Deno.env.get('BUSINESS_REPLY_TO') || '',
+};
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
 const RESEND_FROM_ADDRESS = Deno.env.get('RESEND_FROM_ADDRESS') || '';
@@ -64,6 +74,15 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
 
+    // Not part of the required-secrets check on purpose: without the service
+    // key this degrades to a neutral sign-off rather than refusing to send a
+    // client their report over a missing business name.
+    const admin = SERVICE_ROLE_KEY
+      ? createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+      : null;
+    const biz = await loadBusiness(admin, await orgIdForUser(admin, user.id), BUSINESS_ENV);
+    const bizHtml = escapeHtml(biz.name);
+
     const body = await req.json();
     const { recipientEmail, recipientName, jobName, jobType, documentKind, pdfBase64 } = body;
 
@@ -77,21 +96,21 @@ Deno.serve(async (req) => {
 
     const reportLabel = isPestTreatment ? 'General Pest Treatment Report' : 'Termite Inspection Report';
     const subject = isInvoice
-      ? `Tax Invoice${jobName ? ' ' + jobName : ''} — Arcadian Pest Solutions`
+      ? `Tax Invoice${jobName ? ' ' + jobName : ''} — ${biz.name}`
       : `${reportLabel}${jobName ? ' — ' + jobName : ''}`;
 
     const html = isInvoice
       ? `
       <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
-      <p>Please find attached your tax invoice from Arcadian Pest Solutions.</p>
+      <p>Please find attached your tax invoice from ${bizHtml}.</p>
       <p>If you have any questions about this invoice, please get in touch.</p>
-      <p>Kind regards,<br>Arcadian Pest Solutions</p>
+      <p>Kind regards,<br>${bizHtml}</p>
     `
       : `
       <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
-      <p>Please find attached your ${isPestTreatment ? 'pest treatment report' : 'termite inspection report'} from Arcadian Pest Solutions.</p>
+      <p>Please find attached your ${isPestTreatment ? 'pest treatment report' : 'termite inspection report'} from ${bizHtml}.</p>
       <p>If you have any questions about this report, please get in touch.</p>
-      <p>Kind regards,<br>Arcadian Pest Solutions</p>
+      <p>Kind regards,<br>${bizHtml}</p>
     `;
 
     const attachmentFilename = isInvoice
@@ -107,6 +126,11 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         from: RESEND_FROM_ADDRESS,
         to: [recipientEmail],
+        // A client who replies to their report should reach a person. Without
+        // this a reply went to the sending address, which on a sandbox sender
+        // is a mailbox nobody reads. Omitted entirely when there is none,
+        // rather than sent blank.
+        ...(biz.replyTo ? { reply_to: biz.replyTo } : {}),
         subject,
         html,
         attachments: [{ filename: attachmentFilename, content: pdfBase64 }],

@@ -17,6 +17,15 @@
 // Requires ANTHROPIC_API_KEY (already set for analyze-inspection).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { loadBusiness, orgIdForUser } from '../_shared/business.js';
+
+// The prompt names the business from the signed-in user's own record rather
+// than from a name typed into this file. See _shared/business.js.
+const BUSINESS_ENV = { BUSINESS_NAME: Deno.env.get('BUSINESS_NAME') || '' };
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+const admin = SERVICE_ROLE_KEY
+  ? createClient(Deno.env.get('SUPABASE_URL') || '', SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -94,8 +103,8 @@ const TOOLS = [
   },
 ];
 
-function systemPrompt(today: string, dayName: string) {
-  return `You are the booking assistant inside Scope, a pest control app used by Arcadian Pest Solutions in New South Wales, Australia. You help the technician read and fill their diary.
+function systemPrompt(today: string, dayName: string, businessName: string) {
+  return `You are the booking assistant inside Scope, a pest control app used by ${businessName} in New South Wales, Australia. You help the technician read and fill their diary.
 
 Today is ${dayName}, ${today}. All dates and times are local Australian time. When the technician says "tomorrow", "next Tuesday" or "this week", work it out from today's date.
 
@@ -110,7 +119,7 @@ How to behave:
 - Travel time between jobs is real but you do not have distances. If two jobs are in obviously different suburbs back to back, mention it rather than silently packing them together.`;
 }
 
-async function callClaude(messages: unknown[], today: string, dayName: string) {
+async function callClaude(messages: unknown[], today: string, dayName: string, businessName: string) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -121,7 +130,7 @@ async function callClaude(messages: unknown[], today: string, dayName: string) {
     body: JSON.stringify({
       model: 'claude-sonnet-5',
       max_tokens: 1024,
-      system: systemPrompt(today, dayName),
+      system: systemPrompt(today, dayName, businessName),
       tools: TOOLS,
       messages,
     }),
@@ -148,7 +157,8 @@ Deno.serve(async (req) => {
       return json({ error: 'messages[] is required' }, 400);
     }
 
-    const reply = await callClaude(messages, today || '', dayName || '');
+    const biz = await loadBusiness(admin, await orgIdForUser(admin, user.id), BUSINESS_ENV);
+    const reply = await callClaude(messages, today || '', dayName || '', biz.name);
 
     // Hand the raw content blocks back so the client can execute any tool_use
     // and continue the loop. stop_reason tells it whether to keep going.

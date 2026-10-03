@@ -49,12 +49,14 @@
 //   CLICKSEND_USERNAME, CLICKSEND_API_KEY
 // Optional, for SMS:
 //   SMS_SENDER_ID      up to 11 characters, shown as the sender (ArcadianPst)
-//   BUSINESS_SMS_NAME  the name inside the message (Arcadian Pest)
-// Optional, and worth setting — these appear in the sender identification
-// block. Left unset, the block still names the business and the reply address,
-// it just carries less detail. Nothing here is invented at runtime:
-//   BUSINESS_NAME, BUSINESS_ABN, BUSINESS_PHONE, BUSINESS_ADDRESS,
-//   BUSINESS_REPLY_TO
+//
+// WHO IS SENDING comes from the business's own record (the organisations row
+// you edit under Business in the app) — name, ABN, address, phone and email —
+// read per job by _shared/business.js. There is nothing to set for it.
+// These secrets still work, but ONLY to fill a field the record leaves blank,
+// and the record wins whenever it says something:
+//   BUSINESS_NAME, BUSINESS_SMS_NAME, BUSINESS_ABN, BUSINESS_PHONE,
+//   BUSINESS_ADDRESS, BUSINESS_REPLY_TO
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // Shared with tests/run-tests.js, which dynamic-imports this same file in a
@@ -64,6 +66,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { composeReminder } from '../_shared/reminder-sms.js';
 // The timing rules for the annual re-inspection reminder, which used to live
 // in a second function of their own. See _shared/due-reminder.js.
+import { loadBusiness } from '../_shared/business.js';
 import { dueReminderTiming, needsAPhoneCall as stillNotRebooked } from '../_shared/due-reminder.js';
 
 // Reasons a job was skipped that are NOT something for a person to act on.
@@ -108,7 +111,6 @@ const SMS_SENDER_ID = (Deno.env.get('SMS_SENDER_ID') || '').slice(0, 11);
 // The name inside the message. Separate from BUSINESS_NAME because every
 // character is paid for: "Arcadian Pest Solutions" is 23 of the 306 a
 // two-part message gets, and "Arcadian Pest" says the same thing.
-const BUSINESS_SMS_NAME = Deno.env.get('BUSINESS_SMS_NAME') || 'Arcadian Pest';
 
 const SMS_CONFIGURED = !!(CLICKSEND_USERNAME && CLICKSEND_API_KEY);
 
@@ -119,11 +121,23 @@ function missingSecrets(): string[] {
   }).filter(([, v]) => !v).map(([k]) => k);
 }
 
-const BUSINESS_NAME = Deno.env.get('BUSINESS_NAME') || 'Arcadian Pest Solutions';
-const BUSINESS_ABN = Deno.env.get('BUSINESS_ABN') || '';
-const BUSINESS_PHONE = Deno.env.get('BUSINESS_PHONE') || '';
-const BUSINESS_ADDRESS = Deno.env.get('BUSINESS_ADDRESS') || '';
-const REPLY_TO = Deno.env.get('BUSINESS_REPLY_TO') || '';
+// WHO IS SENDING is read from the business's own record (organisations), per
+// job, by loadBusiness — not from these. They remain only as a fallback for a
+// field the record leaves blank, so a deployment that already set them keeps
+// working. See _shared/business.js for the precedence and the reasons.
+const BUSINESS_ENV = {
+  BUSINESS_NAME: Deno.env.get('BUSINESS_NAME') || '',
+  BUSINESS_SMS_NAME: Deno.env.get('BUSINESS_SMS_NAME') || '',
+  BUSINESS_ABN: Deno.env.get('BUSINESS_ABN') || '',
+  BUSINESS_PHONE: Deno.env.get('BUSINESS_PHONE') || '',
+  BUSINESS_ADDRESS: Deno.env.get('BUSINESS_ADDRESS') || '',
+  BUSINESS_REPLY_TO: Deno.env.get('BUSINESS_REPLY_TO') || '',
+};
+
+type Biz = {
+  name: string; smsName: string; abn: string; phone: string;
+  email: string; replyTo: string; address: string; fromRecord: boolean;
+};
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -183,11 +197,11 @@ function dateText(epochMs: number | null): string {
 // Sender identification. Required on a commercial message and included on
 // every message regardless, so a client always knows who is writing and how
 // to reach a human. Only states what has actually been configured.
-function senderBlock(): string {
-  const bits = [esc(BUSINESS_NAME)];
-  if (BUSINESS_ABN) bits.push(`ABN ${esc(BUSINESS_ABN)}`);
-  if (BUSINESS_ADDRESS) bits.push(esc(BUSINESS_ADDRESS));
-  if (BUSINESS_PHONE) bits.push(esc(BUSINESS_PHONE));
+function senderBlock(biz: Biz): string {
+  const bits = [esc(biz.name)];
+  if (biz.abn) bits.push(`ABN ${esc(biz.abn)}`);
+  if (biz.address) bits.push(esc(biz.address));
+  if (biz.phone) bits.push(esc(biz.phone));
   return `<hr style="border:none;border-top:1px solid #d8dde0;margin:26px 0 12px">
     <p style="font-size:12px;color:#6b767e;line-height:1.5;margin:0">
       ${bits.join(' &middot; ')}
@@ -227,7 +241,7 @@ function serviceLabel(jobType: string | null): string {
   return jobType === 'pest_treatment' ? 'pest treatment' : 'termite inspection';
 }
 
-function compose(kind: string, job: JobRow): { subject: string; body: string } {
+function compose(kind: string, job: JobRow, biz: Biz): { subject: string; body: string } {
   const greeting = job.name ? `Hi ${esc(job.name)},` : 'Hi,';
   const where = job.address ? ` at ${esc(job.address)}` : '';
   const service = serviceLabel(job.job_type);
@@ -235,7 +249,7 @@ function compose(kind: string, job: JobRow): { subject: string; body: string } {
   switch (kind) {
     case 'booking_confirmation':
       return {
-        subject: `Your ${service} is booked — ${BUSINESS_NAME}`,
+        subject: `Your ${service} is booked — ${biz.name}`,
         body: `<p>${greeting}</p>
           <p>Your ${service}${where} is booked for
           <strong>${esc(whenText(job.scheduled_at))}</strong>.</p>
@@ -247,7 +261,7 @@ function compose(kind: string, job: JobRow): { subject: string; body: string } {
 
     case 'day_before':
       return {
-        subject: `Reminder: we're coming tomorrow — ${BUSINESS_NAME}`,
+        subject: `Reminder: we're coming tomorrow — ${biz.name}`,
         body: `<p>${greeting}</p>
           <p>Just a reminder that we're booked for your ${service}${where}
           <strong>tomorrow, ${esc(whenText(job.scheduled_at))}</strong>.</p>
@@ -258,7 +272,7 @@ function compose(kind: string, job: JobRow): { subject: string; body: string } {
 
     case 'report_ready':
       return {
-        subject: `Your ${service} report — ${BUSINESS_NAME}`,
+        subject: `Your ${service} report — ${biz.name}`,
         body: `<p>${greeting}</p>
           <p>Your ${service} report${where} is finished and attached to a
           separate email from us.</p>
@@ -267,7 +281,7 @@ function compose(kind: string, job: JobRow): { subject: string; body: string } {
 
     case 'due_reminder':
       return {
-        subject: `Your ${service} is coming up — ${BUSINESS_NAME}`,
+        subject: `Your ${service} is coming up — ${biz.name}`,
         body: `<p>${greeting}</p>
           <p>Your next ${service}${where} is due around
           <strong>${esc(dateText(job.next_due_at))}</strong>.</p>
@@ -309,7 +323,7 @@ function isSmsKind(kind: string): boolean {
   return kind === 'day_before' && SMS_CONFIGURED;
 }
 
-function refuse(kind: string, job: JobRow, now: number = Date.now()): string | null {
+function refuse(kind: string, job: JobRow, now: number, biz: Biz): string | null {
   if (!job) return 'job-not-found';
   if (job.comms_opt_out) return 'opted-out';
 
@@ -328,7 +342,7 @@ function refuse(kind: string, job: JobRow, now: number = Date.now()): string | n
     // reason distinguishes a landline from a typo, because they mean
     // different things to whoever works through the list afterwards: one is
     // fixable, the other is a client who will always need a phone call.
-    const composed = composeReminder({ businessName: BUSINESS_SMS_NAME, job });
+    const composed = composeReminder({ businessName: biz.smsName, job });
     if (!composed.sendable) return composed.reason as string;
   } else {
     const to = (job.client_email || '').trim();
@@ -411,9 +425,9 @@ async function lastReportFor(job: JobRow): Promise<Record<string, unknown> | nul
   return (data && data[0]) || null;
 }
 
-async function sendSmsOne(kind: string, job: JobRow, triggeredBy: string | null) {
+async function sendSmsOne(kind: string, job: JobRow, triggeredBy: string | null, biz: Biz) {
   const lastReport = await lastReportFor(job);
-  const composed = composeReminder({ businessName: BUSINESS_SMS_NAME, job, lastReport });
+  const composed = composeReminder({ businessName: biz.smsName, job, lastReport });
   if (!composed.sendable) {
     // refuse() already asked this question. Reaching here means the row
     // changed underneath us between the check and the send.
@@ -485,6 +499,10 @@ async function sweepOneOrg(
   triggeredBy: string | null,
   now: number,
 ) {
+  // Once per business per sweep, not once per client. Every message in this
+  // sweep is sent on behalf of the same business.
+  const biz = await loadBusiness(admin, orgId, BUSINESS_ENV) as Biz;
+
   const windowStart = now + 20 * 60 * 60 * 1000; // ~20h out
   const windowEnd = now + 32 * 60 * 60 * 1000;   // ~32h out
 
@@ -501,7 +519,7 @@ async function sweepOneOrg(
   if (error) throw new Error(error.message);
 
   const jobs = (data || []) as JobRow[];
-  const sendable = jobs.filter((j) => refuse(kind, j, now) === null);
+  const sendable = jobs.filter((j) => refuse(kind, j, now, biz) === null);
   const sms = isSmsKind(kind);
 
   if (dryRun) {
@@ -516,7 +534,7 @@ async function sweepOneOrg(
         // for. A message that goes to a real client is not something to find
         // out the wording of afterwards.
         const composed = composeReminder({
-          businessName: BUSINESS_SMS_NAME, job: j, lastReport: await lastReportFor(j),
+          businessName: biz.smsName, job: j, lastReport: await lastReportFor(j),
         });
         row.channel = 'sms';
         row.to = composed.to;
@@ -535,7 +553,7 @@ async function sweepOneOrg(
     // client hears nothing at all unless somebody rings them. 'already-sent'
     // is left out because it is not a problem, it is the dedupe working.
     const needsAPhoneCall = jobs
-      .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now) }))
+      .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now, biz) }))
       .filter((s) => s.reason !== null && !NOT_WORTH_CHASING.has(s.reason));
 
     // Reminded about this exact due date, and the date has now gone past
@@ -557,7 +575,7 @@ async function sweepOneOrg(
   const results = [];
   for (const j of sendable) {
     try {
-      results.push(await sendOne(kind, j, triggeredBy));
+      results.push(await sendOne(kind, j, triggeredBy, biz));
     } catch (err) {
       console.error(`[send-client-message] ${kind} ${j.id}:`, err);
       results.push({ jobId: j.id, kind, sent: false, error: String(err) });
@@ -565,7 +583,7 @@ async function sweepOneOrg(
   }
   // Even on a live run, whoever could not be reached is the actionable half.
   const needsAPhoneCall = jobs
-    .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now) }))
+    .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now, biz) }))
     .filter((s) => s.reason !== null && !NOT_WORTH_CHASING.has(s.reason));
 
   // Reminded about this exact due date, and the date has now gone past
@@ -584,11 +602,11 @@ async function sweepOneOrg(
   };
 }
 
-async function sendOne(kind: string, job: JobRow, triggeredBy: string | null) {
-  if (isSmsKind(kind)) return sendSmsOne(kind, job, triggeredBy);
+async function sendOne(kind: string, job: JobRow, triggeredBy: string | null, biz: Biz) {
+  if (isSmsKind(kind)) return sendSmsOne(kind, job, triggeredBy, biz);
 
   const to = (job.client_email || '').trim();
-  const { subject, body } = compose(kind, job);
+  const { subject, body } = compose(kind, job, biz);
 
   const isCommercial = COMMERCIAL.has(kind);
 
@@ -601,18 +619,21 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null) {
   // the send is refused rather than quietly going out non-compliant.
   let unsubMailto = '';
   if (isCommercial) {
-    const target = REPLY_TO || bareAddress(RESEND_FROM_ADDRESS);
+    // The business's own email first: replies and unsubscribes should reach a
+    // person. The sending address is the fallback, and on a sandbox sender it
+    // is somewhere nobody reads — which is why this used to be worth setting.
+    const target = biz.replyTo || bareAddress(RESEND_FROM_ADDRESS);
     if (!target) {
       throw new Error('Refusing to send a commercial message with no unsubscribe '
-        + 'address. Set BUSINESS_REPLY_TO, or a valid RESEND_FROM_ADDRESS.');
+        + 'address. Put an email on the business record, or set a valid RESEND_FROM_ADDRESS.');
     }
     unsubMailto = `mailto:${target}?subject=${encodeURIComponent('Unsubscribe')}`;
   }
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;
       font-size:15px;line-height:1.6;color:#10161a;max-width:560px">
       ${body}
-      <p>Kind regards,<br>${esc(BUSINESS_NAME)}</p>
-      ${senderBlock()}
+      <p>Kind regards,<br>${esc(biz.name)}</p>
+      ${senderBlock(biz)}
       ${isCommercial ? unsubscribeBlock(unsubMailto) : ''}
     </div>`;
 
@@ -622,7 +643,7 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null) {
     subject,
     html,
   };
-  if (REPLY_TO) payload.reply_to = REPLY_TO;
+  if (biz.replyTo) payload.reply_to = biz.replyTo;
   // A real List-Unsubscribe header is what mail clients surface as a
   // one-click unsubscribe, and it is the difference between complying and
   // looking like you comply.
@@ -765,10 +786,13 @@ Deno.serve(async (req) => {
 
     // A refusal is a normal outcome, not a failure. The app shows these to a
     // technician as plain sentences, so they stay machine-readable here.
-    const reason = refuse(kind, job);
+    // Looked up from the JOB's own business, not the caller's: whoever it is
+    // sent on behalf of is a property of the job.
+    const biz = await loadBusiness(admin, job.org_id, BUSINESS_ENV) as Biz;
+    const reason = refuse(kind, job, Date.now(), biz);
     if (reason) return json({ sent: false, reason });
 
-    return json(await sendOne(kind, job, triggeredBy));
+    return json(await sendOne(kind, job, triggeredBy, biz));
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);

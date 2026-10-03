@@ -43,6 +43,7 @@
 // Required secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { loadBusiness } from '../_shared/business.js';
 // Shared with the browser test suite, which is where the rules below are
 // actually covered — see _shared/acceptance.js.
 import {
@@ -51,9 +52,15 @@ import {
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const BUSINESS_NAME = Deno.env.get('BUSINESS_NAME') || 'Arcadian Pest Solutions';
-const BUSINESS_PHONE = Deno.env.get('BUSINESS_PHONE') || '';
-const BUSINESS_EMAIL = Deno.env.get('BUSINESS_REPLY_TO') || '';
+// Who the client is dealing with comes from the business's own record, read for
+// THIS job's business by _shared/business.js. These secrets are only a fallback
+// for a field the record leaves blank. They used to be the only source, and
+// were never set — so the portal's contact line was empty for every client.
+const BUSINESS_ENV = {
+  BUSINESS_NAME: Deno.env.get('BUSINESS_NAME') || '',
+  BUSINESS_PHONE: Deno.env.get('BUSINESS_PHONE') || '',
+  BUSINESS_REPLY_TO: Deno.env.get('BUSINESS_REPLY_TO') || '',
+};
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -190,6 +197,9 @@ async function handleGet(req: Request) {
   if (g.fail) return g.fail;
   const { token, access, job, report } = g;
   const now = Date.now();
+  // Read for the job's own business, never for "the" business — there is no
+  // such thing once there is a second one.
+  const biz = await loadBusiness(admin, job.org_id, BUSINESS_ENV);
 
   // A short-lived signed URL for a file in a private bucket. Two expiries
   // stacked on purpose: the link expires in months, this URL in minutes.
@@ -254,7 +264,10 @@ async function handleGet(req: Request) {
   // Assembled field by field. Nothing is spread from a row, so a column added
   // to any table above cannot start appearing here by accident.
   return json({
-    business: { name: BUSINESS_NAME, phone: BUSINESS_PHONE, email: BUSINESS_EMAIL },
+    // Three fields, picked by name. loadBusiness returns more (ABN, address),
+    // and none of it goes out unless it is written here: the portal shows a
+    // name and a way to reach somebody, and that is all a homeowner needs.
+    business: { name: biz.name, phone: biz.phone, email: biz.email },
     client: { name: job.name || '', address: job.address || '' },
     visit: {
       jobType: job.job_type === 'pest_treatment' ? 'pest_treatment' : 'termite',

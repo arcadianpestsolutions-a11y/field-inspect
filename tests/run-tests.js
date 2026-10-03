@@ -7310,6 +7310,141 @@
     assert(!/service_role|anon/i.test(grants), 'and nobody else is granted anything');
   });
 
+  // ---------- Who is sending (supabase/functions/_shared/business.js) ----------
+  // Shared with four Edge Functions that run under Deno, so it is a real ES
+  // module and needs a dynamic import and a real origin — same as the others.
+  let __biz = null;
+  async function Biz() {
+    if (__biz) return __biz;
+    try {
+      __biz = await import('../supabase/functions/_shared/business.js');
+    } catch (e) {
+      throw new Error('Could not load business.js. Serve the project over http '
+        + '(preview_start "scope-local", then open http://localhost:8787/tests/run-tests.html) '
+        + 'instead of opening this file directly. Original error: ' + (e && e.message));
+    }
+    return __biz;
+  }
+
+  test('Business details: the trading name wins, matching what the app prints', async () => {
+    const b = await Biz();
+    // The app's own rule (org.js businessName). If an email and the report
+    // attached to it were signed differently, a client would be handed two
+    // names for one supplier.
+    assertEqual(b.displayName({ name: 'Arcadian Services Pty Ltd', trading_name: 'Arcadian Pest Solutions' }),
+      'Arcadian Pest Solutions', 'the name the client recognises');
+    assertEqual(b.displayName({ name: 'Arcadian Services Pty Ltd', trading_name: '   ' }),
+      'Arcadian Services Pty Ltd', 'a blank trading name falls back to the registered one');
+    assertEqual(b.displayName(null), '', 'and nothing at all is nothing');
+  });
+
+  test('Business details: what the owner typed wins over an old secret', async () => {
+    const b = await Biz();
+    // The portal's contact line was empty for every client because the details
+    // came from secrets nobody set, while the owner filled them in, in the app.
+    const got = b.businessFrom(
+      { name: 'Arcadian Pest Solutions', phone: '0291271320', email: 'tal@arcadianpestsolutions.com.au', address: '20 Moorhen Street, Ingleburn NSW 2565', abn: '79 682 870 211' },
+      { BUSINESS_PHONE: '0400 000 000', BUSINESS_REPLY_TO: 'old@example.com', BUSINESS_ABN: '11 111 111 111' });
+    assertEqual(got.phone, '0291271320', 'the record is what is used');
+    assertEqual(got.email, 'tal@arcadianpestsolutions.com.au', 'including the email');
+    assertEqual(got.abn, '79 682 870 211', 'and the ABN');
+    assertEqual(got.replyTo, got.email, 'replies go to the same address clients are told to write to');
+    assertEqual(got.fromRecord, true);
+  });
+
+  test('Business details: an old secret still fills a field the record leaves blank', async () => {
+    const b = await Biz();
+    const got = b.businessFrom({ name: 'Arcadian Pest Solutions', phone: '', email: '' },
+      { BUSINESS_PHONE: '0291271320', BUSINESS_REPLY_TO: 'tal@arcadianpestsolutions.com.au' });
+    assertEqual(got.phone, '0291271320', 'a deployment that already set it keeps working');
+    assertEqual(got.email, 'tal@arcadianpestsolutions.com.au');
+  });
+
+  test('Business details: with nothing known it says so blandly, never as somebody else', async () => {
+    const b = await Biz();
+    const got = b.businessFrom(null, {});
+    assertEqual(got.name, b.NEUTRAL_NAME, 'a neutral phrase');
+    assertEqual(got.fromRecord, false, 'and it admits it fell back');
+    assert(!/arcadian/i.test(JSON.stringify(got)),
+      'the fallback must not be any real business — signing off as the wrong company is worse than a bland one');
+    assertEqual(got.phone, '', 'unknown details are blank, not invented');
+  });
+
+  test('Business details: the text-message name drops the company suffix', async () => {
+    const b = await Biz();
+    // Every character in a text is paid for, and one non-GSM character halves
+    // the capacity, so "Arcadian Pest Solutions Pty Ltd:" spends a fifth of a
+    // message on the word "Pty".
+    assertEqual(b.shortName('Arcadian Pest Solutions'), 'Arcadian Pest');
+    assertEqual(b.shortName('Arcadian Services Pty Ltd'), 'Arcadian');
+    assertEqual(b.shortName('Smith & Sons Pest Control Pty. Ltd.'), 'Smith & Sons Pest Control');
+    assertEqual(b.shortName('Services Pty Ltd'), 'Services',
+      'a name made ONLY of generic words is reduced as far as it can be, never to nothing');
+    assertEqual(b.shortName(''), '', 'empty stays empty');
+    // An explicit setting is a deliberate choice and is not second-guessed.
+    assertEqual(b.businessFrom({ name: 'Arcadian Pest Solutions' }, { BUSINESS_SMS_NAME: 'ArcPest' }).smsName,
+      'ArcPest', 'an explicit SMS name wins');
+    assertEqual(b.businessFrom({ name: 'Arcadian Pest Solutions' }, {}).smsName, 'Arcadian Pest',
+      'otherwise it is derived');
+  });
+
+  test('Business details: a name is safe to put inside an HTML email', async () => {
+    const b = await Biz();
+    assertEqual(b.escapeHtml('Smith & Sons <Pest>'), 'Smith &amp; Sons &lt;Pest&gt;');
+    assertEqual(b.escapeHtml(null), '', 'nothing is nothing');
+  });
+
+  test('Business details: a failed lookup degrades, and never stops a client getting their report', async () => {
+    const b = await Biz();
+    const stub = (result) => ({
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => result() }) }) }),
+    });
+
+    const ok = await b.loadBusiness(stub(() => ({ data: { name: 'Real Co', phone: '123' }, error: null })), 'org-1', {});
+    assertEqual(ok.name, 'Real Co', 'reads the record when it can');
+
+    const dbError = await b.loadBusiness(stub(() => ({ data: null, error: { message: 'permission denied' } })), 'org-1',
+      { BUSINESS_NAME: 'From Secret' });
+    assertEqual(dbError.name, 'From Secret', 'a database error falls back to the old secret');
+
+    const thrown = await b.loadBusiness(stub(() => { throw new Error('network down'); }), 'org-1', {});
+    assertEqual(thrown.name, b.NEUTRAL_NAME, 'a thrown error falls back to the neutral name rather than throwing');
+
+    const noOrg = await b.loadBusiness(stub(() => ({ data: { name: 'Should Not Be Read' } })), null, {});
+    assertEqual(noOrg.name, b.NEUTRAL_NAME, 'no business id means nothing is looked up at all');
+  });
+
+  test('Business details: no Edge Function carries a business name of its own any more', async () => {
+    // Four functions each had "Arcadian Pest Solutions" typed into them, and
+    // the details that were meant to be configurable lived in secrets nobody
+    // set. Asserted against the source, because there is no Deno here, and
+    // against CODE rather than comments — a comment may say who a deployment
+    // is for, a string literal in a template may not.
+    const files = [
+      'send-client-message', 'send-report-email', 'client-portal', 'schedule-agent',
+    ];
+    for (const fn of files) {
+      const src = await (await fetch(`../supabase/functions/${fn}/index.ts`, { cache: 'reload' })).text();
+      const code = src.split('\n')
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join('\n');
+      assert(!/Arcadian/i.test(code),
+        `${fn} has a business name in its code — it must come from the business record`);
+      assert(/_shared\/business\.js/.test(src), `${fn} should read the business record through the shared module`);
+    }
+
+    // The thing that was visibly broken: the portal's contact line.
+    const portal = await (await fetch('../supabase/functions/client-portal/index.ts', { cache: 'reload' })).text();
+    assert(/business:\s*\{\s*name:\s*biz\.name,\s*phone:\s*biz\.phone,\s*email:\s*biz\.email\s*\}/.test(portal),
+      'the portal must hand back exactly the three contact fields from the record');
+    assert(!/abn|address/i.test(portal.match(/business:\s*\{[^}]*\}/)[0]),
+      'and not the ABN or address, which it has no reason to publish');
+
+    // A client replying to their report should reach a person.
+    const report = await (await fetch('../supabase/functions/send-report-email/index.ts', { cache: 'reload' })).text();
+    assert(/reply_to:\s*biz\.replyTo/.test(report), 'a report email must carry a Reply-To');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler
