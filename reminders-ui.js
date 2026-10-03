@@ -179,6 +179,95 @@
     }
   }
 
+  // ---- Replies -------------------------------------------------------------
+  // Texts that came BACK. Reminders are one-way by design, but people reply
+  // anyway — "can we move it to 11?", "I'm not home tomorrow" — and for as long
+  // as the replies landed in the SMS provider's dashboard, nobody in the
+  // business saw them. They land here now, unread first.
+  //
+  // Everything in this section is guarded: no signal, a table that has not been
+  // created yet (migration 032) or test mode all leave the panel exactly as it
+  // was, and nothing here may throw into the reminders preview below it.
+  const repliesEl = document.getElementById('reminders-replies');
+  const phoneTail = (raw) => String(raw || '').replace(/\D/g, '').slice(-9);
+
+  function canReadReplies() {
+    return !!(repliesEl && window.supabaseClient && !window.IS_TEST && !window.IS_DEMO);
+  }
+
+  async function fetchUnread() {
+    if (!canReadReplies()) return [];
+    try {
+      const { data, error } = await window.supabaseClient.from('sms_inbound')
+        .select('id, from_e164, from_raw, body, kind, job_id, received_at')
+        .is('read_at', null)
+        .order('received_at', { ascending: false })
+        .limit(30);
+      return error ? [] : (data || []);
+    } catch (e) { return []; }
+  }
+
+  // Who the number belongs to, from the jobs already on this device — the
+  // sender's number is all a text carries, and a name is what a person acts on.
+  async function nameFor(msg, jobs) {
+    const byId = msg.job_id ? jobs.find((j) => j.id === msg.job_id) : null;
+    if (byId && byId.name) return byId.name;
+    const tail = phoneTail(msg.from_e164 || msg.from_raw);
+    if (tail.length < 9) return '';
+    const hit = jobs.find((j) => phoneTail(j.clientPhone) === tail && j.name);
+    return hit ? hit.name : '';
+  }
+
+  function setBadge(count) {
+    openBtn.classList.toggle('has-unread', count > 0);
+    openBtn.title = count > 0
+      ? `Tomorrow's reminders — ${count} unread ${count === 1 ? 'reply' : 'replies'}`
+      : "Tomorrow's reminders";
+  }
+
+  async function markRead(id) {
+    try {
+      await window.supabaseClient.from('sms_inbound').update({ read_at: Date.now() }).eq('id', id);
+    } catch (e) { /* the next refresh will show it again, which is the safe way to fail */ }
+    await renderReplies();
+  }
+
+  async function renderReplies() {
+    if (!repliesEl) return;
+    repliesEl.innerHTML = '';
+    const unread = await fetchUnread();
+    setBadge(unread.length);
+    if (!unread.length) return;
+
+    let jobs = [];
+    try { jobs = await DB.getJobs(); } catch (e) { /* names are a nicety */ }
+
+    repliesEl.appendChild(el('p', 'reminders-section-head',
+      unread.length === 1 ? '1 reply to read' : `${unread.length} replies to read`));
+
+    for (const msg of unread) {
+      const card = el('div', 'reminders-row');
+      const top = el('div', 'reminders-row-head');
+      const name = await nameFor(msg, jobs);
+      top.appendChild(el('span', 'agenda-name', name || msg.from_raw || 'Unknown number'));
+      top.appendChild(el('span', 'agenda-meta', new Date(msg.received_at).toLocaleString('en-AU', {
+        day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+      })));
+      card.appendChild(top);
+      card.appendChild(el('p', 'reminders-text', msg.body || '(empty message)'));
+      if (msg.kind === 'stop') {
+        // The one thing worth saying out loud: it has already been acted on.
+        card.appendChild(el('p', 'reminders-stop-note',
+          'Asked us to stop. No more automated messages will go to this number.'));
+      }
+      const done = el('button', 'btn btn-outline', 'Mark as read');
+      done.type = 'button';
+      done.addEventListener('click', () => markRead(msg.id));
+      card.appendChild(done);
+      repliesEl.appendChild(card);
+    }
+  }
+
   function openPanel() {
     // Three panels share this one corner of the scheduler. Opening one has
     // to close the others, or they stack on top of each other.
@@ -192,6 +281,18 @@
     clear();
     sendBtn.classList.add('hidden');
     previewed = null;
+    renderReplies();
+  }
+
+  // The badge on the bell is the only way anybody finds out a reply arrived
+  // without opening the panel, so it is checked on load and every time the app
+  // comes back to the foreground — which is when a technician is likely to look.
+  // Delayed on load: it needs a signed-in session, and that is not ready yet.
+  if (canReadReplies()) {
+    setTimeout(() => { renderReplies(); }, 6000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') renderReplies();
+    });
   }
 
   openBtn.addEventListener('click', openPanel);
@@ -201,5 +302,5 @@
 
   // Exposed for the suite, same reasoning as window.SyncMessages: the wording
   // a technician reads is worth asserting on directly.
-  window.RemindersUI = { check, renderPreview, WHY };
+  window.RemindersUI = { check, renderPreview, renderReplies, WHY };
 })();

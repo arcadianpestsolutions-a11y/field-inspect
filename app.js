@@ -488,10 +488,35 @@
   // This toggle is a convenience, not the enforcement. The server checks
   // comms_opt_out itself before every send, so an old build that has never
   // heard of this control still cannot email someone who opted out.
+  // The last nine digits, so "0412 345 678", "+61412345678" and "(04) 1234 5678"
+  // are one person. Nine is the whole national number of an Australian mobile.
+  const phoneTail = (raw) => String(raw || '').replace(/\D/g, '').slice(-9);
+
+  // Whether this client has texted STOP. Looked up by NUMBER, because the
+  // per-job flag below belongs to one job and a new job starts it back at
+  // false — so a client who texted STOP would be texted again after their
+  // next booking. Returns null when there is nothing to show, and never throws:
+  // this is a lookup that decorates a control, and a missing table or no signal
+  // must leave the ordinary control exactly as it was.
+  async function numberOptOutFor(job) {
+    try {
+      if (window.IS_TEST || window.IS_DEMO || !window.supabaseClient || !job || !job.clientPhone) return null;
+      const tail = phoneTail(job.clientPhone);
+      if (tail.length < 9) return null;
+      const { data, error } = await window.supabaseClient
+        .from('comms_opt_outs').select('id, phone_e164, created_at, message');
+      if (error) return null;
+      return (data || []).find((r) => phoneTail(r.phone_e164) === tail) || null;
+    } catch (e) { return null; }
+  }
+
   function renderCommsRow(job) {
     const existing = document.getElementById('job-comms-row');
     if (existing) existing.remove();
-    if (!job || !job.clientEmail) return;
+    // A client reachable by email OR by text has something to opt out of. It
+    // used to need an email, which left a client who is only ever texted with
+    // no control at all.
+    if (!job || (!job.clientEmail && !job.clientPhone)) return;
 
     const row = document.createElement('div');
     row.id = 'job-comms-row';
@@ -500,8 +525,8 @@
     const label = document.createElement('span');
     label.className = 'comms-state';
     label.textContent = job.commsOptOut
-      ? 'Automated emails off for this client'
-      : 'Automated emails on';
+      ? 'Automated messages off for this client'
+      : 'Automated messages on';
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -509,26 +534,61 @@
     btn.textContent = job.commsOptOut ? 'Turn back on' : 'Turn off';
     btn.disabled = !canEditJob(job);
     btn.addEventListener('click', async () => {
+      // They texted STOP: the suppression is on their NUMBER, and turning it
+      // back on means removing that, not flipping this one job.
+      if (row.dataset.optOutId) {
+        const ok = await askConfirm(
+          'This client texted STOP. Only turn messages back on if they have asked you to.',
+          { title: 'They asked us to stop', okLabel: 'Turn back on', cancelLabel: 'Leave it off' },
+        );
+        if (!ok) return;
+        const { error } = await window.supabaseClient
+          .from('comms_opt_outs').delete().eq('id', row.dataset.optOutId);
+        if (error) { toast('Could not turn it back on — check your connection.'); return; }
+        // Every job this person has, not just this one: the endpoint flagged
+        // them all, and leaving any flagged would keep them silent.
+        const tail = phoneTail(job.clientPhone);
+        for (const other of await DB.getJobs()) {
+          if (other.commsOptOut && phoneTail(other.clientPhone) === tail) {
+            await DB.updateJob(other.id, { commsOptOut: false });
+          }
+        }
+        toast('Automated messages turned back on');
+        showJobView(job.id);
+        return;
+      }
       const turningOff = !job.commsOptOut;
       if (turningOff) {
         const ok = await askConfirm(
-          'Stop sending this client automated emails? They will still get '
+          'Stop sending this client automated messages? They will still get '
           + 'anything you send them yourself, and you can turn this back on '
           + 'at any time.',
-          { title: 'Turn off automated emails', okLabel: 'Turn off', cancelLabel: 'Keep them on' },
+          { title: 'Turn off automated messages', okLabel: 'Turn off', cancelLabel: 'Keep them on' },
         );
         if (!ok) return;
       }
       await DB.updateJob(job.id, { commsOptOut: turningOff });
       toast(turningOff
-        ? 'Automated emails turned off for this client'
-        : 'Automated emails turned back on');
+        ? 'Automated messages turned off for this client'
+        : 'Automated messages turned back on');
       showJobView(job.id);
     });
 
     row.append(label, btn);
     const jobMain = viewJob.querySelector('.content') || viewJob;
     jobMain.insertBefore(row, jobMain.firstChild);
+
+    // Decorates the row once the lookup comes back. Not awaited: the job screen
+    // must open at once, and a client who has texted STOP is the exception.
+    numberOptOutFor(job).then((hit) => {
+      if (!hit || !row.isConnected) return;
+      row.dataset.optOutId = hit.id;
+      row.className = 'comms-row opted-out';
+      label.textContent = `Texted STOP on ${new Date(hit.created_at).toLocaleDateString('en-AU', {
+        day: 'numeric', month: 'short',
+      })}. No automated messages are sent to them.`;
+      btn.textContent = 'Turn back on';
+    });
   }
 
   async function renderAssignedToButton(job) {

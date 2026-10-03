@@ -448,3 +448,14 @@ verify_jwt = false
 # tries to fix.
 [functions.send-due-reminders]
 verify_jwt = false
+
+# sms-inbound receives a text message sent TO the business, from ClickSend — a
+# server with no Scope login to present. The credential is a secret in the URL
+# (?k=...), compared in constant time, and the function refuses everything
+# until SMS_INBOUND_TOKEN is set, so leaving this switch off is not "open".
+#
+# Recorded here rather than left as a dashboard toggle, for the same reason as
+# client-portal and calendar-feed: a missed toggle on redeploy makes every
+# reply bounce with a 401 before the function runs, and a STOP is silently lost.
+[functions.sms-inbound]
+verify_jwt = false

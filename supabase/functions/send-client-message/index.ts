@@ -64,6 +64,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // textable number are covered by the suite rather than living only here,
 // where nothing on this machine can run them.
 import { composeReminder } from '../_shared/reminder-sms.js';
+import { isNumberOptedOut } from '../_shared/sms-inbound.js';
 // The timing rules for the annual re-inspection reminder, which used to live
 // in a second function of their own. See _shared/due-reminder.js.
 import { loadBusiness } from '../_shared/business.js';
@@ -75,6 +76,8 @@ import { dueReminderTiming, needsAPhoneCall as stillNotRebooked } from '../_shar
 // not land on it. 'already-sent' is the dedupe working, not a failure.
 const NOT_WORTH_CHASING = new Set([
   'already-sent', 'too-early', 'not-an-annual-cycle', 'no-due-date',
+  // Somebody who has asked us to stop is the opposite of a client to ring.
+  'opted-out',
 ]);
 
 // Read as "string or empty", never with a non-null assertion. The assertion
@@ -323,9 +326,33 @@ function isSmsKind(kind: string): boolean {
   return kind === 'day_before' && SMS_CONFIGURED;
 }
 
-function refuse(kind: string, job: JobRow, now: number, biz: Biz): string | null {
+// Everybody in this business who has texted STOP, as normalised numbers.
+//
+// Keyed by NUMBER rather than read off the job, because jobs.comms_opt_out is
+// per job and a new job starts false: a client who texted STOP would be texted
+// again the moment they booked their next visit. See migration 032.
+//
+// FAILS CLOSED. If the list cannot be read, this throws and nothing is sent. The
+// alternative — carry on without it — turns a database hiccup into texts going
+// to people who asked us to stop, and nobody would know it had happened.
+async function optedOutNumbers(orgId: string | null): Promise<Set<string>> {
+  if (!orgId) return new Set();
+  const { data, error } = await admin.from('comms_opt_outs').select('phone_e164').eq('org_id', orgId);
+  if (error) throw new Error(`Could not read the opt-out list, so nothing was sent: ${error.message}`);
+  // PostgREST silently stops at 1000 rows (max_rows in config.toml). A list that
+  // long is far past anything a business this size produces, and a truncated
+  // one would let the rest through unnoticed — so it refuses instead.
+  if ((data || []).length >= 1000) {
+    throw new Error('The opt-out list is too long to check safely, so nothing was sent.');
+  }
+  return new Set((data || []).map((r) => String((r as { phone_e164: string }).phone_e164)));
+}
+
+function refuse(kind: string, job: JobRow, now: number, biz: Biz, optedOut: Set<string>): string | null {
   if (!job) return 'job-not-found';
   if (job.comms_opt_out) return 'opted-out';
+  // The same person on a different job, or on one the flag never reached.
+  if (isNumberOptedOut(job.client_phone, optedOut)) return 'opted-out';
 
   // The annual re-inspection reminder is the only kind that is not triggered
   // by something a technician just did — it goes out unprompted, months after
@@ -502,6 +529,8 @@ async function sweepOneOrg(
   // Once per business per sweep, not once per client. Every message in this
   // sweep is sent on behalf of the same business.
   const biz = await loadBusiness(admin, orgId, BUSINESS_ENV) as Biz;
+  // Once per sweep, and before the first job is looked at.
+  const optedOut = await optedOutNumbers(orgId);
 
   const windowStart = now + 20 * 60 * 60 * 1000; // ~20h out
   const windowEnd = now + 32 * 60 * 60 * 1000;   // ~32h out
@@ -519,7 +548,7 @@ async function sweepOneOrg(
   if (error) throw new Error(error.message);
 
   const jobs = (data || []) as JobRow[];
-  const sendable = jobs.filter((j) => refuse(kind, j, now, biz) === null);
+  const sendable = jobs.filter((j) => refuse(kind, j, now, biz, optedOut) === null);
   const sms = isSmsKind(kind);
 
   if (dryRun) {
@@ -553,7 +582,7 @@ async function sweepOneOrg(
     // client hears nothing at all unless somebody rings them. 'already-sent'
     // is left out because it is not a problem, it is the dedupe working.
     const needsAPhoneCall = jobs
-      .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now, biz) }))
+      .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now, biz, optedOut) }))
       .filter((s) => s.reason !== null && !NOT_WORTH_CHASING.has(s.reason));
 
     // Reminded about this exact due date, and the date has now gone past
@@ -583,7 +612,7 @@ async function sweepOneOrg(
   }
   // Even on a live run, whoever could not be reached is the actionable half.
   const needsAPhoneCall = jobs
-    .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now, biz) }))
+    .map((j) => ({ jobId: j.id, name: j.name, phone: j.client_phone || null, reason: refuse(kind, j, now, biz, optedOut) }))
     .filter((s) => s.reason !== null && !NOT_WORTH_CHASING.has(s.reason));
 
   // Reminded about this exact due date, and the date has now gone past
@@ -789,7 +818,7 @@ Deno.serve(async (req) => {
     // Looked up from the JOB's own business, not the caller's: whoever it is
     // sent on behalf of is a property of the job.
     const biz = await loadBusiness(admin, job.org_id, BUSINESS_ENV) as Biz;
-    const reason = refuse(kind, job, Date.now(), biz);
+    const reason = refuse(kind, job, Date.now(), biz, await optedOutNumbers(job.org_id));
     if (reason) return json({ sent: false, reason });
 
     return json(await sendOne(kind, job, triggeredBy, biz));

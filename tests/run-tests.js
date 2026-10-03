@@ -4813,17 +4813,18 @@
       'and names the function, so whoever deploys it knows which one');
   });
 
-  test('Comms: the opt-out control stays hidden until there is an email to stop', async () => {
+  test('Comms: the opt-out control stays hidden until there is an email or a phone to stop', async () => {
     // Same "invisible until it matters" rule as the technician tag. A job
-    // with no client email has nothing to opt out of, and a control that
-    // does nothing is worse than no control.
+    // with no client email AND no phone has nothing to opt out of, and a
+    // control that does nothing is worse than no control. (It used to need an
+    // email, which left a client who is only ever texted with no control.)
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
 
     const noEmail = await win.DB.addJob({ name: 'Comms no-email', address: '1 Quiet St' });
     await win.showJobViewById(noEmail.id);
     assert(!doc.getElementById('job-comms-row'),
-      'no email on the job, so no automated-email row at all');
+      'no email or phone on the job, so no automated-messages row at all');
 
     const withEmail = await win.DB.addJob({
       name: 'Comms with-email', address: '2 Loud St', clientEmail: 'someone@example.com',
@@ -4831,7 +4832,7 @@
     await win.showJobViewById(withEmail.id);
     const row = doc.getElementById('job-comms-row');
     assert(row, 'a job with a client email shows the row');
-    assert(/automated emails on/i.test(row.textContent),
+    assert(/automated messages on/i.test(row.textContent),
       `a new client starts opted in: ${row.textContent}`);
   });
 
@@ -7443,6 +7444,287 @@
     // A client replying to their report should reach a person.
     const report = await (await fetch('../supabase/functions/send-report-email/index.ts', { cache: 'reload' })).text();
     assert(/reply_to:\s*biz\.replyTo/.test(report), 'a report email must carry a Reply-To');
+  });
+
+  // ---------- STOP replies (sms-inbound) ----------
+  // Every reminder says "Reply STOP to opt out." For a long time the reply went
+  // to the SMS provider's inbox and nothing in Scope saw it, so the promise was
+  // being made and not kept. These pin the half that keeps it.
+  let __inb = null;
+  async function Inb() {
+    if (__inb) return __inb;
+    try {
+      __inb = await import('../supabase/functions/_shared/sms-inbound.js');
+    } catch (e) {
+      throw new Error('Could not load sms-inbound.js. Serve the project over http '
+        + '(preview_start "scope-local", then open http://localhost:8787/tests/run-tests.html) '
+        + 'instead of opening this file directly. Original error: ' + (e && e.message));
+    }
+    return __inb;
+  }
+
+  test('STOP: the ways people actually say it all count', async () => {
+    const m = await Inb();
+    for (const text of [
+      'STOP', 'stop', 'Stop.', ' STOP! ', 'Stop all', 'STOPALL', 'unsubscribe', 'UNSUBSCRIBE ME',
+      'Opt out', 'opt-out', 'optout', 'QUIT', 'End', 'cancel', 'remove me',
+      'Stop texting me', 'please stop messaging me', 'Stop sending me these', 'I want to unsubscribe',
+      'STOP \u{1F64F}',
+    ]) {
+      assertEqual(m.classifyReply(text), 'stop', `should have been a STOP: ${JSON.stringify(text)}`);
+    }
+  });
+
+  test('STOP: an ordinary reply is never mistaken for one', async () => {
+    const m = await Inb();
+    // These are messages a person has to ACT ON. Treating "cancel my
+    // appointment" as an opt-out would silence a client and bury a booking
+    // change in the same stroke.
+    for (const text of [
+      'Cancel my appointment please', 'Can we move it to 11?', 'Thanks!', 'ok', 'Yes that is fine',
+      "I'm not home tomorrow", 'Can you stop by after 3', 'What time will you be here',
+      'Please call me', '', '   ', null, undefined,
+    ]) {
+      assertEqual(m.classifyReply(text), 'reply', `should have stayed a reply: ${JSON.stringify(text)}`);
+    }
+  });
+
+  test('STOP: a message is read the same whichever way the provider delivers it', async () => {
+    const m = await Inb();
+    const want = { from: '+61412345678', to: '+61400000000', body: 'STOP', messageId: 'M-1', customString: 'job-1' };
+
+    // The default: a form POST.
+    const form = m.parseInbound('application/x-www-form-urlencoded',
+      'from=%2B61412345678&to=%2B61400000000&body=STOP&message_id=M-1&custom_string=job-1', new URLSearchParams());
+    for (const k of Object.keys(want)) assertEqual(form[k], want[k], 'form POST: ' + k);
+
+    // A JSON POST.
+    const json = m.parseInbound('application/json',
+      JSON.stringify({ from: '+61412345678', to: '+61400000000', body: 'STOP', message_id: 'M-1', custom_string: 'job-1' }),
+      new URLSearchParams());
+    assertEqual(json.from, want.from, 'JSON POST: from');
+    assertEqual(json.body, want.body, 'JSON POST: body');
+    assertEqual(json.customString, want.customString, 'JSON POST: the job id we attached');
+
+    // JSON wrapped in { data: ... }.
+    const wrapped = m.parseInbound('application/json',
+      JSON.stringify({ data: { from: '+61412345678', body: 'STOP' } }), new URLSearchParams());
+    assertEqual(wrapped.body, 'STOP', 'a wrapped message is read through');
+
+    // A GET, everything in the query string.
+    const get = m.parseInbound('', '', new URLSearchParams('from=%2B61412345678&body=STOP&message_id=M-1'));
+    assertEqual(get.from, want.from, 'GET: from');
+    assertEqual(get.messageId, 'M-1', 'GET: message id');
+
+    // "message" is accepted as a name for the text.
+    assertEqual(m.parseInbound('', '', new URLSearchParams('from=0412345678&message=STOP')).body, 'STOP',
+      'some paths call the text "message"');
+
+    // Garbage in is empty out, never a throw.
+    const junk = m.parseInbound('application/json', '{not json', new URLSearchParams());
+    assertEqual(junk.body, '', 'an unreadable body is treated as empty');
+  });
+
+  test('STOP: the decision keys on a normalised number and keeps what it cannot key', async () => {
+    const m = await Inb();
+    const stop = m.decideInbound({ from: '0412 345 678', body: 'STOP' });
+    assertEqual(stop.kind, 'stop');
+    assertEqual(stop.e164, '+61412345678', 'normalised the same way as the number that gets texted');
+    assertEqual(stop.keyable, true);
+
+    // Said stop from a number that is not an Australian mobile. It cannot be
+    // suppressed by number — but it must not be thrown away, and the caller has
+    // to be told it was NOT suppressed.
+    const odd = m.decideInbound({ from: '+14155550123', body: 'STOP' });
+    assertEqual(odd.kind, 'stop', 'it still says stop');
+    assertEqual(odd.keyable, false, 'but there is nothing to key it on');
+    assertEqual(odd.e164, null);
+
+    assertEqual(m.decideInbound({ from: '', body: '' }).ignore, true, 'nothing at all is ignored');
+    assertEqual(m.decideInbound({ from: '0412345678', body: 'x'.repeat(5000) }).body.length, 500,
+      'a message is bounded before it is stored');
+  });
+
+  test('STOP: it survives a new job, because it is the NUMBER that is remembered', async () => {
+    const m = await Inb();
+    // Last year's job had the number typed one way; this year's another. The
+    // per-job flag cannot help — a new job starts opted in — so a client who
+    // texted STOP would be texted again the moment they booked again.
+    const optedOut = new Set(['+61412345678']);
+    assertEqual(m.isNumberOptedOut('0412 345 678', optedOut), true, 'as typed on the old job');
+    assertEqual(m.isNumberOptedOut('+61 412 345 678', optedOut), true, 'as typed on the new one');
+    assertEqual(m.isNumberOptedOut('(04) 1234-5678', optedOut), true, 'however it is punctuated');
+
+    assertEqual(m.isNumberOptedOut('0499 999 999', optedOut), false, 'a different person is not caught');
+    // A landline or a typo never matches. Nobody texts STOP from one, and
+    // guessing would silence a stranger.
+    assertEqual(m.isNumberOptedOut('02 9127 1320', optedOut), false, 'a landline cannot match');
+    assertEqual(m.isNumberOptedOut('', optedOut), false, 'no number, no match');
+    assertEqual(m.isNumberOptedOut('0412 345 678', new Set()), false, 'an empty list suppresses nobody');
+    assertEqual(m.isNumberOptedOut('0412 345 678', null), false, 'and a missing one does not throw');
+  });
+
+  test('STOP: the shared secret is compared properly', async () => {
+    const m = await Inb();
+    assertEqual(m.sameSecret('abc123', 'abc123'), true);
+    assertEqual(m.sameSecret('abc123', 'abc124'), false, 'one character off');
+    assertEqual(m.sameSecret('abc12', 'abc123'), false, 'a prefix is not a match');
+    assertEqual(m.sameSecret('abc1234', 'abc123'), false, 'nor is something longer');
+    assertEqual(m.sameSecret('', 'abc123'), false, 'nothing supplied');
+  });
+
+  test('STOP: the endpoint refuses everything until it is configured, and never reads messages back', async () => {
+    // Asserted against the source, because there is no Deno here.
+    const src = await (await fetch('../supabase/functions/sms-inbound/index.ts', { cache: 'reload' })).text();
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+    // Rule one. The check for "no secret set" must come BEFORE the comparison,
+    // or "I have not set it up yet" quietly means "anybody may record an opt-out".
+    const unconfigured = code.indexOf('!INBOUND_TOKEN');
+    const compared = code.indexOf('sameSecret(');
+    assert(unconfigured > -1 && compared > -1 && unconfigured < compared,
+      'an unset secret must be refused before any secret is compared');
+    assert(/503/.test(code.slice(unconfigured, compared)), 'and say so with a 503');
+    assert(!/INBOUND_TOKEN\s*(===|==|!==|!=)|(===|==|!==|!=)\s*INBOUND_TOKEN/.test(code),
+      'the secret is compared in constant time, never with ===');
+
+    // What a stolen secret can reach is set by grants, but the code should not
+    // ask for more than it needs either.
+    const inserts = (code.match(/from\('([a-z_]+)'\)\s*\.insert\(/g) || [])
+      .map((s) => s.match(/from\('([a-z_]+)'\)/)[1]).sort().join(',');
+    assertEqual(inserts, 'comms_opt_outs,sms_inbound', 'it records an opt-out and a message, nothing else');
+    assert(!/from\('(comms_opt_outs|sms_inbound)'\)\s*\.(delete|update|select)\(/.test(code),
+      'it never removes an opt-out and never reads a message back');
+    assert(!/\.upsert\(/.test(code),
+      'a plain insert, with a duplicate treated as success — upsert cannot target the partial index');
+
+    const config = await (await fetch('../supabase/config.toml', { cache: 'reload' })).text();
+    assert(/\[functions\.sms-inbound\]\s*verify_jwt\s*=\s*false/.test(config),
+      'JWT verification is off and recorded in config, so a redeploy cannot turn it back on');
+  });
+
+  test('STOP: sending fails closed — if the list cannot be read, nothing goes out', async () => {
+    const src = await (await fetch('../supabase/functions/send-client-message/index.ts', { cache: 'reload' })).text();
+    assert(/nothing was sent/.test(src), 'a failed read of the opt-out list must stop the send');
+    assert(/optedOutNumbers\(orgId\)/.test(src), 'a sweep reads the list once, before the first job');
+    assert(/optedOutNumbers\(job\.org_id\)/.test(src), 'and a single send checks it too');
+    assert(/isNumberOptedOut\(job\.client_phone, optedOut\)/.test(src),
+      'and every job is compared by NUMBER, not by its own flag');
+    // Somebody who asked us to stop must not appear on the list of people to ring.
+    assert(/'opted-out'/.test(src.slice(src.indexOf('NOT_WORTH_CHASING'), src.indexOf('NOT_WORTH_CHASING') + 400)),
+      'a client who texted STOP is not a client to phone');
+  });
+
+  test('STOP: the table lets the endpoint record and nobody public remove', async () => {
+    const sql = await (await fetch('../supabase-migration-032-sms-inbound.sql', { cache: 'reload' })).text();
+    const grants = sql.split('\n').filter((l) => /^\s*grant\s/i.test(l));
+    const forRole = (table, role) => grants.filter((g) => g.includes(table) && g.includes(role)).join(' ');
+
+    const optOutService = forRole('comms_opt_outs', 'service_role');
+    assert(/select,\s*insert/i.test(optOutService), 'the endpoint reads the list and records a STOP');
+    assert(!/update|delete/i.test(optOutService),
+      'nothing that runs on the service key may reinstate somebody who opted out');
+
+    const inboundService = forRole('sms_inbound', 'service_role');
+    assert(/insert/i.test(inboundService) && !/select|update|delete/i.test(inboundService),
+      'the endpoint stores a message and reads nothing back, so a stolen link reads nobody’s texts');
+
+    assert(!grants.some((g) => /\banon\b/i.test(g)), 'nobody signed out is granted anything');
+    // One row per business per number, so a second STOP is a no-op.
+    assert(/unique index[^;]*comms_opt_outs\(org_id, phone_e164\)/i.test(sql), 'a repeat STOP cannot duplicate');
+  });
+
+  // The two screens, driven with a stubbed backend. The frame runs with ?test=1,
+  // which switches these lookups off by design — a test that touched a real
+  // session would read production — so the flag is lifted for the length of
+  // each check and restored whatever happens.
+  function stubTable(rows) {
+    // Enough of the supabase-js query builder to answer the calls the screens
+    // make: any chain of filters, then await.
+    const chain = {
+      select: () => chain, is: () => chain, order: () => chain, limit: () => chain,
+      eq: () => chain, update: () => chain, delete: () => chain,
+      then: (resolve) => resolve({ data: rows, error: null }),
+    };
+    return chain;
+  }
+
+  async function withBackend(win, tables, fn) {
+    const wasTest = win.IS_TEST;
+    win.IS_TEST = false;
+    win.supabaseClient = { from: (name) => stubTable(tables[name] || []) };
+    try { await fn(); } finally {
+      win.IS_TEST = wasTest;
+      delete win.supabaseClient;
+    }
+  }
+
+  test('STOP: a client who texted STOP is shown as stopped, by number, on a job that never opted out', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+
+    // A NEW job: its own flag says opted in. The number is what says otherwise.
+    const job = await win.DB.addJob({ name: 'Stopped Client', address: '9 Quiet Rd', clientPhone: '0412 345 678' });
+    assertEqual(job.commsOptOut, false, 'the job itself knows nothing about it');
+
+    await withBackend(win, {
+      comms_opt_outs: [{ id: 'oo1', phone_e164: '+61412345678', created_at: new Date(2031, 2, 14).getTime(), message: 'STOP' }],
+    }, async () => {
+      await win.showJobViewById(job.id);
+      await waitFor(() => {
+        const r = doc.getElementById('job-comms-row');
+        return r && r.dataset.optOutId === 'oo1';
+      }, 'the row should pick up the STOP by number');
+      const row = doc.getElementById('job-comms-row');
+      assert(/texted stop on 14 mar/i.test(row.textContent), `it says when: ${row.textContent}`);
+      assert(row.classList.contains('opted-out'), 'and is marked, so it is noticed before anyone wonders why nothing sent');
+      assert(/turn back on/i.test(row.querySelector('button').textContent), 'with the way back');
+    });
+  });
+
+  test('STOP: a phone-only client gets the control, because they are texted too', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Phone Only', address: '5 Ring St', clientPhone: '0455 111 222' });
+    await win.showJobViewById(job.id);
+    const row = doc.getElementById('job-comms-row');
+    assert(row, 'a client with a phone and no email still has something to opt out of');
+    assert(/automated messages on/i.test(row.textContent), row.textContent);
+  });
+
+  test('STOP: replies appear in the panel with a name, and a STOP says it has been acted on', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.DB.addJob({ name: 'Reply Person', address: '1 Reply Ln', clientPhone: '0433 222 111' });
+
+    await withBackend(win, {
+      sms_inbound: [
+        { id: 'i1', from_e164: '+61433222111', from_raw: '+61433222111', body: 'Can we move it to 11?', kind: 'reply', job_id: null, received_at: Date.now() },
+        { id: 'i2', from_e164: '+61499000111', from_raw: '+61499000111', body: 'STOP', kind: 'stop', job_id: null, received_at: Date.now() - 1000 },
+      ],
+    }, async () => {
+      await win.RemindersUI.renderReplies();
+      const box = doc.getElementById('reminders-replies');
+      const text = box.textContent;
+      assert(/2 replies to read/i.test(text), `a count: ${text}`);
+      assert(/Reply Person/.test(text), 'the sender is a NAME, found from the number, not just digits');
+      assert(/Can we move it to 11\?/.test(text), 'and exactly what they said');
+      assert(/Asked us to stop\. No more automated messages/.test(text),
+        'a STOP says it has already been dealt with, so nobody thinks they have to');
+      assert(doc.getElementById('reminders-open').classList.contains('has-unread'),
+        'and the bell carries a dot, because nobody opens a panel to see whether there is anything in it');
+    });
+  });
+
+  test('STOP: with nothing unread the panel stays clean and the dot goes', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    doc.getElementById('reminders-open').classList.add('has-unread');
+    await withBackend(win, { sms_inbound: [] }, async () => {
+      await win.RemindersUI.renderReplies();
+      assertEqual(doc.getElementById('reminders-replies').children.length, 0, 'nothing is drawn');
+      assert(!doc.getElementById('reminders-open').classList.contains('has-unread'), 'and the dot is cleared');
+    });
   });
 
   async function runAll() {

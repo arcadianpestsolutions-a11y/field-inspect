@@ -2791,3 +2791,15 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   border-left: 3px solid var(--accent); padding-left: 10px;
 }
 .client-link-accepted p { margin: 0; font-size: .9rem; line-height: 1.45; }
+
+/* Replies that came back to a reminder. The bell gets a dot when any are unread,
+   because nobody opens a panel to find out whether there is something in it. */
+#reminders-open { position: relative; }
+#reminders-open.has-unread::after {
+  content: ''; position: absolute; top: 4px; right: 4px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent-2); box-shadow: var(--glow-accent-2);
+}
+.reminders-stop-note {
+  margin: 4px 0 8px; font-size: .86rem; color: var(--accent-2);
+}
