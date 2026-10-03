@@ -7125,6 +7125,191 @@
       'and it must now apply the timing rules that moved out of the retired function');
   });
 
+  // ---------- Error log (error-log.js) ----------
+  // Dispatched onto the app frame's own window, which is where a real uncaught
+  // error would land. The frame runs with ?test=1, so it never announces and
+  // never sends — which is itself one of the things asserted below.
+  function throwInto(win, message, over) {
+    const err = new win.Error(message);
+    const ev = new win.ErrorEvent('error', Object.assign({
+      message, filename: 'https://example.test/app.js', lineno: 42, colno: 7, error: err,
+    }, over || {}));
+    win.dispatchEvent(ev);
+  }
+
+  function rejectInto(win, reason) {
+    const ev = new win.Event('unhandledrejection');
+    ev.reason = reason;
+    win.dispatchEvent(ev);
+  }
+
+  test('Error log: an uncaught error is written down with where, which build and which screen', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    throwInto(win, 'Cannot read properties of undefined (reading id)');
+    const [entry] = win.ErrorLog.list();
+    assert(entry, 'it should have been recorded');
+    assertEqual(entry.kind, 'error');
+    assert(/reading id/.test(entry.message), 'the message is kept');
+    assertEqual(entry.line, 42, 'and the line, so it can be found');
+    assertEqual(entry.version, win.APP_VERSION, 'and the build, because a stale cached build is the usual suspect');
+    assert('screen' in entry, 'and which screen was showing');
+    assertEqual(entry.sent, false, 'not sent in test mode');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: unhandled promise rejections are recorded whatever shape they arrive in', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    rejectInto(win, new win.Error('Failed to save the job'));
+    rejectInto(win, 'a bare string');
+    rejectInto(win, { message: 'a plain object with a message' });
+    rejectInto(win, { code: '42501' });
+    const log = win.ErrorLog.list();
+    assertEqual(log.length, 4, 'all four are different, so all four are kept');
+    assert(log.every((e) => e.kind === 'rejection'), 'and marked as rejections');
+    assert(log.some((e) => /Failed to save the job/.test(e.message)), 'an Error keeps its message');
+    assert(log.some((e) => e.message === 'a bare string'), 'a string is kept as it is');
+    assert(log.some((e) => e.message === '42501'),
+      'a Supabase-style error with only a code still says something — the code is the useful part');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: the same failure repeating is one entry with a count, not forty', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    // A render failing on every tick is the case this exists for. Without it
+    // the buffer fills with one line repeated and everything else is pushed out.
+    for (let i = 0; i < 25; i++) throwInto(win, 'render blew up');
+    const log = win.ErrorLog.list();
+    assertEqual(log.length, 1, 'one entry');
+    assertEqual(log[0].count, 25, 'with the number of times it happened');
+    throwInto(win, 'a different problem');
+    assertEqual(win.ErrorLog.list().length, 2, 'a different error is a new entry');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: browser noise is not recorded, so it cannot bury a real failure', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    throwInto(win, 'ResizeObserver loop completed with undelivered notifications.');
+    throwInto(win, 'Script error.', { filename: '', lineno: 0, colno: 0, error: null });
+    const abort = new win.Error('The user aborted a request.');
+    abort.name = 'AbortError';
+    rejectInto(win, abort);
+    assertEqual(win.ErrorLog.list().length, 0,
+      'none of those is a fault in the app — all three fire constantly in ordinary use');
+    // And the guard is not so broad that it swallows a real one.
+    throwInto(win, 'Something actually broke');
+    assertEqual(win.ErrorLog.list().length, 1, 'a real error still gets through');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: only the most recent entries are kept', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    const cap = win.ErrorLog.MAX_ENTRIES;
+    for (let i = 0; i < cap + 20; i++) throwInto(win, 'distinct failure number ' + i);
+    const log = win.ErrorLog.list();
+    assertEqual(log.length, cap, 'storage is bounded — a phone has no use for an unbounded log');
+    assert(log[log.length - 1].message.endsWith(String(cap + 19)), 'the newest is kept');
+    assert(!log.some((e) => e.message.endsWith(' 0')), 'the oldest is the one that goes');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: long values are cut before they are stored, so nothing stray travels far', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    // An error string that happens to embed a value — a name, an address, a
+    // whole record serialised into a message — must not be stored or sent in
+    // full. The cap is the privacy boundary, so it is worth pinning.
+    const huge = 'Jane Homeowner, 14 Example Road: ' + 'x'.repeat(5000);
+    const err = new win.Error(huge);
+    err.stack = 'Error: ' + huge + '\n' + '    at somewhere (app.js:1:1)\n'.repeat(400);
+    win.dispatchEvent(new win.ErrorEvent('error', { message: huge, filename: 'app.js', lineno: 1, error: err }));
+    const [entry] = win.ErrorLog.list();
+    assert(entry.message.length <= win.ErrorLog.MAX_MESSAGE, `message is ${entry.message.length} long`);
+    assert(entry.stack.length <= win.ErrorLog.MAX_STACK, `stack is ${entry.stack.length} long`);
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: a broken logger can never be the problem', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    // A handler that throws inside an error handler is how a small bug becomes
+    // an infinite loop. None of these may throw, and none may lose the page.
+    const circular = {}; circular.self = circular;
+    const awkward = [
+      () => rejectInto(win, undefined),
+      () => rejectInto(win, null),
+      () => rejectInto(win, circular),
+      () => rejectInto(win, { get message() { throw new Error('getter exploded'); } }),
+      () => win.dispatchEvent(new win.ErrorEvent('error', {})),
+      () => win.ErrorLog.note(undefined),
+      () => win.ErrorLog.note(null, 'saving'),
+    ];
+    for (const fn of awkward) fn(); // would throw out of the test if the logger leaked
+    assert(true, 'it survived');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: a caught error can still be put on the record', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    // The point of note(): a try/catch that shows "could not save" has the
+    // reason in hand and nowhere to put it, which is exactly how the first
+    // real job lost its explanation.
+    win.ErrorLog.note(new win.Error('QuotaExceededError'), 'saving the sketch');
+    const [entry] = win.ErrorLog.list();
+    assertEqual(entry.kind, 'handled');
+    assert(/saving the sketch: QuotaExceededError/.test(entry.message), `got: ${entry.message}`);
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: nothing is ever sent from test mode, and unsent entries wait', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    throwInto(win, 'would be sent in real life');
+    await win.ErrorLog.flush();
+    // Test and demo mode never touch the cloud — sync.js says the same for the
+    // same reason: a browser holding a real session would push fixtures into
+    // the live database.
+    assertEqual(win.ErrorLog.unsent(), 1, 'it stays queued rather than going anywhere');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: the readable copy names the build and the failure', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    assert(/No problems recorded/.test(win.ErrorLog.asText()), 'an empty log says so plainly');
+    throwInto(win, 'the thing that broke');
+    const text = win.ErrorLog.asText();
+    assert(text.includes(win.APP_VERSION), 'it names the build');
+    assert(text.includes('the thing that broke'), 'and what failed');
+    assert(text.includes('app.js:42'), 'and where');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: it loads before everything else, and works offline from the first request', async () => {
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+    assertEqual(scripts[0], 'error-log.js',
+      `it must be the FIRST script, so a failure while the rest is loading is caught — got ${scripts[0]}`);
+
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(/'\.\/error-log\.js'/.test(sw),
+      'it must be in the service worker shell, or a device that boots offline has no logger');
+  });
+
+  test('Error log: the table accepts reports and nothing else', async () => {
+    const sql = await (await fetch('../supabase-migration-031-client-errors.sql', { cache: 'reload' })).text();
+    const grants = sql.split('\n').filter((l) => /^\s*grant\s/i.test(l)).join('\n');
+    assert(/select,\s*insert/i.test(grants), 'the app may insert and read');
+    assert(!/update|delete|all/i.test(grants),
+      'an error log the logged thing can edit is not much of a log');
+    assert(!/service_role|anon/i.test(grants), 'and nobody else is granted anything');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

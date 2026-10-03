@@ -791,11 +791,18 @@
 
     <button id="export-data-btn" class="btn btn-outline full">⬇ Export All Data</button>
     <p class="empty-hint">Downloads every job, report and invoice as a file you keep yourself — a backup independent of the cloud. Photos aren't included; those already back up separately when synced.</p>
+
+    <button id="error-log-btn" class="btn btn-outline full">Copy problem log</button>
+    <p id="error-log-hint" class="empty-hint">Nothing has gone wrong on this device.</p>
   </main>
 </section>
 
 <div id="toast" class="toast hidden"></div>
 
+<!-- FIRST, before even version.js: a failure while the rest of the app is
+     still loading is exactly the kind that otherwise leaves a blank screen and
+     nothing to debug from. It reads APP_VERSION lazily, so order is safe. -->
+<script src="error-log.js"></script>
 <script src="version.js"></script>
 <!-- Vendored, not CDN-loaded. These are render-blocking scripts that run before
      any app code, so an unreachable or slow CDN at a job site means a blank
