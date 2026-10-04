@@ -696,7 +696,58 @@ function visibleSchema(schema, record) {
   return (schema || []).filter((s) => isSectionVisible(s, record));
 }
 
+// Which sections an answer to THIS field decides. Derived from the schema's own
+// showIf conditions rather than written out by hand beside each field, so the
+// warning below cannot drift from what the sections actually do.
+function sectionsGatedBy(schema, sectionId, fieldId) {
+  return (schema || []).filter((s) => s.showIf
+    && s.showIf.section === sectionId && s.showIf.field === fieldId);
+}
+
+// One plain sentence saying what answering this question can add, for the
+// technician to read BEFORE choosing — or '' when the field decides nothing.
+//
+// The surprise this exists for happens at the dropdown, not afterwards: one
+// answer in Findings opens two more sections (a proposal and a warranty) and
+// the first anybody knew was a longer list. Naming it where the choice is made
+// is the only point at which it can still change what somebody picks.
+//
+// Written from the field's own options so it reads "Any answer except
+// “Adequate…”" rather than listing three long answers, and falls back to naming
+// the answers when that would be misleading.
+function describeGate(field, gatedSections) {
+  const gated = gatedSections || [];
+  if (!field || !gated.length) return '';
+  const titles = gated.map((s) => s.title);
+  const named = titles.length > 1
+    ? `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`
+    : titles[0];
+
+  // All gated sections are decided by the same condition in this schema; the
+  // first one describes it.
+  const cond = gated[0].showIf;
+  const options = Array.isArray(field.options) ? field.options : [];
+
+  if (Array.isArray(cond.oneOf)) {
+    const others = options.filter((o) => !cond.oneOf.includes(o));
+    // "Any answer except X" is true and short when one or two answers leave the
+    // sections out; otherwise name the answers that add them.
+    if (options.length && others.length && others.length <= 2) {
+      return `Any answer except “${others.join('” or “')}” adds: ${named}.`;
+    }
+    return `Answering “${cond.oneOf.join('” or “')}” adds: ${named}.`;
+  }
+  if (Object.prototype.hasOwnProperty.call(cond, 'equals')) {
+    return `Answering “${cond.equals}” adds: ${named}.`;
+  }
+  if (Object.prototype.hasOwnProperty.call(cond, 'notEquals')) {
+    return `Any answer except “${cond.notEquals}” adds: ${named}.`;
+  }
+  return '';
+}
+
 window.ReportSchemaUtils = {
+  sectionsGatedBy, describeGate,
   isFieldVisible, isSectionVisible, visibleSchema,
   computeSectionStatus, defaultValuesForSection, YES_NO,
   fieldValidationErrors, sectionValidationErrors, reportValidationErrors,

@@ -2242,6 +2242,20 @@
   // that belongs in a generic form renderer, so it arrives through the
   // decorateRow hook instead.
   function decorateRowWithAi(row, field) {
+    // What this answer can add to the report, said where the choice is made.
+    // See describeGate in report-schema.js for why it has to be here and not
+    // only afterwards.
+    const utils = window.ReportSchemaUtils;
+    if (utils && utils.sectionsGatedBy) {
+      const gateText = utils.describeGate(field, utils.sectionsGatedBy(currentSchema(), currentSectionId, field.id));
+      if (gateText) {
+        const gate = document.createElement('span');
+        gate.className = 'field-gate-note';
+        gate.textContent = gateText;
+        row.appendChild(gate);
+      }
+    }
+
     if (aiAppliedFieldIds.has(field.id)) {
       row.classList.add('ai-suggested-value');
       const note = document.createElement('span');
@@ -4063,7 +4077,10 @@
     const field = sourceSection && sourceSection.fields.find((f) => f.id === cond.field);
     const answer = (currentReport.sections[cond.section] || {})[cond.field];
     if (!field || !answer) return '';
-    return `Because you answered “${answer}”`;
+    // Names the QUESTION as well as the answer. "Because you answered 'Present
+    // but inadequate'" is a mystery to somebody who does not remember which of
+    // forty questions that was the answer to.
+    return `Because you answered “${answer}” to “${field.label}”`;
   }
 
   // Says which sections just appeared or disappeared, and because of what.

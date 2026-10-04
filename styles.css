@@ -2775,9 +2775,9 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   font-size: 0.72rem;
   color: var(--text-dim);
   margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wraps. It used to be one ellipsised line, which on a phone cut the answer
+     off after a few words and never reached the question it answered. */
+  line-height: 1.3;
 }
 
 /* Client link: asking for acceptance, and what comes back. */
@@ -2802,4 +2802,13 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 }
 .reminders-stop-note {
   margin: 4px 0 8px; font-size: .86rem; color: var(--accent-2);
+}
+
+/* Said under a question whose answer can add sections, before it is answered. */
+.field-gate-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--accent-2);
 }

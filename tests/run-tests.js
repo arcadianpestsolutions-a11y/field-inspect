@@ -7727,6 +7727,125 @@
     });
   });
 
+  // ---------- Warning before an answer adds sections ----------
+  // The report behind this: "something triggered the action plan and I don't
+  // know what". It was one answer in Findings — "Present but inadequate —
+  // management plan proposed" — opening a proposal and a warranty. v94 added a
+  // toast and a caption saying so AFTER it happened; they were shown, and still
+  // missed, because the toast lasted 2.2 seconds for a 200-character sentence
+  // and the caption was cut to one line. These cover what was still missing.
+  const Utils = () => window.ReportSchemaUtils;
+  const findingsGate = () => {
+    const findings = window.REPORT_SCHEMA.find((s) => s.id === 'findings');
+    const field = findings.fields.find((f) => f.id === 'managementSystemStatus');
+    return { field, gated: Utils().sectionsGatedBy(window.REPORT_SCHEMA, 'findings', 'managementSystemStatus') };
+  };
+
+  test('Gate warning: the schema says which sections that one answer decides', () => {
+    const { gated } = findingsGate();
+    assertEqual(gated.map((s) => s.id).sort().join(','), 'proposedWorks,worksWarranty',
+      'exactly the proposal and the warranty, derived from the schema rather than written by hand');
+    assertEqual(Utils().sectionsGatedBy(window.REPORT_SCHEMA, 'findings', 'borersFound').length, 0,
+      'an ordinary question decides nothing');
+    assertEqual(Utils().sectionsGatedBy(null, 'findings', 'x').length, 0, 'and a missing schema does not throw');
+  });
+
+  test('Gate warning: it reads as one plain sentence naming what gets added', () => {
+    const { field, gated } = findingsGate();
+    const text = Utils().describeGate(field, gated);
+    assert(/Any answer except/.test(text), `shorter and truer than listing three answers: ${text}`);
+    assert(text.includes('Adequate — no further works proposed'), `it names the one answer that adds nothing: ${text}`);
+    assert(text.includes('Proposed Termite Management'), `and the first thing added: ${text}`);
+    assert(text.includes('Warranty & Ongoing Requirements'), `and the second: ${text}`);
+    assert(/ and /.test(text), 'joined as a sentence, not a list of fragments');
+    assertEqual(Utils().describeGate(field, []), '', 'a field that decides nothing says nothing');
+    assertEqual(Utils().describeGate(null, gated), '', 'and no field is not an error');
+  });
+
+  test('Gate warning: the other kinds of condition are described honestly too', () => {
+    const f = { id: 'q', options: ['Yes', 'No'] };
+    const section = (showIf) => [{ id: 's', title: 'Extra Page', showIf }];
+    assert(/Answering “Yes” adds: Extra Page\./.test(
+      Utils().describeGate(f, section({ section: 'a', field: 'q', equals: 'Yes' }))), 'equals');
+    assert(/Any answer except “No” adds: Extra Page\./.test(
+      Utils().describeGate(f, section({ section: 'a', field: 'q', notEquals: 'No' }))), 'notEquals');
+    // When several answers add it and several leave it out, naming the ones
+    // that add it is the honest form — "any except" would mislead.
+    const wide = { id: 'q', options: ['A', 'B', 'C', 'D', 'E'] };
+    const text = Utils().describeGate(wide, section({ section: 'a', field: 'q', oneOf: ['A', 'B'] }));
+    assert(/Answering “A” or “B” adds/.test(text), text);
+  });
+
+  test('Gate warning: a message stays up long enough to read', async () => {
+    const win = frame.contentWindow;
+    const ms = win.toastDurationFor;
+    assertEqual(ms('Link copied'), 2200, 'a short message keeps the old 2.2 seconds');
+    assertEqual(ms(''), 2200, 'and nothing at all does not throw');
+    // The sentence that actually explains why two sections appeared.
+    const explanation = 'Proposed Termite Management and Warranty & Ongoing Requirements have been added to this report'
+      + ' — you answered “Present but inadequate — management plan proposed” to “Is the existing termite'
+      + ' management system adequate for this property?”.';
+    assert(explanation.length > 180, 'sanity: this is the real sentence, and it is long');
+    assert(ms(explanation) >= 8000,
+      `2.2 seconds for ${explanation.length} characters is how it went unread — got ${ms(explanation)}ms`);
+    assertEqual(ms('x'.repeat(5000)), 9000, 'but nothing sits on screen over somebody’s work for ever');
+    assert(ms('x'.repeat(100)) > ms('x'.repeat(40)), 'and it scales with what there is to read');
+  });
+
+  test('Gate warning: it is on screen at the dropdown, before the answer is chosen', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Gate Warning Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(async () => !!doc.querySelector('#report-section-list .report-section-item'), 'report opens');
+    Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((li) => /Findings/.test(li.textContent)).click();
+    await waitFor(async () => !!doc.querySelector('[data-field-row="managementSystemStatus"]'), 'the question is on screen');
+
+    const row = doc.querySelector('[data-field-row="managementSystemStatus"]');
+    const note = row.querySelector('.field-gate-note');
+    assert(note, 'the question carries a warning about what its answers do');
+    assert(/Proposed Termite Management/.test(note.textContent), `it names the section: ${note.textContent}`);
+    assert(/Any answer except/.test(note.textContent), `and which answer leaves it out: ${note.textContent}`);
+
+    // And an ordinary question carries nothing.
+    const plain = doc.querySelector('[data-field-row="borersFound"]');
+    assert(plain && !plain.querySelector('.field-gate-note'), 'ordinary questions stay quiet');
+  });
+
+  test('Gate warning: the caption on the list names the question, not just the answer', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Gate Caption Job', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(async () => !!doc.querySelector('#report-section-list .report-section-item'), 'report opens');
+
+    let toasted = '';
+    const realToast = win.appToast;
+    win.appToast = (m) => { toasted = m; };
+    try {
+      Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+        .find((li) => /Findings/.test(li.textContent)).click();
+      await wait(500);
+      const sel = doc.querySelector('[data-field-row="managementSystemStatus"] select');
+      sel.value = 'Present but inadequate — management plan proposed';
+      sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+      doc.getElementById('section-save-btn').click();
+      await waitFor(async () => Array.from(doc.querySelectorAll('#report-section-list .section-name'))
+        .some((n) => /Proposed Termite Management/.test(n.textContent)), 'the section appears');
+    } finally { win.appToast = realToast; }
+
+    const row = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((li) => /Proposed Termite Management/.test(li.textContent));
+    const why = row.querySelector('.section-why').textContent;
+    assert(/Present but inadequate/.test(why), `the answer: ${why}`);
+    assert(/adequate for this property/.test(why),
+      `and the QUESTION it answered, which is what somebody an hour later has forgotten: ${why}`);
+    // Not cut to one line.
+    const style = win.getComputedStyle(row.querySelector('.section-why'));
+    assert(style.whiteSpace !== 'nowrap', 'it must wrap, or on a phone the question is cut off');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

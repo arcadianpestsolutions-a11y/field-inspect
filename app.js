@@ -177,11 +177,21 @@
     }
   }
 
+  // How long a message stays up, by how much there is to read. A flat 2.2
+  // seconds suits "Link copied" and is unreadable for the sentence that explains
+  // why two new sections just appeared in a report — about 200 characters,
+  // gone before anyone finished the first line, which is how a section arriving
+  // "from nowhere" stayed a mystery even though the explanation had been shown.
+  // Roughly 55ms a character, floored at the old 2.2s and capped at 9s so a
+  // long message cannot sit on the screen over somebody's work.
+  const toastMs = (msg) => Math.min(9000, Math.max(2200, String(msg || '').length * 55));
+  window.toastDurationFor = toastMs;
+
   function toast(msg) {
     toastEl.textContent = msg;
     toastEl.classList.remove('hidden');
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => toastEl.classList.add('hidden'), 2200);
+    toast._t = setTimeout(() => toastEl.classList.add('hidden'), toastMs(msg));
   }
   window.appToast = toast;
 
