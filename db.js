@@ -43,6 +43,21 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // in place without losing any job data.
 const DB_VERSION = 9;
 
+// Whether a value can be used to look something up BY KEY.
+//
+// This exists because an IndexedDB index asked for `undefined` does not return
+// nothing: getAll(undefined) and getAllKeys(undefined) return EVERY record. So
+// DB.getCaptures(undefined) is every photo in the database, and
+// DB.deleteJob(undefined) used to read that as "this job's photos", delete
+// them, and write a deletion record for each one so that sync would erase them
+// from the cloud and from every other phone as well. Found by a monkey test
+// that double-tapped Delete: a handler read currentJobId after a confirmation
+// dialog, by which time the screen had been left and it was null. Photos went
+// 26 -> 0 and invoices 7 -> 0 in a run that deleted two jobs.
+//
+// A missing id must mean "no job", never "all of them".
+const hasKey = (k) => k !== undefined && k !== null && k !== '';
+
 let dbPromise = null;
 
 function openDB() {
@@ -501,6 +516,9 @@ const DB = {
   },
 
   async deleteJob(id) {
+    // Before anything else, and loud rather than quiet: a caller that arrives
+    // here without a job is a bug, and carrying on is how every photo went.
+    if (!hasKey(id)) throw new Error('deleteJob needs a job id — refusing to guess which job is meant.');
     const captures = await this.getCaptures(id);
     const cstore = await tx('captures', 'readwrite');
     await Promise.all(captures.map((c) => reqToPromise(cstore.delete(c.id))));
@@ -585,6 +603,7 @@ const DB = {
   },
 
   async getCaptures(jobId) {
+    if (!hasKey(jobId)) return []; // see hasKey: undefined would return every photo
     const store = await tx('captures', 'readonly');
     const idx = store.index('jobId');
     const all = await reqToPromise(idx.getAll(jobId));
@@ -645,6 +664,7 @@ const DB = {
   },
 
   async getInvoicesForJob(jobId) {
+    if (!hasKey(jobId)) return []; // see hasKey: undefined would return every invoice
     const store = await tx('invoices', 'readonly');
     const idx = store.index('jobId');
     const all = await reqToPromise(idx.getAll(jobId));
@@ -898,6 +918,7 @@ const DB = {
   },
 
   async getSwmsForJob(jobId) {
+    if (!hasKey(jobId)) return []; // see hasKey
     const store = await tx('swms', 'readonly');
     const idx = store.index('jobId');
     const all = await reqToPromise(idx.getAll(jobId));
@@ -965,6 +986,9 @@ const DB = {
   // sections that no longer have anything to draft toward should not
   // linger in the store forever.
   async deleteAllSectionDraftsForJob(jobId) {
+    // getAllKeys(undefined) is every draft for every job: somebody's half-written
+    // section, wiped, because a different job was deleted with no id.
+    if (!hasKey(jobId)) return;
     const store = await tx('sectionDrafts', 'readwrite');
     const index = store.index('jobId');
     const keys = await reqToPromise(index.getAllKeys(jobId));

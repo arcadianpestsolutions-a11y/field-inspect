@@ -94,8 +94,28 @@
   // Resolves true/false, same as window.confirm. `danger: true` styles the
   // confirming button as destructive — used for the delete flows, so "this
   // cannot be undone" is visible in the button, not only in the sentence.
+  // Whether a question is already on screen. Read from the page itself, not from
+  // a counter: a counter that drifts (a dialog removed by something other than
+  // its own buttons) would make every later question silently answer "no",
+  // which would look exactly like Finalize and Delete having stopped working.
+  function questionIsOpen() {
+    return !!document.querySelector('body > .app-dialog');
+  }
+
   function confirm(message, options) {
     const opts = options || {};
+    // ONE QUESTION AT A TIME. A second ask while one is showing is declined.
+    //
+    // Two quick activations of the same button — a double Enter on a focused
+    // button lands before focus has moved into the dialog, and a touch screen
+    // can deliver a tap twice — each open their own dialog. Answering both then
+    // runs the confirmed action twice, and the second run finds the screen it
+    // belongs to already gone. Enquiry -> job twice made two jobs; "Send to Xero"
+    // twice made two draft invoices; Delete read a job id that was null by then.
+    //
+    // "No" is the safe answer for all of them: every caller treats it as
+    // cancel, and the question the person actually answers is the first one.
+    if (questionIsOpen()) return Promise.resolve(false);
     return new Promise((resolve) => {
       const { overlay, card } = buildOverlay();
       if (opts.title) {

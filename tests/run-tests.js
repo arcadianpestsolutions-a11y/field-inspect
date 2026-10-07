@@ -2508,8 +2508,15 @@
     await wait(400);
 
     // Pick a day well clear of the seeded bookings.
+    // A day that is never TODAY. This used to be the 8th, and on the 8th the
+    // scheduler correctly refuses to start a booking in the past, so after 8am
+    // the first booking landed at 9 and this failed — once a month, in the
+    // daytime, for nothing wrong. The 28th is always ahead of us and no other
+    // fixture uses it; in the last days of the month there is no clear day left
+    // ahead, so it falls back to the 21st, which is also unused.
+    const pickDay = new Date().getDate() < 28 ? 28 : 21;
     const cell = Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
-      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(8).getDate()));
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(pickDay).getDate()));
     cell.click();
     await wait(200);
 
@@ -2527,7 +2534,7 @@
     const b = jobs.find((j) => j.name === 'Backlog B');
     assert(a.scheduledAt, 'Backlog A should now be booked');
     assert(b.scheduledAt, 'Backlog B should now be booked');
-    assertEqual(new Date(a.scheduledAt).getDate(), 8, 'booked onto the selected day');
+    assertEqual(new Date(a.scheduledAt).getDate(), pickDay, 'booked onto the selected day');
     // One-tap Book starts from 8am rather than the 7am start of the grid, so
     // an empty day does not put a client in at 7 just because the slot exists.
     assertEqual(new Date(a.scheduledAt).getHours(), 8, 'first booking takes the default start hour');
@@ -7844,6 +7851,279 @@
     // Not cut to one line.
     const style = win.getComputedStyle(row.querySelector('.section-why'));
     assert(style.whiteSpace !== 'nowrap', 'it must wrap, or on a phone the question is cut off');
+  });
+
+  // ---------- Found by tapping like a clumsy human (tests/chaos.js) ----------
+  // A monkey test that taps at random, repeats taps, backs out mid-action and
+  // types garbage found these. Each is pinned here by the specific thing that
+  // went wrong, not by "does not crash".
+
+  test('No job id: asking for "no job" returns nothing, never everything', async () => {
+    const win = frame.contentWindow;
+    const blob = new Blob(['x'], { type: 'image/jpeg' });
+    const job = await win.DB.addJob({ name: 'No-Id Guard Job' });
+    await win.DB.addCapture({ jobId: job.id, zone: 'A', type: 'photo', photoBlob: blob });
+    await win.DB.saveInvoice({ id: 'inv-guard-1', jobId: job.id, number: 'G-1', lineItems: [], createdAt: Date.now() });
+    await win.DB.saveSectionDraft(job.id, 'findings', { a: 1 });
+
+    // IndexedDB's getAll(undefined) is EVERY record. These used to return the
+    // whole database for a missing id.
+    for (const missing of [undefined, null, '']) {
+      assertEqual((await win.DB.getCaptures(missing)).length, 0, `getCaptures(${String(missing)}) must be empty`);
+      assertEqual((await win.DB.getInvoicesForJob(missing)).length, 0, `getInvoicesForJob(${String(missing)}) must be empty`);
+      assertEqual((await win.DB.getSwmsForJob(missing)).length, 0, `getSwmsForJob(${String(missing)}) must be empty`);
+    }
+    assert((await win.DB.getCaptures(job.id)).length >= 1, 'and a real id still finds its own photo');
+  });
+
+  test('No job id: deleting with no id destroys nothing and leaves no deletion records', async () => {
+    const win = frame.contentWindow;
+    const blob = new Blob(['x'], { type: 'image/jpeg' });
+    const job = await win.DB.addJob({ name: 'Survivor Job' });
+    const cap = await win.DB.addCapture({ jobId: job.id, zone: 'A', type: 'photo', photoBlob: blob });
+    await win.DB.saveInvoice({ id: 'inv-survivor', jobId: job.id, number: 'S-1', lineItems: [], createdAt: Date.now() });
+    await win.DB.saveSectionDraft(job.id, 'findings', { typed: 'half a sentence' });
+
+    const tombstonesBefore = (await win.DB.getDeletions()).length;
+    const photosBefore = (await win.DB.getAllCaptures()).length;
+    const invoicesBefore = (await win.DB.getAllInvoices()).length;
+
+    for (const missing of [undefined, null, '']) {
+      let threw = false;
+      try { await win.DB.deleteJob(missing); } catch (e) { threw = true; }
+      assert(threw, `deleteJob(${String(missing)}) must refuse out loud, not carry on`);
+    }
+    await win.DB.deleteAllSectionDraftsForJob(undefined);
+
+    assertEqual((await win.DB.getAllCaptures()).length, photosBefore, 'no photo was deleted');
+    assertEqual((await win.DB.getAllInvoices()).length, invoicesBefore, 'no invoice was deleted');
+    assert(await win.DB.getJob(job.id), 'the job is still there');
+    assert(await win.DB.getSectionDraft(job.id, 'findings'),
+      'and so is somebody’s unsaved half-sentence — drafts were wiped by a delete with no id too');
+    // The part that would have reached the cloud: a deletion record per photo.
+    assertEqual((await win.DB.getDeletions()).length, tombstonesBefore,
+      'no deletion record was written, so sync has nothing to erase from other phones');
+    assert(!(await win.DB.isDeleted('captures', cap.id)), 'this photo in particular');
+  });
+
+  test('Dialogs: a second question while one is showing is declined', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // Two quick activations of one button open two dialogs; answering both ran
+    // the confirmed action twice. Enquiry -> job twice made two jobs.
+    const first = win.__realDialog.confirm('First question?', { okLabel: 'Yes' });
+    assert(doc.querySelector('body > .app-dialog'), 'the first dialog is on screen');
+
+    const second = await win.__realDialog.confirm('Second question?', { okLabel: 'Yes' });
+    assertEqual(second, false, 'the second ask is declined without being shown');
+    assertEqual(doc.querySelectorAll('body > .app-dialog').length, 1, 'still exactly one dialog');
+
+    doc.querySelector('body > .app-dialog .btn-primary').click();
+    assertEqual(await first, true, 'the first one is still answered normally');
+    assertEqual(doc.querySelectorAll('body > .app-dialog').length, 0, 'and closes');
+
+    // Not left blocked afterwards, or every later Delete and Finalize would do
+    // nothing and look broken.
+    const third = win.__realDialog.confirm('Third question?');
+    assertEqual(doc.querySelectorAll('body > .app-dialog').length, 1, 'a new question opens normally once the last is closed');
+    doc.querySelector('body > .app-dialog .btn-secondary').click();
+    assertEqual(await third, false, 'and can be cancelled');
+  });
+
+  test('Dialogs: a dialog removed by something else does not block every later question', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const stuck = win.__realDialog.confirm('Will be removed from outside');
+    // Whatever tears a dialog out of the page other than its own buttons.
+    doc.querySelector('body > .app-dialog').remove();
+    const next = win.__realDialog.confirm('Asked afterwards');
+    assertEqual(doc.querySelectorAll('body > .app-dialog').length, 1,
+      'the page is checked, not a counter that has drifted — otherwise Finalize would silently stop asking');
+    doc.querySelector('body > .app-dialog .btn-primary').click();
+    assertEqual(await next, true);
+    void stuck;
+  });
+
+  // The recorder is stubbed, because what is worth testing is the ORDER of
+  // events around the microphone, not whether this machine has one.
+  function stubRecorder(win, opts) {
+    const o = opts || {};
+    const log = { constructed: 0, started: 0, tracksStopped: 0, streams: [] };
+    const makeStream = () => {
+      const tracks = [{ stop: () => { log.tracksStopped++; } }];
+      const s = { getTracks: () => tracks };
+      log.streams.push(s);
+      return s;
+    };
+    const realGum = win.navigator.mediaDevices && win.navigator.mediaDevices.getUserMedia;
+    const RealRecorder = win.MediaRecorder;
+    const pending = [];
+    Object.defineProperty(win.navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: () => new Promise((resolve, reject) => {
+          if (o.denied) { reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })); return; }
+          pending.push(() => resolve(makeStream()));
+        }),
+      },
+    });
+    win.MediaRecorder = class {
+      constructor() {
+        log.constructed++;
+        this.state = 'inactive'; this.mimeType = 'audio/webm'; this._l = {};
+        if (o.constructorThrows) throw Object.assign(new Error('unsupported format'), { name: 'NotSupportedError' });
+      }
+      addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); }
+      removeEventListener(t, fn) { this._l[t] = (this._l[t] || []).filter((x) => x !== fn); }
+      start() {
+        if (o.startThrows) throw Object.assign(new Error('could not start'), { name: 'NotSupportedError' });
+        log.started++; this.state = 'recording';
+      }
+      stop() { this.state = 'inactive'; (this._l.stop || []).slice().forEach((fn) => fn()); }
+    };
+    return {
+      log,
+      grantNext: () => { const f = pending.shift(); if (f) f(); },
+      restore: () => {
+        win.MediaRecorder = RealRecorder;
+        try { Object.defineProperty(win.navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: realGum } }); } catch (e) { /* ignore */ }
+      },
+    };
+  }
+
+  test('Voice note: cancelling while the microphone is still being asked for really cancels', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const rig = stubRecorder(win);
+    try {
+      const starting = win.VoiceNotes.start({ mode: 'attach', captureId: 'nope' });
+      assert(!doc.getElementById('record-modal').classList.contains('hidden'), 'the recording screen is up while it waits');
+
+      // Change of mind: Cancel BEFORE the permission is answered.
+      doc.getElementById('record-cancel').click();
+      assert(doc.getElementById('record-modal').classList.contains('hidden'), 'Cancel closes the screen');
+
+      // Now the microphone is granted, a moment too late.
+      rig.grantNext();
+      await starting;
+      await wait(30);
+
+      assertEqual(rig.log.started, 0,
+        'nothing may start recording after Cancel — it used to, with the screen hidden, the microphone live and no way to stop it');
+      assertEqual(rig.log.constructed, 0, 'not even a recorder was built');
+      assertEqual(rig.log.tracksStopped, 1, 'and the microphone that was handed over is let go');
+      assert(!win.VoiceNotes.micIsOpen(), 'no stream is being held');
+      assert(doc.getElementById('record-modal').classList.contains('hidden'), 'the screen stays closed');
+    } finally { rig.restore(); win.VoiceNotes.cancel(); }
+  });
+
+  test('Voice note: tapping Record twice does not leave a microphone open that nothing will release', async () => {
+    const win = frame.contentWindow;
+    const rig = stubRecorder(win);
+    try {
+      const a = win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
+      const b = win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
+      rig.grantNext(); rig.grantNext();
+      await Promise.all([a, b]);
+      await wait(30);
+      assertEqual(rig.log.started, 1, 'exactly one recording starts');
+      assertEqual(rig.log.tracksStopped, 1, 'and the stream from the superseded attempt is released');
+      assertEqual(win.VoiceNotes.state(), 'recording', 'the later attempt is the live one');
+    } finally { win.VoiceNotes.cancel(); rig.restore(); }
+  });
+
+  test('Voice note: a phone that refuses to record is told so, and the microphone is let go', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // This screen calls its own toast() rather than window.appToast, so what the
+    // person actually sees is read from the toast element itself.
+    const toastEl = doc.getElementById('toast');
+    for (const how of [{ startThrows: true }, { constructorThrows: true }]) {
+      const rig = stubRecorder(win, how);
+      toastEl.textContent = '';
+      const before = win.ErrorLog.count();
+      try {
+        const starting = win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
+        rig.grantNext();
+        await starting;
+        await wait(30);
+        const toasted = toastEl.textContent;
+        const label = JSON.stringify(how);
+        assert(doc.getElementById('record-modal').classList.contains('hidden'),
+          `${label}: the Recording screen must not stay up with a timer at 0:00`);
+        assertEqual(rig.log.tracksStopped, 1, `${label}: the microphone must be switched off`);
+        assert(!win.VoiceNotes.micIsOpen(), `${label}: no stream is held`);
+        assert(/could not start recording/i.test(toasted), `${label}: it says so, got: ${toasted}`);
+        assert(win.ErrorLog.count() > before, `${label}: and the reason is on record`);
+      } finally { rig.restore(); win.VoiceNotes.cancel(); win.ErrorLog.clear(); }
+    }
+  });
+
+  test('Voice note: a refused microphone says so and closes the screen', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const rig = stubRecorder(win, { denied: true });
+    const toastEl = doc.getElementById('toast');
+    toastEl.textContent = '';
+    try {
+      await win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
+      assert(doc.getElementById('record-modal').classList.contains('hidden'), 'screen closed');
+      assert(/microphone access denied/i.test(toastEl.textContent), `got: ${toastEl.textContent}`);
+    } finally { rig.restore(); }
+  });
+
+  test('Chaos harness: it will not run outside demo mode', async () => {
+    // The thing most worth being sure of about a tool that deletes things and
+    // types garbage. Asserted against its own source, because loading it here
+    // (a page with IS_TEST set) is exactly the case it must refuse.
+    const src = await (await fetch('../tests/chaos.js', { cache: 'reload' })).text();
+    assert(/if \(!window\.IS_DEMO \|\| window\.IS_TEST\)\s*\{\s*throw/.test(src),
+      'it must throw unless the page is in demo mode and not in test mode');
+    assert(/field-inspect-db-demo/.test(src) || /indexedDB\.databases/.test(src),
+      'and run() must check which database actually exists, not only a flag');
+    const frameWin = frame.contentWindow;
+    let refused = false;
+    try {
+      const s = frameWin.document.createElement('script');
+      s.textContent = src;
+      frameWin.document.head.appendChild(s);
+    } catch (e) { refused = true; }
+    assert(refused || !frameWin.Chaos, 'loading it into the test frame must not give you a working Chaos');
+    await wait(30);
+    if (frameWin.ErrorLog) frameWin.ErrorLog.clear(); // it threw on purpose
+  });
+
+  test('Toast: a message never intercepts a tap meant for the button underneath it', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // The toast sits over the bottom of the screen, which is where Save, Send and
+    // Finalize live, and since v100 a long sentence stays up for several seconds.
+    // A finger aimed at the button below it must land on the button.
+    const toastEl = doc.getElementById('toast');
+    assertEqual(win.getComputedStyle(toastEl).pointerEvents, 'none',
+      'a message has nothing to tap, so it must not catch taps — "Send to Xero" was unreachable under one');
+
+    // And actually, not just by its CSS: put a button where the toast is and tap
+    // through it.
+    const probe = doc.createElement('button');
+    probe.textContent = 'under the toast';
+    probe.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);'
+      + 'bottom:calc(90px + var(--safe-bottom, 0px));z-index:1;width:200px;height:40px';
+    doc.body.appendChild(probe);
+    let tapped = 0;
+    probe.addEventListener('click', () => { tapped++; });
+    toastEl.textContent = 'A message over the top of it';
+    toastEl.classList.remove('hidden');
+    try {
+      const r = probe.getBoundingClientRect();
+      const hit = doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      assert(hit === probe, `the toast is in the way of a tap: ${hit && (hit.id || hit.className)}`);
+      probe.click();
+      assertEqual(tapped, 1, 'the button receives the tap');
+    } finally {
+      probe.remove();
+      toastEl.classList.add('hidden');
+    }
   });
 
   async function runAll() {

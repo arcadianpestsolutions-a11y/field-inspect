@@ -1054,6 +1054,13 @@ body.dialog-open { overflow: hidden; }
   font-size: 0.88rem;
   z-index: 100;
   box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  /* A message, not a control. It sits over the bottom of the screen, which is
+     where the Save, Send and Finalize buttons live, and for as long as it takes
+     to read: a long sentence now stays up several seconds. Without this a
+     finger aimed at the button below it lands on the toast and nothing happens,
+     which reads as a dead button. Found by a monkey test that could never tap
+     "Send to Xero" while a pop-up warning was showing. */
+  pointer-events: none;
 }
 
 /* ---------- Small screens ---------- */

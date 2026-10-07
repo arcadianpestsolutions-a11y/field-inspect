@@ -1306,10 +1306,14 @@
   backBtn.addEventListener('click', showJobListView);
 
   deleteJobBtn.addEventListener('click', async () => {
-    if (!currentJobId) return;
+    // Read ONCE, before the question. It used to be read again after, by which
+    // time the screen could have been left and currentJobId cleared — and the
+    // delete then ran with no id. See hasKey in db.js for what that cost.
+    const jobId = currentJobId;
+    if (!jobId) return;
     if (!await askConfirm('Delete this job and all its photos and voice memos? This cannot be undone.',
       { title: 'Delete job', okLabel: 'Delete', danger: true })) return;
-    await DB.deleteJob(currentJobId);
+    await DB.deleteJob(jobId);
     toast('Job deleted');
     showJobListView();
   });
@@ -1561,7 +1565,14 @@
   }
   window.pickAudioMimeType = pickMimeType; // shared with report.js's voice-guided room subdivision
 
+  // Which attempt to start a recording is the current one. Bumped every time one
+  // begins and every time one is cancelled, so an attempt that is still waiting
+  // on the microphone can tell, when it finally gets an answer, that nobody
+  // wants it any more.
+  let recordingAttempt = 0;
+
   async function startRecording(target) {
+    const attempt = ++recordingAttempt;
     recordingTarget = target;
     recordTargetLabel.textContent = target.mode === 'attach'
       ? 'Attaching voice note to photo'
@@ -1569,25 +1580,62 @@
     recordTimerEl.textContent = '0:00';
     show(recordModal);
 
+    let stream;
     try {
-      recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-      hide(recordModal);
-      toast('Microphone access denied');
+      // Only speak for the attempt that is still current. A cancelled one has
+      // already closed the screen, and a later attempt owns it now.
+      if (attempt === recordingAttempt) {
+        hide(recordModal);
+        toast('Microphone access denied');
+      }
       return;
     }
 
-    recordedChunks = [];
-    const mimeType = pickMimeType();
-    mediaRecorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
+    // THE ANSWER ARRIVED AFTER THE PERSON GAVE UP. Tapping Cancel while the
+    // microphone was still being asked for closed the screen and cleared the
+    // state — and then this carried on regardless: it started recording with the
+    // screen hidden, the microphone live and no button to stop it, in somebody's
+    // house. Second Record taps before the first answer had the same effect with
+    // a stream nothing would ever release. So: if this is no longer the current
+    // attempt, let go of what was just handed over and do nothing else.
+    if (attempt !== recordingAttempt) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    recordingStream = stream;
 
-    mediaRecorder.addEventListener('dataavailable', (e) => {
-      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-    });
+    try {
+      recordedChunks = [];
+      const mimeType = pickMimeType();
+      // A format the browser claims and then will not use is real on iOS, so a
+      // refusal with a chosen format falls back to whatever the browser picks.
+      try {
+        mediaRecorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
+      } catch (formatError) {
+        mediaRecorder = new MediaRecorder(recordingStream);
+      }
 
-    mediaRecorder.addEventListener('stop', onRecordingStopped);
+      mediaRecorder.addEventListener('dataavailable', (e) => {
+        if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+      });
+      mediaRecorder.addEventListener('stop', onRecordingStopped);
+      mediaRecorder.start();
+    } catch (err) {
+      // The phone would not record: the microphone is in use by a call, the
+      // format is unsupported. This used to be an uncaught error that left the
+      // Recording screen up with its timer at 0:00 and the microphone switched
+      // on, and nothing said why.
+      stopRecordingStream();
+      mediaRecorder = null;
+      recordingTarget = null;
+      hide(recordModal);
+      if (window.ErrorLog) window.ErrorLog.note(err, 'starting a voice note');
+      toast('Could not start recording. Is another app using the microphone?');
+      return;
+    }
 
-    mediaRecorder.start();
     recordingStartedAt = Date.now();
     recordStartFeedback();
     recordingTimerInterval = setInterval(() => {
@@ -1638,6 +1686,10 @@
   }
 
   function cancelRecording() {
+    // Invalidates any attempt still waiting on the microphone, so that if it is
+    // granted a moment from now nothing starts. Without this, cancelling did
+    // nothing at all to a request that had not been answered yet.
+    recordingAttempt++;
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.removeEventListener('stop', onRecordingStopped);
       mediaRecorder.addEventListener('stop', () => { stopRecordingStream(); });
@@ -1655,6 +1707,15 @@
   });
 
   recordCancelBtn.addEventListener('click', cancelRecording);
+
+  // Narrow handle for the suite: the recorder is only reachable through a photo's
+  // detail screen, and the races worth testing are in what happens around it.
+  window.VoiceNotes = {
+    start: startRecording,
+    cancel: cancelRecording,
+    state: () => (mediaRecorder ? mediaRecorder.state : 'none'),
+    micIsOpen: () => !!recordingStream,
+  };
 
   // The standalone "Zone Note" button (bottom action bar) was removed;
   // startRecording({mode:'attach'}) below is still used by the capture
@@ -2407,9 +2468,10 @@
   });
 
   detailDeleteBtn.addEventListener('click', async () => {
-    if (!currentDetailCaptureId) return;
+    const captureId = currentDetailCaptureId; // read once, before the question
+    if (!captureId) return;
     if (!await askConfirm('Delete this capture?', { title: 'Delete capture', okLabel: 'Delete', danger: true })) return;
-    await DB.deleteCapture(currentDetailCaptureId);
+    await DB.deleteCapture(captureId);
     hide(detailModal);
     currentDetailCaptureId = null;
     toast('Deleted');
