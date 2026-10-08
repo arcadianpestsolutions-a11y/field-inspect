@@ -39,13 +39,8 @@ and 390 px wide) in an emulated browser, plus a 2,400-step random-tapping run.
 ## Still lacklustre (not fixed; ranked by how much they matter)
 1. ~~**No "Today" view.**~~ **Built in v108**: Today is now the first tab on the home screen (today's jobs in time order, Start/Call/Directions, drive time between jobs, tight or clashing days flagged, anything still owed, tomorrow in one line). Still to judge on a real phone.
 2. ~~**Navigation is hidden behind "..."**~~ **Built in v109**: a bottom tab bar (Today, Jobs, Diary, Enquiries, More) with line icons, a count of jobs left on the Today tab, shown on the main screens and hidden on a job, report, invoice or enquiry, and while typing. Still to judge on a real phone.
-3. **The job screen buries the next step.** Cards for "Automated messages" and
-   "standing plan" sit above the main action, and the document-type chooser takes
-   half the screen on a job that already knows its document. "Open Report" looks
-   quieter than "Start Inspection" even when it is the next thing to do.
-4. **No sense of progress.** The report list does not say "5 of 11 done" and the
-   "Finalise" step is not always in view. SafetyCulture shows a progress bar and a
-   pinned "Complete" action.
+3. ~~**The job screen buries the next step.**~~ **Fixed in v110**: the status card (Start Inspection / Open Report, which is now the main button in review) is first, then the client card (Call, Directions, Edit), then messages and plan. The document is one line with its choices behind Change.
+4. ~~**No sense of progress.**~~ **Fixed in v110**: the report list opens with "5 of 11 sections done", a bar, and a button to the next section still needing work; Finalize stays in reach at the bottom of the screen.
 5. **The job card shows its creation date**, not the appointment, next to the
    address. It reads like the booking date and is not.
 6. **Dark-only theme is an untested assumption.** The design notes argue a white

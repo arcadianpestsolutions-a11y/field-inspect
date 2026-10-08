@@ -3043,3 +3043,24 @@ body.tabbar-typing .fab { bottom: calc(18px + var(--safe-bottom)); }
 #view-joblist .topbar #open-scheduler-btn,
 #view-joblist .topbar #open-leads-btn,
 #view-joblist .topbar #open-more-btn { display: none; }
+
+/* ---------- Job screen tidy (job-layout.js, v110) ---------- */
+.job-settings { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.job-settings .plan-row, .job-settings .comms-row { margin-bottom: 0; }
+.job-settings .plan-row.hidden { display: none; }
+
+/* The document is one quiet line; the list of alternatives opens on Change. */
+.doc-type-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
+.doc-type-current { color: var(--text-dim); font-size: 0.88rem; overflow-wrap: anywhere; }
+.doc-type-choices { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.doc-type-choices.hidden { display: none; }
+
+/* Report progress (report.js) and a finalise button that stays in reach. */
+.report-progress { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.report-progress-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.report-progress-top span { font-family: var(--font-readout); color: var(--text-dim); font-size: 0.9rem; }
+.progress-bar { height: 8px; border-radius: 4px; background: var(--bg-elev); border: 1px solid var(--border); overflow: hidden; }
+.progress-bar > span { display: block; height: 100%; width: 0; background: var(--accent); box-shadow: var(--glow-accent); transition: width 0.25s ease; }
+#view-report #finalize-report-btn { position: sticky; bottom: 8px; z-index: 5; box-shadow: 0 -8px 16px var(--bg); }
+/* A greyed-out sticky button must still be solid, or list rows show through it. */
+#view-report #finalize-report-btn:disabled { background: var(--bg-elev); color: var(--text-dim); border: 1px solid var(--border); opacity: 1; box-shadow: 0 -10px 14px var(--bg); }

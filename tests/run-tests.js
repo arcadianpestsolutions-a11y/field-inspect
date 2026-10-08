@@ -9580,6 +9580,138 @@
   });
 
 
+  // ---------- Job screen order, document line, report progress (v110) ----------
+
+  test('Job screen: the next step comes first, then the client, then the settings', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Order Job', address: '1 Order St', clientPhone: '0412 000 555', clientEmail: 'o@example.com' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('job-details-card') && doc.getElementById('job-comms-row'), 'the cards are drawn');
+    await wait(100);
+    const order = win.JobLayout.orderOf();
+    const at = (id) => order.indexOf(id);
+    assert(at('inspection-card') >= 0 && at('job-details-card') >= 0 && at('job-settings') >= 0, `all three are on the screen: ${order.join(',')}`);
+    assert(at('inspection-card') < at('job-details-card'), 'the status card (Start Inspection) is above the client card');
+    assert(at('job-details-card') < at('job-settings'), 'and the settings are last');
+    const settings = doc.getElementById('job-settings');
+    assert(settings.contains(doc.getElementById('job-comms-row')), 'the messages row is in the settings group');
+    assert(settings.contains(doc.getElementById('plan-row')), 'and so is the plan row');
+    const startTop = doc.getElementById('start-inspection-btn').getBoundingClientRect().top;
+    const commsTop = doc.getElementById('job-comms-row').getBoundingClientRect().top;
+    assert(startTop < commsTop, 'Start Inspection is physically above the messages row');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Job screen: the order holds after the pieces are redrawn', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Redraw Job', address: '2 Redraw St', clientPhone: '0412 000 556' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('job-details-card'), 'details card');
+    const before = win.JobLayout.orderOf().join(',');
+    win.JobLayout.arrange();
+    win.JobLayout.arrange();
+    assertEqual(win.JobLayout.orderOf().join(','), before, 'arranging again changes nothing');
+    // Saving the client details redraws the messages row.
+    doc.getElementById('job-details-edit-btn').click();
+    doc.getElementById('jd-phone').value = '0412 000 557';
+    doc.getElementById('jd-save').click();
+    await waitFor(async () => (await win.DB.getJob(job.id)).clientPhone === '0412 000 557', 'saved');
+    await wait(200);
+    const order = win.JobLayout.orderOf();
+    assert(order.indexOf('inspection-card') < order.indexOf('job-details-card') && order.indexOf('job-details-card') < order.indexOf('job-settings'), `still in order: ${order.join(',')}`);
+    assertEqual(doc.querySelectorAll('#job-comms-row').length, 1, 'and there is still just one messages row');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Job screen: in review, Open Report is the main button; once finalized it goes quiet', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Review Style Job', jobType: 'termite' });
+    await win.DB.updateJob(job.id, { status: 'review' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => !doc.getElementById('view-report-btn').classList.contains('hidden'), 'Open Report shows');
+    const btn = doc.getElementById('view-report-btn');
+    assert(btn.classList.contains('btn-primary') && !btn.classList.contains('btn-outline'), 'it is the primary action in review');
+    await win.DB.updateJob(job.id, { status: 'completed' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => /Finalized/.test(doc.getElementById('view-report-btn').textContent), 'completed wording');
+    assert(btn.classList.contains('btn-outline') && !btn.classList.contains('btn-primary'), 'and a plain outline button once it is done');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Job screen: the document is one line, with the choices behind Change', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Doc Line Job', jobType: 'termite', preferredDocumentType: 'termite_monitoring' });
+    await win.DB.updateJob(job.id, { status: 'review' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('doc-type-change'), 'the document line is drawn');
+    assert(/Monitoring/.test(doc.querySelector('.doc-type-current').textContent), `it names the document the job was booked for: ${doc.querySelector('.doc-type-current').textContent}`);
+    const choices = doc.querySelector('.doc-type-choices');
+    assert(choices.classList.contains('hidden'), 'the list of alternatives is closed');
+    assert(getComputedStyle(choices).display === 'none', 'really closed, taking no room');
+    assert(choices.querySelectorAll('.doc-type-card').length >= 2, 'but the options are all there');
+    doc.getElementById('doc-type-change').click();
+    assert(!choices.classList.contains('hidden'), 'Change opens them');
+    assertEqual(doc.getElementById('doc-type-change').textContent, 'Done', 'and the button says how to close them');
+    assert(choices.querySelector('.doc-type-card.active') && /Monitoring/.test(choices.querySelector('.doc-type-card.active').textContent), 'the booked document is the one marked');
+    doc.getElementById('doc-type-change').click();
+    assert(choices.classList.contains('hidden'), 'Done closes them again');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Report: a progress card says how far through, and one button goes to what is next', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Progress Job', jobType: 'termite' });
+    await win.DB.updateJob(job.id, { status: 'review' });
+    await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+    await waitFor(() => doc.getElementById('report-progress'), 'the progress card is drawn');
+    const items = doc.querySelectorAll('#report-section-list .report-section-item').length;
+    const greens = doc.querySelectorAll('#report-section-list .status-dot-green').length;
+    assertEqual(doc.getElementById('report-progress-text').textContent, `${greens} of ${items} sections done`, 'the count matches the ticks on the list');
+    assertEqual(doc.getElementById('report-progress-pct').textContent, `${Math.round((greens / items) * 100)}%`, 'and the percentage');
+    assertEqual(doc.getElementById('report-progress-fill').style.width, `${Math.round((greens / items) * 100)}%`, 'and the bar');
+    const next = doc.getElementById('report-next-btn');
+    assert(!next.classList.contains('hidden') && /^Continue: \d+\. /.test(next.textContent), `a button names the next section: ${next.textContent}`);
+    // It goes to the first section that is not ticked.
+    const firstOpenName = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((li) => !li.querySelector('.status-dot-green')).querySelector('.section-name').textContent;
+    assert(next.textContent.includes(firstOpenName.replace(/^\d+\.\s*/, '')) || next.textContent.includes(firstOpenName), 'it names the first one still open');
+    next.click();
+    await waitFor(() => !doc.getElementById('view-report-section').classList.contains('hidden'), 'tapping it opens that section');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Report: a finalized report shows that, with no "continue" button', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Finalized Progress Job', jobType: 'termite' });
+    await win.DB.updateJob(job.id, { status: 'completed' });
+    await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+    await waitFor(() => doc.getElementById('report-progress'), 'progress card');
+    // A report only exists in the database once a section has been saved, so make one.
+    await win.DB.saveReport({ jobId: job.id, sections: {}, documentType: 'timber_pest_inspection', finalizedAt: Date.now() });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Report finalized', 'it says finalized');
+    assert(doc.getElementById('report-next-btn').classList.contains('hidden'), 'nothing left to continue');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Job screen and report: registered, and the finalize button stays in reach', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
+    assert(idx.indexOf('job-layout.js') > idx.indexOf('job-details.js') && idx.indexOf('job-layout.js') < idx.indexOf('src="app.js"'), 'loaded after the details card, before app.js');
+    assert(sw.includes("'./job-layout.js'"), 'in the offline shell');
+    assert(/#view-report #finalize-report-btn \{[^}]*position: sticky/.test(css), 'Finalize stays on screen while the list scrolls');
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

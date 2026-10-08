@@ -237,6 +237,9 @@
       const before = await DB.getReport(job.id);
       must(before, 'saving a section did not create a report');
       await home(); await window.showJobViewById(job.id); await sleep(500);
+      // The document is one line now; the choices open behind "Change".
+      must($('doc-type-change') && visible($('doc-type-change')), 'the document line (with Change) should be showing on a job in review');
+      await tap($('doc-type-change')); await sleep(150);
       const cards = Array.from(document.querySelectorAll('.doc-type-card')).filter(visible);
       must(cards.length >= 2, 'the document picker should be showing on a job in review; found ' + cards.length + ' cards');
       n.push('cards: ' + cards.length);

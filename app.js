@@ -492,6 +492,8 @@
         },
       });
     }
+    // Cards in the order a technician needs them (next step first, settings last).
+    if (window.JobLayout) window.JobLayout.arrange();
     activeZoneFilter = null;
     selectMode = false;
     selectedCaptureIds.clear();
@@ -836,6 +838,11 @@
     if (job.status === 'review' || job.status === 'completed') {
       show(viewReportBtn);
       viewReportBtn.textContent = job.status === 'completed' ? '✓ View Finalized Report' : '📄 Open Report';
+      // In review, the report IS the next step, so it looks like one. Once the
+      // report is finalized it is just a place to look, and goes quiet.
+      const reportIsNext = job.status === 'review';
+      viewReportBtn.classList.toggle('btn-primary', reportIsNext);
+      viewReportBtn.classList.toggle('btn-outline', !reportIsNext);
       renderDocumentTypePicker(job).catch((err) => console.warn('[job] document picker failed:', err.message || err));
     } else {
       hide(viewReportBtn);
@@ -2352,15 +2359,45 @@
     docTypeRow.classList.remove('hidden');
     docTypeRow.innerHTML = '';
 
+    // The job already knows which document it is (the report that exists, or the
+    // one it was booked for), so the screen says so in one line. The full list of
+    // choices used to take half the screen on every visit; it now opens only when
+    // somebody taps Change.
+    const shownId = currentId
+      || (window.ReportUI.defaultDocumentType ? window.ReportUI.defaultDocumentType(job) : 'timber_pest_inspection');
+    const shownType = types.find((t) => t.id === shownId) || types[0];
+
+    const summary = document.createElement('div');
+    summary.className = 'doc-type-summary';
+    const summaryText = document.createElement('span');
+    summaryText.className = 'doc-type-current';
+    summaryText.textContent = `Document: ${shownType.title}`;
+    const changeBtn = document.createElement('button');
+    changeBtn.type = 'button';
+    changeBtn.id = 'doc-type-change';
+    changeBtn.className = 'link-btn';
+    changeBtn.textContent = 'Change';
+    changeBtn.setAttribute('aria-expanded', 'false');
+    summary.append(summaryText, changeBtn);
+    docTypeRow.appendChild(summary);
+
+    const choices = document.createElement('div');
+    choices.className = 'doc-type-choices hidden';
+    changeBtn.addEventListener('click', () => {
+      const opening = choices.classList.contains('hidden');
+      choices.classList.toggle('hidden', !opening);
+      changeBtn.textContent = opening ? 'Done' : 'Change';
+      changeBtn.setAttribute('aria-expanded', String(opening));
+    });
+    docTypeRow.appendChild(choices);
+
     const heading = document.createElement('p');
     heading.className = 'doc-type-heading';
     heading.textContent = existing ? 'This job’s document' : 'What are you producing for this job?';
-    docTypeRow.appendChild(heading);
+    choices.appendChild(heading);
 
     for (const type of types) {
-      const isCurrent = currentId
-        ? currentId === type.id
-        : type.id === 'timber_pest_inspection';
+      const isCurrent = type.id === shownType.id;
       const card = document.createElement('button');
       card.type = 'button';
       card.className = 'doc-type-card' + (isCurrent ? ' active' : '');
@@ -2381,7 +2418,7 @@
         }
         await ReportUI.openReview(job.id, type.id);
       });
-      docTypeRow.appendChild(card);
+      choices.appendChild(card);
     }
   }
 

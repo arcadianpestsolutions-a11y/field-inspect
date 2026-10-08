@@ -890,6 +890,7 @@
     },
     documentTypesFor,
     documentTypeOf,
+    defaultDocumentType,
     // Exposed so the accuracy figure can be tested, and so it could be read
     // from anywhere else that ever wants it, without re-deriving the rules
     // for what counts as a kept suggestion.
@@ -1709,6 +1710,44 @@
       : 'Nothing filed — the photos are still where they were.');
   }
 
+  // "5 of 11 done", a bar, and one button that goes to the next section still
+  // needing attention. The list alone made a technician scan every row to find
+  // where they were. Built here rather than in index.html so a stale cached page
+  // paired with this script cannot leave it missing.
+  function renderReportProgress(done, total, firstOpen) {
+    let card = document.getElementById('report-progress');
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'report-progress';
+      card.className = 'card report-progress';
+      card.innerHTML = '<div class="report-progress-top"><strong id="report-progress-text"></strong><span id="report-progress-pct"></span></div>'
+        + '<div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span id="report-progress-fill"></span></div>'
+        + '<button type="button" id="report-next-btn" class="btn btn-primary full"></button>';
+      reportSectionList.parentNode.insertBefore(card, reportSectionList);
+      card.querySelector('#report-next-btn').addEventListener('click', () => {
+        const target = card.dataset.nextSection;
+        if (target) openSectionEditor(target);
+      });
+    }
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const finalized = !!(currentReport && currentReport.finalizedAt);
+    card.querySelector('#report-progress-text').textContent = finalized
+      ? 'Report finalized'
+      : `${done} of ${total} section${total === 1 ? '' : 's'} done`;
+    card.querySelector('#report-progress-pct').textContent = `${pct}%`;
+    card.querySelector('#report-progress-fill').style.width = `${pct}%`;
+    card.querySelector('.progress-bar').setAttribute('aria-valuenow', String(pct));
+    const next = card.querySelector('#report-next-btn');
+    if (firstOpen && !finalized) {
+      card.dataset.nextSection = firstOpen.section.id;
+      next.textContent = `Continue: ${firstOpen.number}. ${firstOpen.section.title}`;
+      next.classList.remove('hidden');
+    } else {
+      delete card.dataset.nextSection;
+      next.classList.add('hidden');
+    }
+  }
+
   function renderSectionList() {
     renderPreflight();
     renderAuditTrail();
@@ -1721,11 +1760,16 @@
     // static number in the schema. With the action-plan sections hidden those
     // numbers skip, and a list reading 1-8 then 11 looks like three sections
     // went missing rather than three that were never needed.
+    let doneCount = 0;
+    let firstOpen = null;
     let displayNumber = 0;
     for (const section of visibleSchema(currentSchema(), currentReport)) {
       displayNumber++;
       const values = currentReport.sections[section.id] || {};
       const status = computeSectionStatus(section, values);
+      if (status === 'green') doneCount++;
+      else if (!section.softRequired && (!firstOpen || firstOpen.soft)) firstOpen = { section, number: displayNumber, soft: false };
+      else if (!firstOpen) firstOpen = { section, number: displayNumber, soft: true }; // only if nothing required is left
       if (status !== 'green' && !section.softRequired) allRequiredGreen = false;
 
       const li = document.createElement('li');
@@ -1748,6 +1792,7 @@
       reportSectionList.appendChild(li);
     }
 
+    renderReportProgress(doneCount, displayNumber, firstOpen);
     finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt;
     finalizeBtn.textContent = currentReport.finalizedAt ? '✓ Report Finalized' : 'Finalize Report';
     finalizeHint.classList.toggle('hidden', allRequiredGreen);

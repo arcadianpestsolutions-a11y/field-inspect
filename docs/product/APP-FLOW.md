@@ -110,3 +110,14 @@ figures, Saved reports). The lit tab shows where you are; More stays lit on ever
 The Today tab shows how many of today's jobs are not yet done. The bar is hidden on screens you
 drill into (a job, report, invoice, one enquiry, one client) and while the keyboard is up. The
 old header icons are hidden; the bar presses them, so each screen opens exactly as before.
+
+## 8. The job screen, top to bottom (v110)
+1. Re-inspection prompt (only when one is due)
+2. **Status card**: status, then the next step: Start Inspection, or Open Report (the main button while in review), then Invoice and Client link. The document is one line ("Document: ... Change"); Change opens the other choices.
+3. Client link panel (opens from its button)
+4. **Client card**: phone (Call), email, address (Directions), notes, Edit details
+5. **Messages and plan**: automated-messages switch and the standing plan (settings, read rarely)
+6. Photos
+
+## 9. The report screen (v110)
+Progress card first ("5 of 11 sections done", bar, and Continue: the next section that still needs work), then the section list, audit trail, pre-flight check, and a Finalize button that stays at the bottom of the screen while the list scrolls.
