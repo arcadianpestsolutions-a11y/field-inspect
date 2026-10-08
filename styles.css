@@ -2828,3 +2828,14 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   margin-bottom: 12px;
 }
 .reminder-nudge-text { margin: 0; font-size: 0.95rem; line-height: 1.4; }
+
+/* "Last backup: 19 days ago" above the Export button. Quiet when it is recent,
+   amber when it is due or has never been made. */
+.backup-status {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.backup-status[data-tone="due"],
+.backup-status[data-tone="never"] { color: var(--accent-2); }

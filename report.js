@@ -1166,19 +1166,17 @@
       exportDataBtn.disabled = true;
       exportDataBtn.textContent = 'Preparing export…';
       try {
-        const data = await DB.exportAllData();
-        const json = JSON.stringify(data, null, 2);
-        const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const dateStamp = new Date().toISOString().slice(0, 10);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `field-inspect-backup-${dateStamp}.json`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        toast(`Exported ${data.counts.jobs} jobs, ${data.counts.reports} reports, ${data.counts.invoices} invoices.`);
+        // The export, its delivery (the share sheet on an iPhone, a download
+        // elsewhere) and the "last backup" record all live in backup.js.
+        const result = await window.Backup.exportNow();
+        if (result.cancelled) {
+          // Said plainly: closing the share sheet without choosing anywhere is
+          // not a backup, and a toast saying "Exported" here would be a lie.
+          toast('Not saved: the share sheet was closed, so no backup was made.');
+        } else {
+          const c = result.data.counts;
+          toast(`Backed up ${c.jobs} jobs, ${c.reports} reports, ${c.invoices} invoices, ${c.clients} clients.`);
+        }
       } catch (err) {
         if (window.ErrorLog) window.ErrorLog.note(err, 'backup export');
         toast('Could not prepare the export — try again. ' + (err && err.message ? err.message : ''));

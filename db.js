@@ -946,18 +946,34 @@ const DB = {
   // own backup path once media.js syncs them to Supabase Storage. This export
   // is a belt to that path's suspenders, not a replacement for it.
   async exportAllData() {
-    const [jobs, reports, invoices] = await Promise.all([
+    // Everything that is text and small. Clients, enquiries and safety statements
+    // were added after this was written and were silently left out, so a "backup"
+    // restored from it would have had every job and none of the people they were
+    // for. Photos are deliberately still not here (see the test beside this).
+    const [jobs, reports, invoices, clients, leads, swms] = await Promise.all([
       this.getJobs(),
       this.getAllReports(),
       this.getAllInvoices(),
+      this.getClients(),
+      this.getLeads(),
+      this.getAllSwms(),
     ]);
     return {
+      // Which shape of file this is, so whatever reads it later can tell a file
+      // written before clients and enquiries existed from one written after.
+      format: 2,
       exportedAt: new Date().toISOString(),
       appVersion: window.APP_VERSION || null,
-      counts: { jobs: jobs.length, reports: reports.length, invoices: invoices.length },
+      counts: {
+        jobs: jobs.length, reports: reports.length, invoices: invoices.length,
+        clients: clients.length, leads: leads.length, swms: swms.length,
+      },
       jobs,
       reports,
       invoices,
+      clients,
+      leads,
+      swms,
     };
   },
 

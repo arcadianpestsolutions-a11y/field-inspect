@@ -8198,6 +8198,189 @@
     assert(/code === 'cancelled'/.test(qr), 'closing the scanner must not be logged as an error');
   });
 
+  // ---------- Backups (backup.js) ----------
+  // Scope's cloud is on a plan with no automatic backups, and on any plan the
+  // provider's backups do not include the photograph files. The Export button is
+  // the one backup the app can make; these pin that it holds everything it can,
+  // that "last backup" is only ever true, and how long ago is worked out.
+  const BK = () => frame.contentWindow.Backup;
+  const bkClear = () => { try { frame.contentWindow.localStorage.removeItem(BK().KEY); } catch (e) { /* ignore */ } };
+
+  test('Backup: the file holds clients, enquiries and safety statements, not just jobs', async () => {
+    const win = frame.contentWindow;
+    const client = await win.DB.addClient({ name: 'Backup Client', phone: '0412 000 111' });
+    const lead = await win.DB.addLead({ name: 'Backup Enquiry', phone: '0412 000 222' });
+    const swms = await win.DB.createSwms({ title: 'Backup Statement', siteAddress: '1 Safe St' });
+    const data = await win.DB.exportAllData();
+    assertEqual(data.format, 2, 'the file says which shape it is, so a reader can tell it from an older one');
+    assert(data.clients.some((c) => c.id === client.id), 'the clients are in it, or a restored job has nobody to be for');
+    assert(data.leads.some((l) => l.id === lead.id), 'and the enquiries');
+    assert(data.swms.some((s) => s.id === swms.id), 'and the safety statements');
+    for (const k of ['jobs', 'reports', 'invoices', 'clients', 'leads', 'swms']) {
+      assertEqual(data.counts[k], data[k].length, `counts.${k} matches the array`);
+    }
+    assert(!('captures' in data), 'and still no raw photographs');
+  });
+
+  test('Backup: the file is named by the local date, not UTC', async () => {
+    // At 8am in Sydney it is still yesterday in UTC, so toISOString() stamped a
+    // morning backup with the wrong day, and the name is all that tells two apart.
+    assertEqual(BK().fileName(new Date(2031, 2, 14, 8, 0)), 'field-inspect-backup-2031-03-14.json');
+    assertEqual(BK().fileName(new Date(2031, 0, 1, 0, 5)), 'field-inspect-backup-2031-01-01.json', 'just after midnight');
+    assertEqual(BK().fileName(new Date(2031, 11, 31, 23, 55)), 'field-inspect-backup-2031-12-31.json', 'just before it');
+  });
+
+  test('Backup: how long ago is told in calendar days, in words a person would use', async () => {
+    const now = new Date(2031, 4, 20, 10, 0); // 20 May 2031
+    const at = (daysBack, h = 9) => new Date(2031, 4, 20 - daysBack, h, 0).getTime();
+    const say = (daysBack, h) => BK().describe({ at: at(daysBack, h) }, now, {});
+    assert(/^Last backup: today\./.test(say(0).text), say(0).text);
+    assert(/^Last backup: yesterday\./.test(say(1).text), say(1).text);
+    assert(/^Last backup: 19 days ago \(1 May\)\./.test(say(19).text), `with the date, once it is old enough to need one: ${say(19).text}`);
+    assertEqual(say(7).tone, 'ok', 'a week is still fine');
+    assertEqual(say(8).tone, 'due', 'and eight days is the first that asks');
+    assertEqual(say(30).tone, 'due');
+    assertEqual(say(0).days, 0);
+  });
+
+  test('Backup: yesterday is yesterday even when the clocks changed in between', async () => {
+    // Backup at 9am Saturday 3 October 2026, looking at 8:30am Sunday: Sydney's
+    // clocks went forward overnight so only 22.5 hours have passed, and dividing
+    // by 24 hours said "today". The calendar says yesterday.
+    const said = BK().describe({ at: new Date(2026, 9, 3, 9, 0).getTime() }, new Date(2026, 9, 4, 8, 30), {});
+    assertEqual(said.days, 1, 'one calendar day');
+    assert(/yesterday/.test(said.text), said.text);
+    // And a late-night backup is yesterday an hour into the next day.
+    assertEqual(BK().describe({ at: new Date(2031, 4, 19, 23, 30).getTime() }, new Date(2031, 4, 20, 0, 30), {}).days, 1);
+  });
+
+  test('Backup: what changed since is the number that makes an old backup mean something', async () => {
+    const at = new Date(2031, 4, 10, 12, 0).getTime();
+    const data = {
+      jobs: [{ updatedAt: at - 1 }, { updatedAt: at + 1 }, { createdAt: at + 5 }],
+      reports: [{ updatedAt: at + 100 }],
+      invoices: [{ updatedAt: at - 100 }],
+      clients: [], leads: [{ updatedAt: at + 1 }], swms: undefined,
+    };
+    assertEqual(BK().changedSince(at, data), 4, 'only records newer than the backup, across every kind of record');
+    const said = BK().describe({ at }, new Date(2031, 4, 20, 10, 0), data);
+    assert(/10 days ago/.test(said.text) && /4 records have changed since/.test(said.text), said.text);
+    assert(/Nothing has changed since/.test(BK().describe({ at }, new Date(2031, 4, 20), {}).text), 'and says so when nothing has');
+    assert(/1 record has changed/.test(BK().describe({ at }, new Date(2031, 4, 20), { jobs: [{ updatedAt: at + 1 }] }).text), 'singular');
+  });
+
+  test('Backup: with none ever made it says so, and says what is at risk', async () => {
+    const none = BK().describe(null, new Date(2031, 4, 20), { jobs: [{}, {}], reports: [{}], clients: [{}] });
+    assertEqual(none.tone, 'never');
+    assert(/No backup has been made from this phone/.test(none.text), none.text);
+    assert(/4 records exist only in this app and the cloud/.test(none.text), `the stakes, not just the fact: ${none.text}`);
+    assertEqual(BK().describe(null, new Date(), {}).text, 'No backup has been made from this phone.', 'and nothing alarming when there is nothing to lose');
+  });
+
+  test('Backup: the line sits above the Export button, tells the truth, and is hidden from people who cannot export', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    bkClear();
+    const btn = doc.getElementById('export-data-btn');
+    const wasHidden = btn.classList.contains('hidden');
+    try {
+      btn.classList.remove('hidden');
+      let said = await win.Backup.render();
+      assertEqual(said.tone, 'never', 'nothing recorded yet');
+      const line = doc.getElementById('backup-status');
+      assert(line, 'the line exists');
+      assertEqual(line.nextElementSibling, btn, 'directly above the button it is about');
+      assertEqual(line.dataset.tone, 'never');
+      assert(!line.classList.contains('hidden'), 'shown to somebody who can export');
+
+      win.Backup.record({ jobs: 1 }, 'download');
+      await wait(60);
+      assert(/^Last backup: today\./.test(line.textContent), `recording one updates the line at once: ${line.textContent}`);
+      assertEqual(line.dataset.tone, 'ok');
+
+      btn.classList.add('hidden');
+      await win.Backup.render();
+      assert(line.classList.contains('hidden'), 'a technician who cannot export is not told a backup is due');
+      assertEqual(doc.querySelectorAll('#backup-status').length, 1, 'and rendering never stacks a second line');
+    } finally { btn.classList.toggle('hidden', wasHidden); bkClear(); }
+  });
+
+  // Delivery, answered for by the test: a test cannot press a real share sheet.
+  function bkRig(opts) {
+    const o = opts || {};
+    const calls = { share: 0, download: 0 };
+    return {
+      calls,
+      options: {
+        useShare: o.useShare, canShare: () => o.canShare !== false,
+        share: async () => { calls.share++; if (o.shareError) throw Object.assign(new Error('x'), { name: o.shareError }); },
+        download: () => { calls.download++; },
+      },
+    };
+  }
+
+  test('Backup: on an iPhone the share sheet is used, and finishing it counts as a backup', async () => {
+    bkClear();
+    const rig = bkRig({ useShare: true });
+    const res = await BK().exportNow(rig.options);
+    assertEqual(res.via, 'share');
+    assertEqual(rig.calls.download, 0, 'not downloaded as well');
+    assert(BK().last(), 'recorded');
+    assertEqual(BK().last().via, 'share');
+    bkClear();
+  });
+
+  test('Backup: closing the share sheet without choosing anywhere is NOT a backup', async () => {
+    bkClear();
+    const rig = bkRig({ useShare: true, shareError: 'AbortError' });
+    const res = await BK().exportNow(rig.options);
+    assertEqual(res.cancelled, true);
+    assertEqual(res.ok, false);
+    assertEqual(BK().last(), null, 'nothing is recorded, so the line does not claim a backup that was never saved');
+    assertEqual(rig.calls.download, 0, 'and nothing is quietly downloaded to somewhere nobody chose');
+  });
+
+  test('Backup: if the share sheet fails for another reason the file is downloaded instead', async () => {
+    bkClear();
+    // iOS refuses a share started too long after the tap with NotAllowedError.
+    const rig = bkRig({ useShare: true, shareError: 'NotAllowedError' });
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    const res = await BK().exportNow(rig.options);
+    assertEqual(res.via, 'download', 'the backup is not lost to a refused share');
+    assertEqual(rig.calls.download, 1);
+    assert(BK().last(), 'and it is recorded');
+    assert(win.ErrorLog.list().some((e) => /share sheet/.test(e.message)), 'with the reason on record');
+    win.ErrorLog.clear(); bkClear();
+  });
+
+  test('Backup: anywhere else it is a download, and an iPhone that cannot share files falls back to one', async () => {
+    bkClear();
+    const desktop = bkRig({ useShare: false });
+    assertEqual((await BK().exportNow(desktop.options)).via, 'download');
+    assertEqual(desktop.calls.share, 0, 'no share dialog on a computer');
+    bkClear();
+    const noFiles = bkRig({ useShare: true, canShare: false });
+    assertEqual((await BK().exportNow(noFiles.options)).via, 'download', 'an old iPhone that cannot share a file still gets a download');
+    assertEqual(noFiles.calls.share, 0);
+    bkClear();
+  });
+
+  test('Backup: the button uses it, and the screen no longer claims photos are backed up', async () => {
+    const report = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assert(/window\.Backup\.exportNow\(\)/.test(report), 'the Export button goes through backup.js');
+    assert(!/field-inspect-backup-\$\{dateStamp\}/.test(report), 'the old UTC-stamped file name is gone');
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    assert(!/already back up separately/.test(html),
+      'it used to say photos "already back up separately when synced". Supabase does not back up Storage files on any plan');
+    assert(/no separate backup/.test(html), 'it now says what is true');
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+    assert(scripts.includes('backup.js'), 'loaded');
+    assertEqual(scripts[scripts.length - 1], 'nav-history.js', 'and the Back button module is still last');
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(/'\.\/backup\.js'/.test(sw), 'and cached for offline use');
+  });
+
   // ---------- "Tomorrow's reminders haven't been sent" (reminder-nudge.js) ----------
   // The day-before reminders only go when somebody opens the panel and presses the
   // button, so on a day nobody does, nothing is sent and nothing says so. These
