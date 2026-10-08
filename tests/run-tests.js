@@ -8093,6 +8093,279 @@
     if (frameWin.ErrorLog) frameWin.ErrorLog.clear(); // it threw on purpose
   });
 
+  // ---------- The phone's Back button (nav-history.js) ----------
+  // Until v102 the app never told the browser it had moved, so the system Back
+  // button left the app from any screen. These drive the module with a recorder
+  // standing in for window.history — a page in an iframe shares session history
+  // with the page holding it, so pushing real entries would corrupt the suite.
+  function historyRecorder() {
+    const rec = { pushes: 0, backs: 0 };
+    rec.push = () => { rec.pushes++; };
+    rec.back = () => { rec.backs++; };
+    return rec;
+  }
+  const navView = (doc) => (Array.from(doc.querySelectorAll('section.view')).find((v) => !v.classList.contains('hidden')) || {}).id;
+  // At the job list with NOTHING open. Earlier tests leave things open (the New
+  // Job form, for one) and Back rightly treats those as something to close, so a
+  // bare "reach the job list" starts these tests in a state of someone else's making.
+  async function atJobList(win, doc) {
+    for (let i = 0; i < 12 && (navView(doc) !== 'view-joblist' || win.NavHistory.needsSentinel()); i++) {
+      win.NavHistory.handleBack();
+      await wait(60);
+    }
+    await wait(80);
+  }
+
+  test('Back button: it sits one history entry above the page while a screen is open, and not before', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      await wait(100);
+      assertEqual(rec.pushes, 0, 'at the job list with nothing open there is nothing to trap — Back leaves the app as it always did');
+      assertEqual(win.NavHistory.hasSentinel(), false);
+
+      const job = await win.DB.addJob({ name: 'Back Button Job', address: '1 Back St', status: 'review' });
+      await win.showJobViewById(job.id);
+      await waitFor(() => rec.pushes === 1, 'opening a screen adds the one entry');
+      await win.ReportUI.openReview(job.id);
+      await wait(150);
+      assertEqual(rec.pushes, 1, 'going deeper must not pile up entries: still exactly one');
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: each press goes up exactly one screen, and the entry is put back until the job list', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      const job = await win.DB.addJob({ name: 'Back Walk Job', address: '2 Back St', status: 'review' });
+      await win.showJobViewById(job.id);
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => !!doc.querySelector('#report-section-list .report-section-item'), 'report is listed');
+      doc.querySelectorAll('#report-section-list .report-section-item')[1].click();
+      await waitFor(() => navView(doc) === 'view-report-section', 'a section is open');
+      await waitFor(() => win.NavHistory.hasSentinel(), 'the entry is in place');
+      const pushesBefore = rec.pushes;
+
+      // The browser reports a press by removing our entry; this is that.
+      win.NavHistory.onPop();
+      await waitFor(() => navView(doc) === 'view-report', 'first press: section -> report');
+      assertEqual(rec.pushes, pushesBefore + 1, 'the entry is put straight back, there is still further to go');
+      assertEqual(win.NavHistory.hasSentinel(), true);
+
+      win.NavHistory.onPop();
+      await waitFor(() => navView(doc) === 'view-job', 'second press: report -> job');
+
+      win.NavHistory.onPop();
+      await waitFor(() => navView(doc) === 'view-joblist', 'third press: job -> job list');
+      await waitFor(() => win.NavHistory.hasSentinel() === false, 'at the job list the entry is taken away');
+      assert(rec.backs >= 1, 'by asking the browser to remove it, so the NEXT press leaves the app');
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: removing the entry ourselves is not mistaken for a press', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      const job = await win.DB.addJob({ name: 'Own Pop Job', address: '3 Back St' });
+      await win.showJobViewById(job.id);
+      await waitFor(() => win.NavHistory.hasSentinel(), 'entry in place');
+      win.NavHistory.handleBack(); // back to the job list; sync() will remove the entry
+      await waitFor(() => rec.backs === 1, 'the entry is removed on reaching the job list');
+      // The browser now raises a popstate for that removal. It must be ignored,
+      // or it navigates a second time.
+      assertEqual(win.NavHistory.onPop(), 'ignored: our own', 'our own removal is recognised');
+      assertEqual(navView(doc), 'view-joblist', 'and nothing moved');
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: a screen opened while the old entry is still being removed waits its turn', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      const a = await win.DB.addJob({ name: 'Race A', address: '6 Back St' });
+      const b = await win.DB.addJob({ name: 'Race B', address: '7 Back St' });
+      await win.showJobViewById(a.id);
+      await waitFor(() => rec.pushes === 1, 'first screen pushes its entry');
+
+      // Back to the job list: the entry is being removed, and the browser has not
+      // said it is finished. Straight on to another screen, with no gap.
+      win.NavHistory.handleBack();
+      await waitFor(() => rec.backs === 1, 'removal requested');
+      await win.showJobViewById(b.id);
+      await wait(150);
+      assertEqual(rec.pushes, 1,
+        'no new entry while the old one is still going: the browser’s belated "back" would remove the NEW one, '
+        + 'leave the page believing an entry exists that does not, and the next real Back would leave the app');
+      assertEqual(win.NavHistory.hasSentinel(), false, 'so nothing is claimed in the meantime');
+
+      // The browser reports the removal finished.
+      assertEqual(win.NavHistory.onPop(), 'ignored: our own');
+      await waitFor(() => rec.pushes === 2, 'and now the waiting screen gets its entry');
+      assertEqual(win.NavHistory.hasSentinel(), true);
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: if the browser never confirms the removal, the wait ends by itself', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      const a = await win.DB.addJob({ name: 'No Confirm A', address: '8 Back St' });
+      await win.showJobViewById(a.id);
+      await waitFor(() => rec.pushes === 1, 'entry pushed');
+      win.NavHistory.handleBack();
+      await waitFor(() => rec.backs === 1, 'removal requested');
+      await win.showJobViewById(a.id);
+      // No onPop is ever delivered, as in a browser that does not raise one.
+      await waitFor(() => rec.pushes === 2, 'the entry is still given, after the time limit');
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: a press at the job list does nothing and traps nothing', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      assertEqual(win.NavHistory.onPop(), 'nothing to go back to');
+      await wait(60);
+      assertEqual(rec.pushes, 0, 'no entry is added just because somebody pressed Back at the front door');
+      assertEqual(navView(doc), 'view-joblist');
+    } finally { win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: an open question is closed before the screen is left', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      const job = await win.DB.addJob({ name: 'Dialog Back Job', address: '4 Back St' });
+      await win.showJobViewById(job.id);
+      await waitFor(() => navView(doc) === 'view-job', 'on the job');
+      const answer = win.__realDialog.confirm('Delete this job?', { okLabel: 'Delete', danger: true });
+      assert(doc.querySelector('body > .app-dialog'), 'a question is showing');
+
+      assertEqual(win.NavHistory.onPop(), 'closed a dialog', 'Back answers it, rather than leaving behind it');
+      assertEqual(await answer, false, 'with "no", the safe answer');
+      assertEqual(navView(doc), 'view-job', 'and the screen behind is where it was');
+      assertEqual((await win.DB.getJob(job.id)) != null, true, 'nothing was deleted');
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: an open panel on the job list is closed, and Back still leaves afterwards', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      doc.getElementById('open-more-btn').click();
+      await waitFor(() => rec.pushes === 1, 'an open panel needs its own entry even on the job list');
+      assertEqual(win.NavHistory.onPop(), 'closed more-close-btn', 'Back closes the panel');
+      await waitFor(() => rec.backs === 1 && !win.NavHistory.hasSentinel(), 'then the entry is removed again');
+      assertEqual(navView(doc), 'view-joblist', 'still on the job list, not thrown out of the app');
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: it will not end an inspection by reflex', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    const modal = doc.getElementById('inspection-modal');
+    let said = '';
+    const realToast = win.appToast;
+    win.appToast = (m) => { said = m; };
+    try {
+      modal.classList.remove('hidden');
+      await waitFor(() => rec.pushes === 1, 'a live camera holds an entry too');
+      assertEqual(win.NavHistory.onPop(), 'ignored: inspection in progress');
+      assert(!modal.classList.contains('hidden'), 'the inspection is still running');
+      assert(/inspection/i.test(said), `and it says why: ${said}`);
+      assertEqual(win.NavHistory.hasSentinel(), true, 'the entry is kept, so the next press is caught as well');
+    } finally {
+      modal.classList.add('hidden'); win.appToast = realToast;
+      await wait(60); win.NavHistory.setHistory(null);
+    }
+  });
+
+  test('Back button: a Forward press onto the stale entry does not cost a second Back to leave', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      // Browser history: [page, entry]. Forward re-enters the entry while we are
+      // on the job list with nothing open.
+      assertEqual(win.NavHistory.onPop({ state: { scopeNav: 1 } }), 'forward onto the sentinel');
+      assertEqual(rec.backs, 1, 'it is removed again at once, so one Back press still leaves the app');
+      assertEqual(win.NavHistory.hasSentinel(), false);
+    } finally { win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: two presses in quick succession go up two screens and lose nothing', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      const job = await win.DB.addJob({ name: 'Double Back Job', address: '5 Back St', status: 'review' });
+      await win.showJobViewById(job.id);
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => navView(doc) === 'view-report' && win.NavHistory.hasSentinel(), 'on the report');
+      // Faster than the screens can settle: the second must find an entry to remove.
+      win.NavHistory.onPop();
+      win.NavHistory.onPop();
+      await waitFor(() => navView(doc) === 'view-joblist', 'two presses from the report reach the job list');
+    } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Back button: every screen has a Back of its own for it to press, so nobody is stranded', async () => {
+    const doc = frame.contentDocument;
+    const stranded = [];
+    for (const view of doc.querySelectorAll('section.view')) {
+      if (view.id === 'view-joblist' || view.id === 'view-login') continue;
+      if (!view.querySelector('button[id$="back-btn"]')) stranded.push(view.id);
+    }
+    assertEqual(stranded.join(','), '',
+      'a screen with no Back button would swallow the press and leave the person stuck on it');
+    // And every overlay it knows how to close really exists, so a renamed button
+    // cannot quietly stop Back from closing it.
+    const src = await (await fetch('../nav-history.js', { cache: 'reload' })).text();
+    const list = src.match(/OVERLAY_CLOSERS = \[([\s\S]*?)\]/)[1].match(/'([a-z-]+)'/g).map((s) => s.replace(/'/g, ''));
+    const missing = list.filter((id) => !doc.getElementById(id));
+    assertEqual(missing.join(','), '', 'every overlay close button named in nav-history.js must exist');
+  });
+
+  test('Back button: it is loaded last, and cached for offline use', async () => {
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+    assertEqual(scripts[scripts.length - 1], 'nav-history.js',
+      'it only watches screens the other scripts build, so it goes after all of them');
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(/'\.\/nav-history\.js'/.test(sw), 'it must be in the service worker shell');
+  });
+
   test('Toast: a message never intercepts a tap meant for the button underneath it', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

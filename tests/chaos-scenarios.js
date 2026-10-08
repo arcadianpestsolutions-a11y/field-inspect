@@ -350,6 +350,34 @@
       } finally { cam.restore(); }
     }],
 
+    ['System Back: it walks back one screen at a time, and the app is still there at the end', async (n) => {
+      const job = await makeReviewJob('Scenario System Back', '8 Gesture Rd');
+      await openReportFor(job);
+      await tap(byText('li.report-section-item', /Client Details/i), 'Client Details'); await sleep(600);
+      must(viewId() === 'view-report-section', 'could not open a section');
+      must(window.NavHistory && window.NavHistory.hasSentinel(), 'no Back entry is armed while a section is open');
+      const path = [viewId()];
+      for (let i = 0; i < 3; i++) { history.back(); await sleep(800); path.push(viewId()); }
+      n.push('path: ' + path.join(' > '));
+      must(path.join('>') === 'view-report-section>view-report>view-job>view-joblist',
+        'Back should climb one screen per press, got ' + path.join(' > '));
+      must(!window.NavHistory.hasSentinel(), 'the entry should be gone at the job list, so the next press leaves');
+      must(location.search.includes('demo=1'), 'the page itself must not have moved');
+    }],
+
+    ['System Back: with a question open, it answers the question and stays on the screen', async (n) => {
+      const job = await makeReviewJob('Scenario Back Dialog', '9 Gesture Rd');
+      await home(); await window.showJobViewById(job.id); await sleep(450);
+      const del = $('delete-job-btn');
+      await tapVisible(del, 'Delete job'); await sleep(250);
+      must(document.querySelector('body > .app-dialog'), 'the delete question did not open');
+      history.back(); await sleep(600);
+      must(!document.querySelector('body > .app-dialog'), 'Back should have dismissed the question');
+      must(viewId() === 'view-job', 'it should stay on the job, got ' + viewId());
+      must(await findJob('Scenario Back Dialog'), 'the job must not have been deleted');
+      n.push('dismissed the delete question; job kept');
+    }],
+
     ['Offline mid-edit: the work is kept on the device', async (n) => {
       await makeJob({ 'job-name': 'Scenario Offline', 'job-address': '5 Dark St' });
       const job = await findJob('Scenario Offline');

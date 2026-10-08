@@ -346,6 +346,14 @@
     if (document.documentElement.scrollWidth > innerWidth + 3) {
       finding('h-scroll', 'page is ' + document.documentElement.scrollWidth + 'px wide in a ' + innerWidth + 'px window');
     }
+    // 6a. The phone's Back button must have something armed whenever there is
+    //     something for it to close. If not, one press leaves the app.
+    if (window.NavHistory && window.NavHistory.needsSentinel() !== window.NavHistory.hasSentinel()) {
+      await sleep(60); // the observer settles on a timer
+      if (window.NavHistory.needsSentinel() !== window.NavHistory.hasSentinel()) {
+        finding('back-button-drift', 'needs an entry: ' + window.NavHistory.needsSentinel() + ', has one: ' + window.NavHistory.hasSentinel() + ' on ' + currentViewId());
+      }
+    }
     // 6. Nothing to tap at all: the person is stuck.
     if (!candidates().length) finding('dead-end', 'no tappable control on ' + currentViewId());
   }
@@ -403,6 +411,14 @@
       return record('backgrounded-and-returned');
     }
     if (roll < 0.075) { await sleep(Math.floor(C.rand() * 500)); return record('waited'); }
+    // The phone's own Back button, for real. Only when the app has armed its
+    // history entry: without one this would take the page, and the harness,
+    // out of the app, which is exactly what it is meant to be able to avoid.
+    if (roll < 0.10 && window.NavHistory && window.NavHistory.hasSentinel()) {
+      history.back();
+      await sleep(120);
+      return record('system-back', 'to ' + currentViewId());
+    }
     if (roll < 0.10) {
       const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((i) => i.closest('section.view:not(.hidden)'));
       if (inputs.length) { const inp = choose(inputs); return record('import', inp.id || 'file input', await importInto(inp)); }
