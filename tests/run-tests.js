@@ -8198,6 +8198,156 @@
     assert(/code === 'cancelled'/.test(qr), 'closing the scanner must not be logged as an error');
   });
 
+  // ---------- "Tomorrow's reminders haven't been sent" (reminder-nudge.js) ----------
+  // The day-before reminders only go when somebody opens the panel and presses the
+  // button, so on a day nobody does, nothing is sent and nothing says so. These
+  // pin what counts as "not sent yet", and when to say so. Dates are fixed and
+  // built from local parts, so nothing here depends on today or the time zone.
+  const RN = () => frame.contentWindow.ReminderNudge; // loaded by the app, in the frame
+  const rnAt = (y, m, d, h = 9, min = 0) => new Date(y, m - 1, d, h, min).getTime();
+  const rnJob = (over) => Object.assign({
+    id: 'j', name: 'Client', clientPhone: '0412 345 678', clientEmail: '',
+    scheduledAt: rnAt(2031, 5, 21), dayBeforeSentForAt: null, commsOptOut: false,
+  }, over || {});
+  const RN_NOW = new Date(2031, 4, 20, 15, 0); // 20 May 2031, 3pm: tomorrow is the 21st
+
+  test('Reminder nudge: a client booked tomorrow who has not been reminded is counted', async () => {
+    const due = RN().dueTomorrow([rnJob()], RN_NOW);
+    assertEqual(due.length, 1);
+  });
+
+  test('Reminder nudge: only tomorrow counts, not today and not the day after', async () => {
+    const jobs = [
+      rnJob({ id: 'today', scheduledAt: rnAt(2031, 5, 20, 16) }),
+      rnJob({ id: 'tomorrow-early', scheduledAt: rnAt(2031, 5, 21, 0, 5) }),
+      rnJob({ id: 'tomorrow-late', scheduledAt: rnAt(2031, 5, 21, 23, 55) }),
+      rnJob({ id: 'day-after', scheduledAt: rnAt(2031, 5, 22, 0, 5) }),
+      rnJob({ id: 'unbooked', scheduledAt: null }),
+    ];
+    assertEqual(RN().dueTomorrow(jobs, RN_NOW).map((j) => j.id).join(','), 'tomorrow-early,tomorrow-late',
+      'the whole of tomorrow, and nothing either side of it');
+  });
+
+  test('Reminder nudge: a reminder already sent for the booked time is not counted, a moved one is', async () => {
+    const booked = rnAt(2031, 5, 21, 10);
+    const sent = rnJob({ id: 'sent', scheduledAt: booked, dayBeforeSentForAt: booked });
+    // The stamp records the time the client was TOLD. Moved from 8am to 10am after
+    // the reminder went out, the client has been told the wrong time.
+    const moved = rnJob({ id: 'moved', scheduledAt: booked, dayBeforeSentForAt: rnAt(2031, 5, 21, 8) });
+    assertEqual(RN().dueTomorrow([sent, moved], RN_NOW).map((j) => j.id).join(','), 'moved');
+  });
+
+  test('Reminder nudge: nobody who asked to stop, or who cannot be reached at all, is counted', async () => {
+    const jobs = [
+      rnJob({ id: 'opted-out', commsOptOut: true }),
+      rnJob({ id: 'no-contact', clientPhone: '', clientEmail: '' }),
+      rnJob({ id: 'blank-contact', clientPhone: '   ', clientEmail: ' ' }),
+      rnJob({ id: 'email-only', clientPhone: '', clientEmail: 'a@b.co' }),
+      rnJob({ id: 'landline', clientPhone: '02 9127 1320' }),
+      rnJob({ id: 'done', status: 'completed' }),
+    ];
+    // A landline client IS counted: they are the ones who need a phone call, and
+    // the panel says so. Counting only the textable would hide exactly them.
+    assertEqual(RN().dueTomorrow(jobs, RN_NOW).map((j) => j.id).join(','), 'email-only,landline');
+  });
+
+  test('Reminder nudge: tomorrow is the calendar day even when the clocks change', async () => {
+    // Sydney clocks go forward on Sunday 4 October 2026, so Saturday the 3rd to
+    // Sunday the 4th is a 23-hour day. A fixed "+24 hours" tomorrow would end an
+    // hour late and let the following morning's first job in.
+    // (These two only bite in a time zone that changes its clocks on those dates,
+    // as Sydney does; elsewhere they pass for the right reason, which is that
+    // nothing is different. The first draft of this test put its boundary job at
+    // exactly 1:00am, where the wrong answer and the right one coincide.)
+    const now = new Date(2026, 9, 3, 15, 0);
+    const jobs = [
+      rnJob({ id: 'sunday-8am', scheduledAt: rnAt(2026, 10, 4, 8) }),
+      rnJob({ id: 'sunday-late', scheduledAt: rnAt(2026, 10, 4, 23, 30) }),
+      rnJob({ id: 'monday-0030', scheduledAt: rnAt(2026, 10, 5, 0, 30) }),
+    ];
+    assertEqual(RN().dueTomorrow(jobs, now).map((j) => j.id).join(','), 'sunday-8am,sunday-late',
+      'by the calendar, not by adding 24 hours: the 23-hour Sunday must not leak into Monday');
+    // The other way: clocks go BACK on Sunday 5 April 2026, so tomorrow is 25 hours
+    // long and a "+24 hours" end would cut off its last hour.
+    const autumn = new Date(2026, 3, 4, 15, 0);
+    assertEqual(RN().dueTomorrow([rnJob({ id: 'late', scheduledAt: rnAt(2026, 4, 5, 23, 30) })], autumn).length, 1,
+      'the last hour of a 25-hour day is still tomorrow');
+    // And across the end of a month and of a year.
+    assertEqual(RN().dueTomorrow([rnJob({ scheduledAt: rnAt(2031, 1, 1, 9) })], new Date(2030, 11, 31, 15)).length, 1, 'New Year');
+    assertEqual(RN().dueTomorrow([rnJob({ scheduledAt: rnAt(2032, 3, 1, 9) })], new Date(2032, 1, 29, 15)).length, 1, 'leap day to March');
+  });
+
+  test('Reminder nudge: it waits until mid-afternoon, so it does not nag all morning', async () => {
+    assertEqual(RN().isTimeToNudge(new Date(2031, 4, 20, 7, 0)), false, '7am: tomorrow is not due yet');
+    assertEqual(RN().isTimeToNudge(new Date(2031, 4, 20, 13, 59)), false, 'just before 2pm');
+    assertEqual(RN().isTimeToNudge(new Date(2031, 4, 20, 14, 0)), true, '2pm');
+    assertEqual(RN().isTimeToNudge(new Date(2031, 4, 20, 22, 0)), true, 'and still that evening');
+  });
+
+  test('Reminder nudge: "Not today" lasts the day, and tomorrow it is a new reason to look', async () => {
+    const win = frame.contentWindow;
+    try { win.localStorage.removeItem('scope-reminder-nudge-dismissed'); } catch (e) { /* ignore */ }
+    const today = new Date();
+    assertEqual(win.ReminderNudge.dismissedFor(today), false, 'not dismissed to begin with');
+    win.ReminderNudge.dismissToday();
+    assertEqual(win.ReminderNudge.dismissedFor(today), true, 'dismissed for today');
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1, 15, 0);
+    assertEqual(win.ReminderNudge.dismissedFor(tomorrow), false, 'but not for tomorrow');
+    try { win.localStorage.removeItem('scope-reminder-nudge-dismissed'); } catch (e) { /* ignore */ }
+  });
+
+  test('Reminder nudge: it shows on the job list with the right words, and goes when there is nothing to do', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try { win.localStorage.removeItem('scope-reminder-nudge-dismissed'); } catch (e) { /* ignore */ }
+    // The real clock decides "mid-afternoon" and "tomorrow", so the test pins the
+    // one thing it can: it renders from the jobs on the phone and nothing else.
+    const realGetJobs = win.DB.getJobs;
+    const realDate = win.Date;
+    const afternoon = new realDate(2031, 4, 20, 15, 0).getTime();
+    class FakeDate extends realDate {
+      constructor(...a) { if (a.length) super(...a); else super(afternoon); }
+      static now() { return afternoon; }
+    }
+    win.Date = FakeDate;
+    try {
+      await atJobList(win, doc);
+      win.DB.getJobs = async () => [rnJob({ id: 'a' }), rnJob({ id: 'b', clientPhone: '', clientEmail: 'x@y.co' })];
+      assertEqual(await win.ReminderNudge.refresh(), 2, 'two clients are due');
+      const banner = doc.getElementById('reminder-nudge');
+      assert(banner, 'the banner is on the job list');
+      assert(banner.closest('#view-joblist'), 'in the job list, not somewhere else');
+      assert(/2 clients booked tomorrow haven't had a reminder yet/.test(banner.textContent), `wording: ${banner.textContent}`);
+
+      win.DB.getJobs = async () => [rnJob({ id: 'a' })];
+      await win.ReminderNudge.refresh();
+      assert(/^1 client booked tomorrow hasn't/.test(doc.getElementById('reminder-nudge').textContent.trim()), 'singular for one');
+      assertEqual(doc.querySelectorAll('#reminder-nudge').length, 1, 'refreshing never stacks a second banner');
+
+      win.DB.getJobs = async () => [rnJob({ id: 'a', dayBeforeSentForAt: rnAt(2031, 5, 21) })];
+      assertEqual(await win.ReminderNudge.refresh(), 0, 'once they have all been sent there is nothing to say');
+      assert(!doc.getElementById('reminder-nudge'), 'and the banner goes');
+    } finally {
+      win.Date = realDate; win.DB.getJobs = realGetJobs;
+      const b = doc.getElementById('reminder-nudge'); if (b) b.remove();
+    }
+  });
+
+  test('Reminder nudge: it asks the server nothing and opens the panel only when tapped', async () => {
+    const src = await (await fetch('../reminder-nudge.js', { cache: 'reload' })).text();
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    assert(!/supabase|functions\.invoke|fetch\(|CommsService|sweep/i.test(code),
+      'it works from jobs already on the phone: no client data crosses the network and nothing is sent from here');
+    assert(!/reminders-check|reminders-send/.test(code),
+      'it does not press "Check tomorrow" or "Send" for anybody: reading each message first is the point of the panel');
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+    assert(scripts.includes('reminder-nudge.js'), 'it is loaded');
+    assertEqual(scripts[scripts.length - 1], 'nav-history.js', 'and the Back button module is still last');
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(/'\.\/reminder-nudge\.js'/.test(sw), 'and cached for offline use');
+  });
+
   // ---------- The phone's Back button (nav-history.js) ----------
   // Until v102 the app never told the browser it had moved, so the system Back
   // button left the app from any screen. These drive the module with a recorder

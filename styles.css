@@ -2819,3 +2819,12 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   line-height: 1.35;
   color: var(--accent-2);
 }
+
+/* "Tomorrow's reminders haven't been sent": the job-list banner. Amber, because
+   it is a thing to do rather than a thing that is wrong. */
+.reminder-nudge {
+  display: flex; flex-direction: column; gap: 10px;
+  border-left: 3px solid var(--accent-2);
+  margin-bottom: 12px;
+}
+.reminder-nudge-text { margin: 0; font-size: 0.95rem; line-height: 1.4; }

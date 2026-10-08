@@ -171,6 +171,11 @@
         : `${result.sent} reminder${result.sent === 1 ? '' : 's'} sent`);
       previewed = null;
       sendBtn.classList.add('hidden');
+      // The job-list banner is worked out from jobs on this phone, whose "sent"
+      // stamps only catch up at the next sync. Telling it now stops it saying
+      // "haven't been sent" to somebody who has just sent them.
+      // Only when every one went: if some failed, "haven't been sent" is still true.
+      if (!failed && window.ReminderNudge) window.ReminderNudge.dismissToday();
       // Re-read rather than assume: the dedupe stamp has moved, so a second
       // check should now show an empty list, and seeing that is the proof.
       await check();
