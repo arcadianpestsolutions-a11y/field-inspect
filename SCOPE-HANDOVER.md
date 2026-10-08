@@ -20,7 +20,12 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v91 · **283 tests passing**
+**Current build:** v106 · **406 tests passing** (as of 8 Oct 2026)
+
+**Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
+`docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
+flow, design brief, schema, implementation plan). This handover is the
+plain-English orientation; those are the detail.
 
 ---
 
@@ -29,7 +34,7 @@ a phone, in a subfloor, with no signal.
 | | |
 |---|---|
 | Front end | Vanilla JS, **zero build step**, plain `<script src>` tags |
-| Offline | IndexedDB (`field-inspect-db`), DB_VERSION **8** |
+| Offline | IndexedDB (`field-inspect-db`), DB_VERSION **9** |
 | Shell | Service worker, cache-first, versioned by `CACHE_NAME` in `sw.js` |
 | Back end | Supabase — Postgres, Auth, Storage, Edge Functions (Deno) |
 | Hosting | GitHub Pages |
@@ -42,7 +47,9 @@ a phone, in a subfloor, with no signal.
   `APP_SHELL` *and* (if testable) to `tests/run-tests.html`.
 - **The machine has no Node and no Python.** The `python` on PATH is the
   Microsoft Store stub. A local server for the test suite runs via a
-  PowerShell `HttpListener` (`.claude/launch.json`, port 8787).
+  PowerShell `HttpListener` (`.claude/launch.json` entry `scope-local`, port 8787).
+  Supabase CLI is `.tools\supabase.exe`. **Never run `supabase db dump
+  --dry-run`: it prints a temporary database password.**
 - **Two working directories.** Edits happen in `C:\Users\Tal\Desktop\CLaude`;
   the git repo that deploys is `C:\Users\Tal\Desktop\deployed-reference`.
   Shipping = copy changed files across, commit, push.
@@ -85,10 +92,22 @@ certificate of installation, monitoring) · `swms-schema.js` (WHS Reg 2017 NSW)
 
 ### Screens
 
-`app.js` (job list, job view, camera) · `report.js` (the report editor —
-**4,108 lines, the largest piece of structural debt**) · `scheduler.js` ·
-`swms-ui.js` · `leads-ui.js` · `business-ui.js` · `assets-ui.js` ·
-`invoice-ui.js` · `reminders-ui.js` · `client-link.js` · `qr-scan.js`
+`app.js` (job list, job view, camera; ~2,600 lines) · `report.js` (the report
+editor — **~4,400 lines, the largest piece of structural debt**) · `scheduler.js`
+· `swms-ui.js` · `leads-ui.js` · `business-ui.js` · `assets-ui.js` ·
+`invoice-ui.js` · `reminders-ui.js` · `reminder-nudge.js` (14:00 banner) ·
+`backup.js` (export + stale-backup notice) · `client-link.js` · `qr-scan.js` ·
+`nav-history.js` (phone Back button; must stay the last script)
+
+Also: `html-safe.js` (the one HTML-escaping implementation: `escape`,
+`imageSrc`, `token`), `error-log.js` (local + uploaded error log). Both `app.js`
+and `report.js` open with a table of contents.
+
+### Tests and tools
+
+`tests/run-tests.html` (406 tests), `tests/chaos.js` + `chaos-scenarios.js`
+(random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
+run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
 
 ### Client-facing (outside the app)
 
@@ -99,16 +118,18 @@ database client, no key. It can only call the `client-portal` Edge Function.
 
 ## Edge Functions
 
-All require a signed-in user's bearer token **except** the two noted.
+All require a signed-in user's bearer token **except** the three noted (JWT
+verification OFF is recorded in `supabase/config.toml`).
 
 | Function | Notes |
 |---|---|
 | `analyze-inspection` | AI drafting from photos |
 | `send-report-email` | PDF arrives as base64 from the browser |
-| `send-client-message` | Booking confirmation, day-before reminder, report ready, due reminder. SMS + email. |
-| `send-due-reminders` | Annual re-inspection sweep |
+| `send-client-message` | Booking confirmation, day-before reminder, report ready, due reminder. SMS + email. The caller sends a job id only; the recipient is read from the job. A live sweep **halts** if a send cannot be recorded (prevents duplicate texts). |
+| `send-due-reminders` | **Retired** — answers 410. `send-client-message` `{"sweep":"due_reminder"}` replaced it (it had no org filter). |
 | `calendar-feed` | **JWT verification OFF.** Token in query = credential. |
 | `client-portal` | **JWT verification OFF.** Token in query = credential. |
+| `sms-inbound` | **JWT verification OFF.** Secret `?k=` (`SMS_INBOUND_TOKEN`) = credential. Records STOP by phone number. Answers 503 until the secret is set. |
 | `schedule-agent` | Tool-using assistant over the diary |
 | `check-email-status`, `xero` | |
 
@@ -160,7 +181,10 @@ write that live termites *were* found without that framing being handled.
    unrelated breaks after a deploy, suspect this and check
    `window.APP_VERSION` — not what git says.
 2. **Missing `GRANT`.** `42501 permission denied` was a missing grant, not RLS.
-   Every new table needs an explicit grant.
+   Every new table needs an explicit grant. This has now bitten four times; the
+   last (found 8 Oct 2026) meant Business details could never be saved. Migration
+   033 fixed it and trimmed `service_role` to what each function uses. Any query
+   that ignores its `error` hides this, so check every one.
 3. **`42710 policy already exists.`** Drop every policy by name before creating
    it. This has cost a round trip twice.
 4. **Missing columns fail silently.** Sync strips unknown columns, so an unrun
@@ -174,24 +198,47 @@ write that live termites *were* found without that framing being handled.
    morning on the previous day.
 8. **No whole-file regex on `report.js`.** It has been damaged twice that way.
    Use exact anchors, and verify by brace depth.
+9. **No perl `\x{...}` escapes in replacements** — they double-encode UTF-8
+   (every em dash becomes mojibake). Use the editor; check with
+   `grep -c $'\xc3\xa2' file`.
+10. **Never message real clients while testing.** No live sends, sweeps or
+    dry-runs against real data; use stubs and counts. End-to-end is the
+    owner's job, using his own phone.
+11. **A stale open browser tab can hang IndexedDB** for every tab on that origin.
+    Close idle tabs before debugging a stuck test run.
+12. **Secrets are set by the owner only.** Never read, print or enter an API key.
 
 ---
 
 ## Outstanding
 
 **Waiting on the operator (not code):**
-- ~~Run migrations 024-028~~ — applied 1 Oct 2026 via `supabase db query --linked`
+- Migrations 002–033 are all applied to the live project (033 on 8 Oct 2026).
 - Set `CLICKSEND_USERNAME` / `CLICKSEND_API_KEY` in Supabase secrets — until
   then day-before reminders go by email instead of SMS
-- Verify the sending domain at Resend
-- Business details (ABN, address, website) are blank and **print on reports**
+- Set `SMS_INBOUND_TOKEN` and add the ClickSend inbound rule pointing at
+  `sms-inbound?k=...` so STOP replies are recorded
+- Verify the sending domain at Resend (parked with his IT person)
+- Check Business details (ABN, address, website) are filled in — they **print
+  on reports**, and Save was broken for every admin until migration 033
+- Install the PostgreSQL command-line tools, run `tools/backup-scope.ps1`, and
+  practise one restore. The free plan has **no automatic backups**, and photos
+  are never in database backups
+- Phone checks of the v102 Back button and v105 backup share sheet
+- Decide: Supabase Pro vs weekly script; optional `SMS_ALLOWED_NUMBERS` guard;
+  register "Arcadian Pest Solutions" under the Pty Ltd ABN
 
-**Known open issues:**
-- `send-due-reminders` has **no org filter** — the last known tenancy leak
-- Business name is hardcoded in several Edge Functions
-- STOP replies land in the SMS provider's inbox, not in Scope
+**Known open issues:** (full list with reasoning in `docs/AUDIT.md`)
 - No signup or invites; a second user or business cannot be added
-- `report.js` at 4,108 lines
+- No in-app restore; no 2FA; no Content-Security-Policy
+- `app.js` (~2,600 lines) and `report.js` (~4,400) are single closures;
+  small helpers (`toast`, `askConfirm`, `el`, `fmtDate`...) are duplicated
+- No linter, CI or `package.json`; two-folder deploy workflow
+- Server-side `supabase-js` import is unpinned
+
+Resolved since the earlier version of this document: `send-due-reminders`
+org leak (function retired), hard-coded business name (none found in the
+functions), STOP replies (now handled by `sms-inbound`, once its secret is set).
 
 **Not built:** quote → accept → pay online (Stripe), 2FA/SSO, Zapier.
 

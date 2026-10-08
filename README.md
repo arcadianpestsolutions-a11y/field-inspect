@@ -6,7 +6,7 @@ messaging and a client portal. Vanilla JavaScript, **no build step**; Supabase
 back end; hosted on GitHub Pages.
 
 Start with `docs/ARCHITECTURE.md`. Findings and open debt are in `docs/AUDIT.md`.
-`SCOPE-HANDOVER.md` is the older plain-English handover (some figures predate v106).
+`SCOPE-HANDOVER.md` is the plain-English handover (refreshed for v106).
 
 ## Run locally
 Serve the folder over HTTP (service workers and camera need http://localhost):
