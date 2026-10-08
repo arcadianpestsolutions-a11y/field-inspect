@@ -26,7 +26,7 @@
   const propsEl = el('client-properties');
   const jobsEl = el('client-jobs');
 
-  const escapeHtml = (s) => (window.FormRender ? window.FormRender.escapeHtml(s) : String(s == null ? '' : s));
+  const escapeHtml = window.HtmlSafe.escape;
   const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
   const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
 

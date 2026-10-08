@@ -180,6 +180,10 @@
         ok: true,
         sent: results.filter((r) => r.sent).length,
         failed: results.filter((r) => !r.sent),
+        // Set when the server stopped part-way because it could not record a
+        // message as sent (it would have been sent again tomorrow). Passed on
+        // untouched: it is written for the person reading it.
+        halted: (data && data.halted) || null,
       };
     } catch (e) {
       if (window.ErrorLog) window.ErrorLog.note(e, 'messages: send reminders');

@@ -41,7 +41,7 @@
     : Promise.resolve(window.confirm(msg)));
   const utils = () => window.ReportSchemaUtils;
   const schema = () => window.SWMS_SCHEMA || [];
-  const escapeHtml = (s) => (window.FormRender ? window.FormRender.escapeHtml(s) : String(s == null ? '' : s));
+  const escapeHtml = window.HtmlSafe.escape;
 
   let current = null;            // the statement being edited
   let currentSectionId = null;

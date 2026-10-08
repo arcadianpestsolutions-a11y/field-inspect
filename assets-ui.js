@@ -19,7 +19,7 @@
   const stickerSheetEl = el('asset-sticker-sheet');
   const stickerSubtitleEl = el('asset-stickers-subtitle');
 
-  const escapeHtml = (s) => (window.FormRender ? window.FormRender.escapeHtml(s) : String(s == null ? '' : s));
+  const escapeHtml = window.HtmlSafe.escape;
   const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
 
   let currentProperty = null;

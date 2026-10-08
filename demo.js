@@ -336,7 +336,7 @@
       inspectorName: 'Sam Rivera',
       inspectorAddress: 'Ingleburn NSW 2565',
       inspectorLicence: 'DEMO-0000 (sample)',
-      inspectorPhone: '0291271320',
+      inspectorPhone: '0255500123',
       inspectorSignature: signature,
       signatureDate: localDate(0),
     };

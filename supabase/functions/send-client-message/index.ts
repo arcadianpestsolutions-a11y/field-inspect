@@ -404,12 +404,24 @@ async function markSentAndLog(
   // worst case is a message that is not in the log, which is a reporting gap.
   // The other order risks sending the same reminder again tomorrow, which the
   // client experiences directly.
+  let stamped = true;
   const col = alreadySentColumn(kind);
   if (col) {
-    await admin.from('jobs').update({ [col]: subjectValue(kind, job) }).eq('id', job.id);
+    const { error: stampError } = await admin.from('jobs').update({ [col]: subjectValue(kind, job) }).eq('id', job.id);
+    if (stampError) {
+      // THE MESSAGE HAS ALREADY GONE. If this stamp cannot be saved, the next
+      // sweep finds the job unstamped and sends the same reminder again. This
+      // used to be unchecked, so a missing grant on jobs would have meant every
+      // client texted a second time, every day, with nothing anywhere saying so.
+      // The caller is told, and a sweep stops rather than repeat it for the
+      // next client (whose stamp will fail for the same reason).
+      stamped = false;
+      console.error('[send-client-message] SENT BUT NOT RECORDED, this client would be messaged again:',
+        job.id, stampError.code, stampError.message);
+    }
   }
 
-  await admin.from('client_messages').insert({
+  const { error: logError } = await admin.from('client_messages').insert({
     id: crypto.randomUUID(),
     job_id: job.id,
     org_id: job.org_id ?? null,
@@ -423,6 +435,11 @@ async function markSentAndLog(
     status: 'sent',
     triggered_by: triggeredBy,
   });
+  // A reporting gap, not a repeat: the stamp above is what prevents a re-send.
+  if (logError) {
+    console.error('[send-client-message] sent, but not written to the log:', job.id, logError.code, logError.message);
+  }
+  return { stamped };
 }
 
 // A recurring program books a NEW job for each visit and links it back with
@@ -497,7 +514,7 @@ async function sendSmsOne(kind: string, job: JobRow, triggeredBy: string | null,
       + `${first.error_text || ''}`.trim());
   }
 
-  await markSentAndLog(kind, job, triggeredBy, {
+  const { stamped } = await markSentAndLog(kind, job, triggeredBy, {
     channel: 'sms',
     recipient: composed.to as string,
     subject: null,
@@ -513,6 +530,8 @@ async function sendSmsOne(kind: string, job: JobRow, triggeredBy: string | null,
     visitKind: composed.visitKind,
     segments: composed.segments,
     providerId: (first.message_id as string) || null,
+    // false means the message went but could not be recorded as sent; see markSentAndLog.
+    stamped,
   };
 }
 
@@ -602,9 +621,21 @@ async function sweepOneOrg(
   }
 
   const results = [];
+  let halted: string | null = null;
   for (const j of sendable) {
     try {
-      results.push(await sendOne(kind, j, triggeredBy, biz));
+      const r = await sendOne(kind, j, triggeredBy, biz) as { stamped?: boolean };
+      results.push(r);
+      // A message that went out but could not be recorded as sent would be sent
+      // AGAIN by tomorrow's sweep. If one stamp fails the next will too (same
+      // cause: a missing grant, a database that is down), so stop here rather
+      // than send every remaining client a message that will be repeated.
+      if (r.stamped === false) {
+        halted = 'A message was sent but could not be recorded as sent, so the rest were not sent. '
+          + 'Fix the database permissions before running this again, or those clients would be messaged twice.';
+        console.error('[send-client-message] sweep halted:', kind, 'after', j.id);
+        break;
+      }
     } catch (err) {
       console.error(`[send-client-message] ${kind} ${j.id}:`, err);
       results.push({ jobId: j.id, kind, sent: false, error: String(err) });
@@ -628,6 +659,7 @@ async function sweepOneOrg(
   return {
     sweep: kind, dryRun: false, channel: sms ? 'sms' : 'email',
     checked: jobs.length, results, needsAPhoneCall, stillDue,
+    ...(halted ? { halted } : {}),
   };
 }
 
@@ -691,14 +723,14 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null, bi
 
   // Mark sent only after a confirmed send. An interrupted run should retry
   // this job next time, not skip it forever believing it was done.
-  await markSentAndLog(kind, job, triggeredBy, {
+  const { stamped } = await markSentAndLog(kind, job, triggeredBy, {
     channel: 'email',
     recipient: to,
     subject,
     providerId: result.id || null,
   });
 
-  return { jobId: job.id, kind, sent: true, channel: 'email', providerId: result.id || null };
+  return { jobId: job.id, kind, sent: true, channel: 'email', providerId: result.id || null, stamped };
 }
 
 const JOB_COLUMNS = 'id, name, address, client_email, client_phone, scheduled_at, next_due_at, '
@@ -742,8 +774,12 @@ Deno.serve(async (req) => {
       // service_role key, which bypasses row-level security — so "signed in"
       // is not the same as "allowed to see this job", and without this the
       // function would happily email another business's client on request.
-      const { data: role } = await admin
+      const { data: role, error: roleError } = await admin
         .from('user_roles').select('org_id').eq('user_id', user.id).maybeSingle();
+      if (roleError) {
+        console.error('[send-client-message] could not read user_roles:', roleError.message);
+        return json({ error: 'Could not check which business your account belongs to. Nothing was sent.' }, 500);
+      }
       callerOrgId = (role && role.org_id) || null;
       if (!callerOrgId) return json({ error: 'Your account is not linked to a business yet.' }, 403);
     }

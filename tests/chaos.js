@@ -250,7 +250,7 @@
     '', ' ', 'a', 'Jo', 'O\'Brien & Sons', '"quoted" name', 'Zoë Müller', '\u{1F600}\u{1F41C}', 'x'.repeat(4000),
     '<img src=x onerror="window.__xss=(window.__xss||0)+1">', '"><svg onload=window.__xss=(window.__xss||0)+1>',
     '‮evil', 'line one\nline two\n\n', '%s %d {{7*7}} ${1+1}', '   padded   ', '0412 345 678', '+61 412 345 678',
-    '(04) 1234-5678', '12', '-1', '99999999999999999999', '0', '1e309', 'a@b.co', 'not an email@@x', '02 9127 1320',
+    '(04) 1234-5678', '12', '-1', '99999999999999999999', '0', '1e309', 'a@b.co', 'not an email@@x', '02 5550 0123',
     '１２３４', 'Mr. Smith, 14 Example Rd, Camden NSW 2570', '\t', 'DROP TABLE jobs;--',
   ];
   const DATES = ['1900-01-01', '2026-10-04', '2026-04-05', '2032-02-29', '2099-12-31', '2026-12-31', '2027-01-01', ''];

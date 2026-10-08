@@ -733,7 +733,7 @@
     const realInspector = win.Org.inspector;
     try {
       win.Org.provider = () => ({ providerName: 'Arcadian Pest Solutions', providerAddress: '', providerAbn: '' });
-      win.Org.inspector = () => ({ inspectorName: 'T. Pavlich' });
+      win.Org.inspector = () => ({ inspectorName: 'A. Smith' });
 
       const job = await win.DB.addJob({ name: 'Blank ABN Job', jobType: 'termite' });
       await win.ReportUI.openReview(job.id);
@@ -756,7 +756,7 @@
       // ones still blank — which is the behaviour, not a test problem.
       win.Org.provider = () => ({
         providerName: 'Arcadian Pest Solutions', providerAddress: '1 Real St',
-        providerPhone: '02 9127 1320', providerEmail: 'tal@example.com',
+        providerPhone: '02 5550 0123', providerEmail: 'tal@example.com',
         signedOnBehalfOf: 'Arcadian Pest Solutions', providerAbn: '11 222 333 444',
       });
       await win.ReportUI.openReview(job.id);
@@ -1835,7 +1835,7 @@
 
     const filled = window.ReportSchemaUtils.defaultValuesForSection(details, {
       provider: () => ({ providerName: 'Arcadian Pest Solutions', providerAbn: '11 222 333 444', providerLicence: 'PMT-12345' }),
-      inspector: () => ({ inspectorName: 'T. Pavlich', inspectorLicence: 'TECH-987' }),
+      inspector: () => ({ inspectorName: 'A. Smith', inspectorLicence: 'TECH-987' }),
     });
     assertEqual(filled.providerAbn, '11 222 333 444');
     assertEqual(filled.providerLicence, 'PMT-12345');
@@ -1845,9 +1845,9 @@
     const signoff = sectionById(window.SWMS_SCHEMA, 'swmsSignoff');
     const signed = window.ReportSchemaUtils.defaultValuesForSection(signoff, {
       provider: () => ({ providerName: 'Arcadian Pest Solutions' }),
-      inspector: () => ({ inspectorName: 'T. Pavlich', inspectorLicence: 'TECH-987' }),
+      inspector: () => ({ inspectorName: 'A. Smith', inspectorLicence: 'TECH-987' }),
     });
-    assertEqual(signed.technicianName, 'T. Pavlich');
+    assertEqual(signed.technicianName, 'A. Smith');
     assertEqual(signed.technicianLicence, 'TECH-987');
   });
 
@@ -6909,13 +6909,13 @@
     const a = await Accept();
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
 
-    assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: png }), null,
+    assertEqual(a.checkAcceptance({ name: 'Alex Smith', signature: png }), null,
       'a typed name and a drawn signature is an acceptance');
 
     assertEqual(a.checkAcceptance({ name: '', signature: png }), 'need-name', 'nobody signed');
     assertEqual(a.checkAcceptance({ name: '   ', signature: png }), 'need-name', 'spaces are not a name');
     assertEqual(a.checkAcceptance({ name: 'T', signature: png }), 'need-name', 'one letter is not a name');
-    assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: '' }), 'need-signature', 'nothing was drawn');
+    assertEqual(a.checkAcceptance({ name: 'Alex Smith', signature: '' }), 'need-signature', 'nothing was drawn');
 
     // The signature is stored and later rendered on a document. Anything that
     // is not a base64 PNG has no business being put there, and an endpoint
@@ -6928,14 +6928,14 @@
       'https://example.com/signature.png',
       'data:image/png;base64,iVBOR"onload="alert(1)',
     ]) {
-      assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: bad }), 'need-signature',
+      assertEqual(a.checkAcceptance({ name: 'Alex Smith', signature: bad }), 'need-signature',
         `accepted something that is not a PNG: ${bad}`);
     }
 
     // Bounded, because without a cap this endpoint takes an arbitrarily large
     // string from anybody holding a link.
     const huge = 'data:image/png;base64,' + 'A'.repeat(a.MAX_SIGNATURE_CHARS + 1);
-    assertEqual(a.checkAcceptance({ name: 'Tal Pavlich', signature: huge }), 'signature-too-big',
+    assertEqual(a.checkAcceptance({ name: 'Alex Smith', signature: huge }), 'signature-too-big',
       'there has to be a ceiling');
   });
 
@@ -7351,11 +7351,11 @@
     // The portal's contact line was empty for every client because the details
     // came from secrets nobody set, while the owner filled them in, in the app.
     const got = b.businessFrom(
-      { name: 'Arcadian Pest Solutions', phone: '0291271320', email: 'tal@arcadianpestsolutions.com.au', address: '20 Moorhen Street, Ingleburn NSW 2565', abn: '79 682 870 211' },
+      { name: 'Arcadian Pest Solutions', phone: '0255500123', email: 'owner@example.com', address: '1 Example Street, Sampletown NSW 2000', abn: '51 824 753 556' },
       { BUSINESS_PHONE: '0400 000 000', BUSINESS_REPLY_TO: 'old@example.com', BUSINESS_ABN: '11 111 111 111' });
-    assertEqual(got.phone, '0291271320', 'the record is what is used');
-    assertEqual(got.email, 'tal@arcadianpestsolutions.com.au', 'including the email');
-    assertEqual(got.abn, '79 682 870 211', 'and the ABN');
+    assertEqual(got.phone, '0255500123', 'the record is what is used');
+    assertEqual(got.email, 'owner@example.com', 'including the email');
+    assertEqual(got.abn, '51 824 753 556', 'and the ABN');
     assertEqual(got.replyTo, got.email, 'replies go to the same address clients are told to write to');
     assertEqual(got.fromRecord, true);
   });
@@ -7363,9 +7363,9 @@
   test('Business details: an old secret still fills a field the record leaves blank', async () => {
     const b = await Biz();
     const got = b.businessFrom({ name: 'Arcadian Pest Solutions', phone: '', email: '' },
-      { BUSINESS_PHONE: '0291271320', BUSINESS_REPLY_TO: 'tal@arcadianpestsolutions.com.au' });
-    assertEqual(got.phone, '0291271320', 'a deployment that already set it keeps working');
-    assertEqual(got.email, 'tal@arcadianpestsolutions.com.au');
+      { BUSINESS_PHONE: '0255500123', BUSINESS_REPLY_TO: 'owner@example.com' });
+    assertEqual(got.phone, '0255500123', 'a deployment that already set it keeps working');
+    assertEqual(got.email, 'owner@example.com');
   });
 
   test('Business details: with nothing known it says so blandly, never as somebody else', async () => {
@@ -7565,7 +7565,7 @@
     assertEqual(m.isNumberOptedOut('0499 999 999', optedOut), false, 'a different person is not caught');
     // A landline or a typo never matches. Nobody texts STOP from one, and
     // guessing would silence a stranger.
-    assertEqual(m.isNumberOptedOut('02 9127 1320', optedOut), false, 'a landline cannot match');
+    assertEqual(m.isNumberOptedOut('02 5550 0123', optedOut), false, 'a landline cannot match');
     assertEqual(m.isNumberOptedOut('', optedOut), false, 'no number, no match');
     assertEqual(m.isNumberOptedOut('0412 345 678', new Set()), false, 'an empty list suppresses nobody');
     assertEqual(m.isNumberOptedOut('0412 345 678', null), false, 'and a missing one does not throw');
@@ -8426,7 +8426,7 @@
       rnJob({ id: 'no-contact', clientPhone: '', clientEmail: '' }),
       rnJob({ id: 'blank-contact', clientPhone: '   ', clientEmail: ' ' }),
       rnJob({ id: 'email-only', clientPhone: '', clientEmail: 'a@b.co' }),
-      rnJob({ id: 'landline', clientPhone: '02 9127 1320' }),
+      rnJob({ id: 'landline', clientPhone: '02 5550 0123' }),
       rnJob({ id: 'done', status: 'completed' }),
     ];
     // A landline client IS counted: they are the ones who need a phone call, and
@@ -8836,6 +8836,97 @@
       toastEl.classList.add('hidden');
     }
   });
+
+  // ---------- HtmlSafe (html-safe.js) and the audit hardening ----------
+
+  test('HtmlSafe: escape is safe inside an attribute value, not only between tags', () => {
+    const { escape } = frame.contentWindow.HtmlSafe;
+    const hostile = `" onmouseover="alert(1)" x='y' <b>&`;
+    const out = escape(hostile);
+    assert(!/["'<>]/.test(out), `no raw quote or angle bracket survives: ${out}`);
+    const holder = frame.contentDocument.createElement('div');
+    holder.innerHTML = `<input value="${out}">`;
+    assertEqual(holder.firstChild.getAttribute('value'), hostile, 'it round-trips as the same text');
+    assertEqual(holder.firstChild.attributes.length, 1, 'and added no attribute of its own');
+    assertEqual(escape(null), '', 'null is empty text');
+    assertEqual(escape(0), '0', 'zero is not dropped');
+  });
+
+  test('HtmlSafe: imageSrc accepts a real image data URL and refuses everything else', () => {
+    const { imageSrc } = frame.contentWindow.HtmlSafe;
+    const ok = 'data:image/png;base64,iVBORw0KGgo=';
+    assertEqual(imageSrc(ok), ok, 'png data URL passes');
+    assertEqual(imageSrc('data:image/jpeg;base64,/9j/4AAQ'), 'data:image/jpeg;base64,/9j/4AAQ', 'jpeg passes');
+    for (const bad of [
+      'javascript:alert(1)', 'https://example.com/x.png', 'data:image/svg+xml;base64,PHN2Zz4=',
+      'data:text/html;base64,PGI+', 'data:image/png;base64,AAA" onerror="alert(1)', '', null, undefined,
+    ]) assertEqual(imageSrc(bad), '', `refused: ${bad}`);
+  });
+
+  test('HtmlSafe: token keeps a class name to letters, digits, dash and underscore', () => {
+    const { token } = frame.contentWindow.HtmlSafe;
+    assertEqual(token('in_progress'), 'in_progress', 'a normal status is unchanged');
+    assertEqual(token('new" onclick="x'), 'newonclickx', 'quotes and spaces are stripped');
+    assertEqual(token('', 'new'), 'new', 'empty falls back');
+    assertEqual(token(undefined, 'new'), 'new', 'missing falls back');
+  });
+
+  test('Audit: no private escapeHtml copy is left in the app', async () => {
+    const files = ['app', 'report', 'invoice-ui', 'form-render', 'assets-ui', 'business-ui',
+      'clients-ui', 'leads-ui', 'swms-ui'];
+    for (const f of files) {
+      const src = await (await fetch(`../${f}.js`, { cache: 'reload' })).text();
+      assert(!/function escapeHtml\s*\(/.test(src), `${f}.js defines its own escapeHtml again`);
+    }
+  });
+
+  test('Audit: signature and sketch images in the printed report go through imageSrc', async () => {
+    const src = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assert(!/class="sig" src="\$\{val\}"/.test(src), 'signature src is not interpolated raw');
+    assert(!/class="sketch-img" src="\$\{val\}"/.test(src), 'sketch src is not interpolated raw');
+    assert(/HtmlSafe\.imageSrc\(val\)/.test(src), 'both use HtmlSafe.imageSrc');
+  });
+
+  test('Audit: html-safe.js is registered in the page, the service worker and the suite page', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.indexOf('html-safe.js') > 0 && idx.indexOf('html-safe.js') < idx.indexOf('src="db.js"'),
+      'loaded before db.js and everything that escapes');
+    assert(sw.includes("'./html-safe.js'"), 'in the offline shell');
+  });
+
+  test('Audit: a job status from synced data cannot break out of its class attribute', async () => {
+    const src = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(!/status-\$\{job\.status/.test(src), 'status class is not interpolated raw');
+  });
+
+  test('Comms: a halted sweep reaches the screen and does not dismiss the reminder banner', async () => {
+    const comms = await (await fetch('../comms.js', { cache: 'reload' })).text();
+    assert(/halted:\s*\(data && data\.halted\)/.test(comms), 'comms.js passes halted through');
+    const ui = await (await fetch('../reminders-ui.js', { cache: 'reload' })).text();
+    const i = ui.indexOf('result.halted');
+    assert(i > 0, 'reminders-ui.js looks at halted');
+    assert(i < ui.indexOf('dismissToday()'), 'and does so before it can dismiss the banner');
+    const server = await (await fetch('../supabase/functions/send-client-message/index.ts', { cache: 'reload' })).text();
+    assert(/stamped === false/.test(server) && /halted/.test(server),
+      'the server stops the sweep when a send cannot be recorded');
+  });
+
+  test('Audit: server queries that used to drop their error now check it', async () => {
+    const get = async (n) => (await fetch(`../supabase/functions/${n}/index.ts`, { cache: 'reload' })).text();
+    const portal = await get('client-portal');
+    for (const m of ['could not read acceptance', 'could not read report', 'could not read invoices']) {
+      assert(portal.includes(m), `client-portal logs: ${m}`);
+    }
+    const xero = await get('xero');
+    for (const m of ['Could not read the Xero connection', 'Could not save the Xero connection', 'Could not disconnect Xero']) {
+      assert(xero.includes(m), `xero throws: ${m}`);
+    }
+    const sms = await get('sms-inbound');
+    assert(sms.includes('could not look up job') && sms.includes('could not flag jobs:'), 'sms-inbound logs both');
+    assert((await get('send-client-message')).includes('could not read user_roles'), 'send-client-message stops on a role read failure');
+  });
+
 
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they

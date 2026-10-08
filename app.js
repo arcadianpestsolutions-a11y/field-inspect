@@ -1,3 +1,44 @@
+// ===========================================================================
+// app.js - the shell: login, job list, one job's screen, photos and voice.
+//
+// This is the last application script to load (only nav-history.js follows).
+// It owns the top-level screens and wires every other module together.
+//
+// WHERE THINGS ARE (search for the "// ---------- name ----------" banners):
+//   Element refs ............ getElementById handles for index.html
+//   State ................... current job / filters / selection (module scope)
+//   Utils ................... toast, formatting, small helpers
+//   Haptic + shutter-sound .. vibration and Web Audio feedback
+//   View routing ............ showJobListView / showJobView / hideAllAppViews
+//   Auth / sync UI .......... login form, sign-out, sync status text
+//   Recurring service plan .. "repeat every N months" on a job
+//   Job list ................ filters, search, rendering the list
+//   Address autocomplete .... OpenStreetMap Nominatim (AU/NZ only)
+//   Gallery / captures ...... the photo grid for the current job
+//   Multi-select + bulk ..... select several photos, move / tag / delete
+//   Voice recording ......... MediaRecorder notes; pickMimeType is shared
+//   Start / Finish Inspection continuous capture with live preview
+//   Business details ........ opens business-ui.js
+//   Which document .......... inspection vs termite certificate etc.
+//   View Report ............. hands over to report.js (window.ReportUI)
+//   Capture detail .......... full-screen photo, annotate, voice note
+//   Pinch-zoom / pan / swipe  gestures on the detail photo
+//   Init .................... boot order; demo-mode shortcut
+//
+// EXPOSES (window): appToast, toastDurationFor, showJobListView, showJobViewById,
+//   showLoginView, renderJobListPublic, hideAllAppViews, refreshJobViewStatus,
+//   currentJobForSwms, pickAudioMimeType, technicianDisplayName.
+// DEPENDS ON: DB, HtmlSafe, Dialog, Sync, Org, ReportUI, InvoiceUI, Camera,
+//   Clients, CommsService, Geo, AI, Scheduler (all optional-guarded).
+// STORAGE: IndexedDB via DB.* only (never opens IndexedDB itself).
+// NETWORK: Nominatim address lookup (one fetch); everything else goes through
+//   sync.js / ai.js / comms.js / email.js.
+// SECURITY: untrusted text goes into markup only via HtmlSafe.escape, which is
+//   aliased to escapeHtml in this file. Use textContent where possible.
+// TESTS: tests/run-tests.js exercises this through the iframe (?test=1).
+// KNOWN DEBT: 2,500 lines in one closure; toast/askConfirm/el/pad helpers are
+//   duplicated across UI files. See docs/AUDIT.md "Known debt".
+// ===========================================================================
 (() => {
   'use strict';
 
@@ -267,11 +308,6 @@
       osc.start();
       osc.stop(audioCtx.currentTime + duration);
     } catch (e) { /* Web Audio unsupported, ignore */ }
-  }
-
-  function shutterFeedback() {
-    haptic(18);
-    playClick(1800, 0.05);
   }
 
   function recordStartFeedback() {
@@ -929,7 +965,7 @@
       li.innerHTML = `
         <span class="job-item-top">
           <span class="job-item-name"></span>
-          <span class="status-badge status-${job.status || 'new'} small"></span>
+          <span class="status-badge status-${HtmlSafe.token(job.status, 'new')} small"></span>
         </span>
         <span class="job-item-meta">
           <span class="job-item-type"></span>
@@ -1549,11 +1585,9 @@
     zoneSuggestions.innerHTML = zones.map((z) => `<option value="${escapeHtml(z)}"></option>`).join('');
   }
 
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
+  // One shared implementation (html-safe.js). Escapes quotes too, so it is
+  // safe inside attribute values as well as between tags.
+  const escapeHtml = window.HtmlSafe.escape;
 
   // ---------- Voice recording ----------
   function pickMimeType() {

@@ -73,7 +73,8 @@ const isDuplicate = (err: unknown) => String((err as { code?: string })?.code) =
 async function resolveBusiness(customString: string) {
   const cs = customString.trim().slice(0, 100);
   if (cs) {
-    const { data } = await admin.from('jobs').select('id, org_id').eq('id', cs).maybeSingle();
+    const { data, error: jobError } = await admin.from('jobs').select('id, org_id').eq('id', cs).maybeSingle();
+    if (jobError) console.error('[sms-inbound] could not look up job:', jobError.message);
     if (data && data.org_id) return { orgId: data.org_id as string, jobId: data.id as string };
   }
   const { data: orgs, error } = await admin.from('organisations').select('id').limit(2);
@@ -155,7 +156,8 @@ Deno.serve(async (req) => {
         try {
           const ids = await jobIdsForNumber(orgId, decision.e164);
           if (ids.length) {
-            await admin.from('jobs').update({ comms_opt_out: true, updated_at: now }).in('id', ids);
+            const { error: flagError } = await admin.from('jobs').update({ comms_opt_out: true, updated_at: now }).in('id', ids);
+            if (flagError) console.warn('[sms-inbound] could not flag jobs:', flagError.message);
           }
         } catch (e) {
           console.warn('[sms-inbound] could not flag jobs:', e instanceof Error ? e.message : e);

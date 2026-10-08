@@ -1,3 +1,39 @@
+// ===========================================================================
+// report.js - the report editor, pre-flight checks, AI draft, and print view.
+//
+// The biggest file. It turns a job's photos plus a schema (report-schema.js,
+// pest-treatment-schema.js, termite-management-schemas.js) into a finished,
+// signed, printable document.
+//
+// WHERE THINGS ARE (search for the "// ---------- name ----------" banners):
+//   Document types ............ which schema each document type uses
+//   Element refs / State ...... DOM handles and the report being edited
+//   Audit trail ............... who changed what (stored on the report)
+//   Is the AI any good? ....... accuracy tally of AI suggestions kept/changed
+//   Report load / prefill ..... open or create; fill from job + business
+//   Public entry point ........ window.ReportUI.open(...)
+//   AI Draft .................. calls ai.js and merges suggestions
+//   Saved Reports archive ..... list of finalised reports
+//   Audit trail + schema UI ... history sheet; schema-version notice
+//   Site fields from address .. suburb/postcode/state derivation
+//   Pre-flight check .......... "is this report ready to sign?" gate
+//   Section editor / autosave . one section at a time; drafts in IndexedDB
+//   the form renderer ......... field types -> controls (largest block)
+//   PDF export (print view) ... builds the print HTML, opens a print window
+//
+// EXPOSES (window): ReportUI. DEPENDS ON: DB, HtmlSafe, FormRender, Dialog,
+//   Sync, Org, AI, Media, EmailService, Backup, QrScan, schemas (see facts in
+//   docs/ARCHITECTURE.md).
+// STORAGE: IndexedDB through DB.* (reports, section drafts, captures, jobs).
+// SECURITY: all interpolated text goes through HtmlSafe.escape; stored images
+//   (signature, sketch) go through HtmlSafe.imageSrc, which only accepts a
+//   base64 png/jpeg/webp data URL. The print window uses document.write and an
+//   inline onclick="window.print()" - both confined to that window, which
+//   contains only markup built here.
+// TESTS: tests/run-tests.js (report, gate, schema, print groups).
+// KNOWN DEBT: 4,300 lines in one closure. Candidates to split: the form
+//   renderer and the print view. See docs/AUDIT.md.
+// ===========================================================================
   // Turns a job's assignedTo email into a name worth showing on a job list or
   // a scheduler slot. Reads the team roster rather than a table in this file.
   window.technicianDisplayName = function technicianDisplayName(email) {
@@ -263,11 +299,7 @@
   const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
   const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
 
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str == null ? '' : String(str);
-    return div.innerHTML;
-  }
+  const escapeHtml = window.HtmlSafe.escape;
 
   function findSection(sectionId) {
     return currentSchema().find((s) => s.id === sectionId);
@@ -2015,16 +2047,6 @@
     applyDraftFieldsToPending(section, draftFieldsForSection);
     renderCurrentSectionFields();
     toast('AI suggestions added below from your photos — review and adjust as needed');
-  }
-
-  async function getCurrentUserEmail() {
-    if (!window.supabaseClient) return null;
-    try {
-      const { data } = await window.supabaseClient.auth.getSession();
-      return data && data.session && data.session.user ? data.session.user.email : null;
-    } catch (err) {
-      return null;
-    }
   }
 
   // Takes a working copy of a section's saved values, deep enough that
@@ -4239,10 +4261,10 @@
             html += `</div></div>`;
           } else if (field.type === 'signature') {
             if (!val) continue;
-            html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><img class="sig" src="${val}"></div>`;
+            html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><img class="sig" src="${HtmlSafe.imageSrc(val)}"></div>`;
           } else if (field.type === 'sketch') {
             if (!val) continue;
-            html += `<div class="field sketch-page"><div class="field-label">${escapeHtml(field.label)}</div><img class="sketch-img" src="${val}"></div>`;
+            html += `<div class="field sketch-page"><div class="field-label">${escapeHtml(field.label)}</div><img class="sketch-img" src="${HtmlSafe.imageSrc(val)}"></div>`;
           } else if (field.type === 'productList') {
             const products = val || [];
             if (!products.length) continue;

@@ -24,7 +24,7 @@
   const stagesEl = el('lead-stages');
   const dueBannerEl = el('lead-due-banner');
 
-  const escapeHtml = (s) => (window.FormRender ? window.FormRender.escapeHtml(s) : String(s == null ? '' : s));
+  const escapeHtml = window.HtmlSafe.escape;
   const money = (cents) => (window.Invoicing ? window.Invoicing.formatMoney(cents) : `$${((cents || 0) / 100).toFixed(2)}`);
   const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
   const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));

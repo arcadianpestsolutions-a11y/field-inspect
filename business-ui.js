@@ -29,7 +29,7 @@
   const backBtn = document.getElementById('business-back-btn');
   const openBtn = document.getElementById('open-business-btn');
 
-  const escapeHtml = (s) => (window.FormRender ? window.FormRender.escapeHtml(s) : String(s == null ? '' : s));
+  const escapeHtml = window.HtmlSafe.escape;
   const money = (cents) => (window.Invoicing
     ? window.Invoicing.formatMoney(cents)
     : `$${((cents || 0) / 100).toFixed(2)}`);

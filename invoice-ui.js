@@ -46,11 +46,7 @@
   // both uses here guard something that costs money to get wrong.
   const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
 
-  function escapeHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str == null ? '' : String(str);
-    return d.innerHTML;
-  }
+  const escapeHtml = window.HtmlSafe.escape;
 
   // ---------- rendering ----------
   function renderTotals() {

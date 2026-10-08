@@ -55,17 +55,19 @@ interface XeroConnection {
 }
 
 async function loadConnection(): Promise<XeroConnection | null> {
-  const { data } = await admin.from('xero_connections').select('*').eq('id', 'default').maybeSingle();
+  const { data, error } = await admin.from('xero_connections').select('*').eq('id', 'default').maybeSingle();
+  if (error) throw new Error('Could not read the Xero connection: ' + error.message);
   return data as XeroConnection | null;
 }
 
 async function saveConnection(fields: Record<string, unknown>, userId?: string) {
-  await admin.from('xero_connections').upsert({
+  const { error } = await admin.from('xero_connections').upsert({
     id: 'default',
     ...fields,
     ...(userId ? { connected_by: userId } : {}),
     updated_at: Date.now(),
   });
+  if (error) throw new Error('Could not save the Xero connection: ' + error.message);
 }
 
 function basicAuthHeader() {
@@ -270,7 +272,8 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === 'disconnect') {
-      await admin.from('xero_connections').delete().eq('id', 'default');
+      const { error: delError } = await admin.from('xero_connections').delete().eq('id', 'default');
+      if (delError) throw new Error('Could not disconnect Xero: ' + delError.message);
       return json({ success: true });
     }
 

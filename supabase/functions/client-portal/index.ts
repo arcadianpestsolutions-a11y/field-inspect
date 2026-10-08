@@ -111,12 +111,13 @@ function callerIp(req: Request) {
 }
 
 async function liveAcceptanceFor(jobId: string) {
-  const { data } = await admin
+  const { data, error } = await admin
     .from('client_acceptances')
     .select('accepted_name, accepted_at')
     .eq('job_id', jobId)
     .is('superseded_at', null)
     .maybeSingle();
+  if (error) console.error('[client-portal] could not read acceptance:', error.message);
   // The signature image is not selected. The page has no use for it and a
   // picture of somebody's signature is not something to hand back out to
   // whoever holds the link next.
@@ -183,11 +184,12 @@ async function gate(req: Request): Promise<Gate> {
   // Selected together with the report because both verbs need it: GET to show
   // what is being accepted, POST to refuse accepting twice. `sections` goes
   // no further than quoteFrom() and signedOnSite() in this file.
-  const { data: report } = await admin
+  const { data: report, error: reportError } = await admin
     .from('reports')
     .select('job_id, document_type, finalized_at, sections')
     .eq('job_id', access.job_id)
     .maybeSingle();
+  if (reportError) console.error('[client-portal] could not read report:', reportError.message);
 
   return { token, access: access as Row, job: job as Row, report: (report || null) as Row | null };
 }
@@ -212,10 +214,11 @@ async function handleGet(req: Request) {
     reportUrl = signed ? signed.signedUrl : null;
   }
 
-  const { data: invoices } = await admin
+  const { data: invoices, error: invoiceError } = await admin
     .from('invoices')
     .select('id, number, status, xero_status, due_date, line_items, gst_registered')
     .eq('job_id', access.job_id);
+  if (invoiceError) console.error('[client-portal] could not read invoices:', invoiceError.message);
 
   // Totalled here rather than shipping line items, which name products and
   // quantities the client has no need for and which are the business's own

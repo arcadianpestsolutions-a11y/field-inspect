@@ -165,6 +165,16 @@
         hintEl.textContent = result.message || 'Could not send.';
         return;
       }
+      // The server stopped because it could not record a message as sent. Said
+      // plainly and NOT followed by a re-check, which would cheerfully report
+      // that nothing is left to send. Left on screen until somebody reads it.
+      if (result.halted) {
+        hintEl.textContent = result.halted;
+        toast(`${result.sent} sent, then stopped. Read the message above.`);
+        previewed = null;
+        sendBtn.classList.add('hidden');
+        return;
+      }
       const failed = (result.failed || []).length;
       toast(failed
         ? `${result.sent} sent, ${failed} could not be sent`
