@@ -8093,6 +8093,111 @@
     if (frameWin.ErrorLog) frameWin.ErrorLog.clear(); // it threw on purpose
   });
 
+  // ---------- Error log: caught failures ----------
+  // The first version of the error log caught crashes. Most failures in this app
+  // are not crashes: they are caught, a message is shown (or not), and the reason
+  // is thrown away — "adding a job wasn't working" left nothing to look at. These
+  // cover the other half. Each looks for its OWN unique text rather than counting
+  // entries, because the app may log something of its own while a test runs.
+  const logged = (win, text) => win.ErrorLog.list().filter((e) => e.message.includes(text));
+
+  test('Error log: the app’s own tagged warnings are on the record, with no file edited', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    // The shape this codebase already uses for a failure it has caught.
+    win.console.warn('[sync] push report failed, will retry on next sync:', new win.Error('socket hung up UNIQ1'));
+    win.console.error('[report] email send failed:', new win.Error('relay refused UNIQ2'));
+    win.console.warn('[media] upload failed for', 'jobs/abc/photo.jpg', '-', 'quota exceeded UNIQ3');
+    const a = logged(win, 'UNIQ1')[0], b = logged(win, 'UNIQ2')[0], c = logged(win, 'UNIQ3')[0];
+    assert(a && b && c, 'all three shapes (warn+Error, error+Error, warn+plain text) are captured');
+    assertEqual(a.kind, 'handled', 'recorded as handled: somebody already told the person');
+    assert(/push report failed/.test(a.message), `the tag and the sentence are kept: ${a.message}`);
+    assert(/\[sync\]/.test(a.message), 'including which part of the app said it');
+    assert(c.message.includes('jobs/abc/photo.jpg'), 'and the details around it, such as which file');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: warnings that are not the app reporting a failure are left out', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    win.console.warn('some library says UNIQ4 is deprecated');                // no tag: not ours
+    win.console.warn('[sync] test/demo mode — cloud sync disabled. UNIQ5'); // information, not failure
+    win.console.warn('[sync] Supabase not configured — running local-only. UNIQ6');
+    win.console.warn('[sync] the clients table is not in the database yet UNIQ7');
+    win.console.log('[sync] a log line, not a warning UNIQ8');
+    for (const u of ['UNIQ4', 'UNIQ5', 'UNIQ6', 'UNIQ7', 'UNIQ8']) {
+      assertEqual(logged(win, u).length, 0, `${u} should not have been recorded`);
+    }
+    // And the console itself still works: the hook passes everything through.
+    let threw = false;
+    try { win.console.warn('[x] pass-through check', { circular: 1 }); } catch (e) { threw = true; }
+    assert(!threw, 'wrapping the console must never break the console');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: a failure that is only "no signal" is not a fault, and is not logged on every retry', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    const online = Object.getOwnPropertyDescriptor(win.navigator, 'onLine');
+    Object.defineProperty(win.navigator, 'onLine', { get: () => false, configurable: true });
+    try {
+      win.console.warn('[sync] push job failed, will retry on next sync: Failed to fetch UNIQ9');
+      assertEqual(logged(win, 'UNIQ9').length, 0,
+        'with no signal a failed fetch is the expected state of things, and sync retries on a timer');
+    } finally {
+      if (online) Object.defineProperty(win.navigator, 'onLine', online); else delete win.navigator.onLine;
+    }
+    // The same failure WITH signal is a real one.
+    win.console.warn('[sync] push job failed, will retry on next sync: Failed to fetch UNIQ9b');
+    assertEqual(logged(win, 'UNIQ9b').length, 1, 'but online, it is recorded');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: the same caught failure repeating is one entry with a count', async () => {
+    const win = frame.contentWindow;
+    win.ErrorLog.clear();
+    // A sync that fails every thirty seconds must not fill the log with one line.
+    for (let i = 0; i < 30; i++) win.console.warn('[sync] push capture failed, will retry on next sync: UNIQ10');
+    const same = logged(win, 'UNIQ10');
+    assertEqual(same.length, 1, 'thirty identical failures are one entry');
+    assertEqual(same[0].count, 30, 'with the number of times it happened');
+    win.console.warn('[sync] push invoice failed, will retry on next sync: UNIQ11');
+    assertEqual(logged(win, 'UNIQ11').length, 1, 'a different failure is its own entry');
+    win.ErrorLog.clear();
+  });
+
+  test('Error log: a caught failure never adds a second, generic message on top of the specific one', async () => {
+    const src = await (await fetch('../error-log.js', { cache: 'reload' })).text();
+    assert(/kind !== 'handled' && !isExpectedOffline\(msg\)\) announce/.test(src),
+      '"Something went wrong" is only for crashes. A handler that caught the error already said what failed, '
+      + 'and a vague line beside "Could not email the invoice" would only contradict it');
+  });
+
+  test('Error log: the places that show a failure and kept no reason now keep it', async () => {
+    // Asserted against the source so a refactor cannot quietly drop one. These
+    // are the catch blocks that put a failure message on screen and wrote
+    // nothing down: the reason is the one thing a person can paste to be fixed.
+    const expect = {
+      'invoice-ui.js': ['invoice: Xero status', 'invoice: email status check', 'invoice: send to Xero', 'invoice: email the invoice'],
+      'client-link.js': ['client link: open', 'client link: create', 'client link: ask for acceptance', 'client link: apply signature', 'client link: revoke'],
+      'comms.js': ['messages: send one', 'messages: preview reminders', 'messages: send reminders', 'messages: the server refused'],
+      'report.js': ['backup export', 'report: email status check', 'site sketch: trace outline', 'site sketch: GPS'],
+      'qr-scan.js': ['QR scan: camera'],
+      'app.js': ['business details: save', 'starting a voice note'],
+    };
+    for (const [file, labels] of Object.entries(expect)) {
+      const src = await (await fetch('../' + file, { cache: 'reload' })).text();
+      for (const label of labels) assert(src.includes(`'${label}'`), `${file} should record "${label}"`);
+    }
+    // The server-refused path matters most: that is how an Edge Function says no.
+    const comms = await (await fetch('../comms.js', { cache: 'reload' })).text();
+    assertEqual((comms.match(/if \(error\) \{ noteServerError\(error\); return/g) || []).length, 3,
+      'all three returned-error paths in comms.js record the refusal, not just the thrown ones');
+    // And a closed scanner is a decision, not a failure.
+    const qr = await (await fetch('../qr-scan.js', { cache: 'reload' })).text();
+    assert(/code === 'cancelled'/.test(qr), 'closing the scanner must not be logged as an error');
+  });
+
   // ---------- The phone's Back button (nav-history.js) ----------
   // Until v102 the app never told the browser it had moved, so the system Back
   // button left the app from any screen. These drive the module with a recorder

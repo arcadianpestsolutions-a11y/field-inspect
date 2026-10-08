@@ -2197,6 +2197,7 @@
         toast('Business details saved');
         panel.remove();
       } catch (e) {
+        if (window.ErrorLog) window.ErrorLog.note(e, 'business details: save');
         toast(e.message || 'Could not save the business details.');
         save.disabled = false;
       }

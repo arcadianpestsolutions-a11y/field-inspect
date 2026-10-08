@@ -123,16 +123,24 @@
   function record(kind, message, source, line, col, stack, reasonName) {
     try {
       if (isNoise(message, kind, reasonName)) return null;
+      // A failure that is only the phone having no signal is the expected state
+      // of a phone with no signal, not a fault. It would also be retried and
+      // logged again on every sync attempt for as long as the signal is gone.
+      if (kind === 'handled' && isExpectedOffline(message)) return null;
 
       const now = Date.now();
       const entries = load();
       const msg = clip(message, MAX_MESSAGE);
       const src = clip(source, 200);
 
-      // Same thing again within a few seconds: bump the count, do not add a row.
+      // Same thing again: bump the count, do not add a row. Within a few seconds
+      // for anything, and for a HANDLED failure however long it has been, because
+      // those repeat on a retry timer (a sync that fails every thirty seconds
+      // would otherwise fill the log with one line forty times over and push
+      // out everything else).
       const prev = entries[entries.length - 1];
       if (prev && prev.message === msg && prev.source === src && prev.kind === kind
-        && now - prev.at < DEDUPE_MS) {
+        && (kind === 'handled' || now - prev.at < DEDUPE_MS)) {
         prev.count = (prev.count || 1) + 1;
         prev.lastAt = now;
         save(entries);
@@ -158,7 +166,10 @@
       entries.push(entry);
       save(entries);
 
-      if (!isExpectedOffline(msg)) announce(now);
+      // Never for a handled failure: whoever caught it already told the person,
+      // in words that fit what they were doing ("Could not email the invoice").
+      // A second, generic message on top would only contradict it.
+      if (kind !== 'handled' && !isExpectedOffline(msg)) announce(now);
       scheduleFlush();
       return entry;
     } catch (e) {
@@ -196,6 +207,58 @@
         r && r.stack, r && r.name);
     } catch (e) { /* swallowed */ }
   });
+
+  // ---- the app's own tagged warnings ---------------------------------------
+  // This codebase already says what went wrong, in the console, in a fixed shape:
+  // console.warn('[sync] push report failed, will retry on next sync:', err).
+  // That was written for whoever had the device in their hand with dev tools open,
+  // which is nobody. Capturing the shape means every one of those lines, in every
+  // file, is now on the record without being edited: sync failures, upload
+  // failures, AI failures, the lot.
+  //
+  // Only the "[tag] ..." shape. A library's own warnings and a stray debugging
+  // line are not the app reporting a failure, and recording them would bury the
+  // ones that are.
+  const TAGGED = /^\[[a-z][a-z0-9 ._-]*\]/i;
+  // A tagged line that is information rather than a failure: sync saying it is
+  // switched off in demo mode, say.
+  const INFORMATIONAL = /disabled|not configured|local-only|running local|skipped|not in the database yet/i;
+  // Demo and test pages never create a cloud client, by design, and each module
+  // says so when it loads ("no client email is sent", "did not initialize a
+  // Supabase client"). On a real device the second of those IS a fault, so it is
+  // only treated as information on pages that are not meant to have one.
+  const QUIET_WHEN_OFFLINE_BY_DESIGN = /demo mode|test mode|supabase client/i;
+
+  function textOf(a) {
+    try {
+      if (a && a.message) return String(a.message);
+      if (typeof a === 'string') return a;
+      if (a && typeof a === 'object') return JSON.stringify(a);
+      return String(a);
+    } catch (e) { return ''; }
+  }
+
+  function hookConsole(name) {
+    try {
+      const original = console[name];
+      if (typeof original !== 'function') return;
+      console[name] = function () {
+        try {
+          const first = arguments[0];
+          if (typeof first === 'string' && TAGGED.test(first)) {
+            const text = Array.prototype.map.call(arguments, textOf).join(' ');
+            if (!INFORMATIONAL.test(text) && !((IS_TEST || IS_DEMO) && QUIET_WHEN_OFFLINE_BY_DESIGN.test(text))) {
+              const withStack = Array.prototype.find.call(arguments, (a) => a && a.stack);
+              record('handled', text, '', null, null, withStack && withStack.stack, withStack && withStack.name);
+            }
+          }
+        } catch (e) { /* the logger never throws */ }
+        return original.apply(console, arguments);
+      };
+    } catch (e) { /* console unavailable */ }
+  }
+  hookConsole('warn');
+  hookConsole('error');
 
   // ---- sending -------------------------------------------------------------
   // Only with a real session. The insert is allowed for any signed-in user of

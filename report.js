@@ -1180,6 +1180,7 @@
         URL.revokeObjectURL(url);
         toast(`Exported ${data.counts.jobs} jobs, ${data.counts.reports} reports, ${data.counts.invoices} invoices.`);
       } catch (err) {
+        if (window.ErrorLog) window.ErrorLog.note(err, 'backup export');
         toast('Could not prepare the export — try again. ' + (err && err.message ? err.message : ''));
       } finally {
         exportDataBtn.disabled = false;
@@ -1286,6 +1287,7 @@
         await DB.saveReport(currentReport);
         renderEmailStatus();
       } catch (err) {
+        if (window.ErrorLog) window.ErrorLog.note(err, 'report: email status check');
         toast('Could not check status: ' + aiErrorText(err));
       } finally {
         emailStatusCheckBtn.disabled = false;
@@ -3484,6 +3486,7 @@
           ? 'Traced, but the roof was hard to see — check every corner.'
           : 'Outline traced — drag any corner that looks wrong.');
       } catch (err) {
+        if (window.ErrorLog) window.ErrorLog.note(err, 'site sketch: trace outline');
         toast(err.message || 'Could not trace the building outline.');
       } finally {
         traceBtn.disabled = false;
@@ -3798,6 +3801,7 @@
           ? gpsCorners.length + ' of at least 3 corners done. Walk to the next corner.'
           : gpsCorners.length + ' corners done. Keep going, or tap Draw the Outline once you have been all the way around.';
       } catch (err) {
+        if (window.ErrorLog) window.ErrorLog.note(err, 'site sketch: GPS');
         gpsBtn.textContent = original;
         toast(err.message);
         hint.textContent = err.message;

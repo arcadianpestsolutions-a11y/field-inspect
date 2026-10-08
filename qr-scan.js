@@ -95,6 +95,8 @@
         isCancelled: () => cancelled,
       });
     } catch (err) {
+      // Closing the scanner is a decision, not a failure.
+      if (window.ErrorLog && !(err && err.code === 'cancelled')) window.ErrorLog.note(err, 'QR scan: camera');
       stop();
       const message = window.Camera.messageFor(err);
       if (message) toast(message);

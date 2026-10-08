@@ -191,6 +191,7 @@
         : '<span class="xero-pill xero-off">Xero not connected</span>' +
           `<a class="xero-connect-link" href="${escapeHtml(s.authorizeUrl)}">Connect Xero</a>`;
     } catch (err) {
+      if (window.ErrorLog) window.ErrorLog.note(err, 'invoice: Xero status');
       xeroStateEl.innerHTML = `<span class="xero-pill xero-off">${escapeHtml(err.message || 'Xero unavailable')}</span>`;
     }
   }
@@ -243,6 +244,7 @@
         current = await save();
         renderEmailStatus();
       } catch (err) {
+        if (window.ErrorLog) window.ErrorLog.note(err, 'invoice: email status check');
         toast('Could not check status: ' + (err.message || err));
       } finally {
         emailStatusCheckBtn.disabled = false;
@@ -342,6 +344,7 @@
       await DB.saveInvoice(current);
       toast(`Draft created in Xero (${result.xeroInvoiceNumber || current.number})`);
     } catch (err) {
+      if (window.ErrorLog) window.ErrorLog.note(err, 'invoice: send to Xero');
       toast('Xero: ' + (err.message || err));
     } finally {
       renderXeroState();
@@ -381,6 +384,7 @@
       }
       toast('Invoice emailed to ' + to);
     } catch (err) {
+      if (window.ErrorLog) window.ErrorLog.note(err, 'invoice: email the invoice');
       toast('Could not email the invoice: ' + (err.message || err));
     } finally {
       emailBtn.disabled = false;

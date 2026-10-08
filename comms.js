@@ -108,6 +108,13 @@
 
   const client = window.supabaseClient;
 
+  // A server that says no does not throw: supabase-js hands the failure back as a
+  // returned error. That is the usual way these calls fail, so it has to be
+  // recorded here as well as in the catch blocks below.
+  const noteServerError = (error) => {
+    if (window.ErrorLog) window.ErrorLog.note(error, 'messages: the server refused');
+  };
+
   // Returns { sent, message } and never throws. A failure to email a client
   // must never be able to fail the thing the technician was actually doing,
   // which is saving a job.
@@ -117,10 +124,11 @@
       const { data, error } = await client.functions.invoke('send-client-message', {
         body: { kind, jobId },
       });
-      if (error) return { sent: false, message: failureText(await edgeErrorMessage(error)) };
+      if (error) { noteServerError(error); return { sent: false, message: failureText(await edgeErrorMessage(error)) }; }
       if (data && data.sent) return { sent: true, message: null };
       return { sent: false, message: refusalText(data && data.reason) };
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'messages: send one');
       return { sent: false, message: failureText(e && e.message) };
     }
   }
@@ -134,7 +142,7 @@
       const { data, error } = await client.functions.invoke('send-client-message', {
         body: { sweep: kind },
       });
-      if (error) return { ok: false, message: failureText(await edgeErrorMessage(error)) };
+      if (error) { noteServerError(error); return { ok: false, message: failureText(await edgeErrorMessage(error)) }; }
       return {
         ok: true,
         channel: (data && data.channel) || 'email',
@@ -146,6 +154,7 @@
         checked: (data && data.checked) || 0,
       };
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'messages: preview reminders');
       return { ok: false, message: failureText(e && e.message) };
     }
   }
@@ -165,7 +174,7 @@
       const { data, error } = await client.functions.invoke('send-client-message', {
         body: { sweep: kind, dryRun: false },
       });
-      if (error) return { ok: false, message: failureText(await edgeErrorMessage(error)) };
+      if (error) { noteServerError(error); return { ok: false, message: failureText(await edgeErrorMessage(error)) }; }
       const results = (data && data.results) || [];
       return {
         ok: true,
@@ -173,6 +182,7 @@
         failed: results.filter((r) => !r.sent),
       };
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'messages: send reminders');
       return { ok: false, message: failureText(e && e.message) };
     }
   }

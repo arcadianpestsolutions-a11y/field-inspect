@@ -324,7 +324,12 @@
     //    which is also what a technician's phone would have recorded.
     if (window.ErrorLog) {
       const all = window.ErrorLog.list();
-      for (const e of all.slice(C.errorLogSeen || 0)) finding('uncaught-' + e.kind, e.message + ' @ ' + e.source + ':' + e.line, { stack: (e.stack || '').split('\n').slice(0, 3).join(' | ') });
+      for (const e of all.slice(C.errorLogSeen || 0)) {
+        // A "handled" entry is a failure the app caught and told the person about.
+        // It is the app working, not a crash, so it is counted, not reported.
+        if (e.kind === 'handled') { C.handledNotes = (C.handledNotes || 0) + 1; continue; }
+        finding('uncaught-' + e.kind, e.message + ' @ ' + e.source + ':' + e.line, { stack: (e.stack || '').split('\n').slice(0, 3).join(' | ') });
+      }
       C.errorLogSeen = all.length;
     }
     // 2. Exactly one screen showing.
@@ -574,7 +579,7 @@
       counts: C.lastCounts || null,
       screens: Object.fromEntries(C.views),
       distinctControlsTried: C.clicked.size,
-      camera: C.camera, imports: C.imports,
+      camera: C.camera, imports: C.imports, handledNotes: C.handledNotes || 0,
       nativeDialogs: C.nativeDialogs.slice(0, 5), blockedNav: C.blockedNav.slice(0, 5),
       harnessErrors: C.harnessErrors.slice(0, 5),
       consoleErrors: o.console ? C.consoleErrors.slice(0, 15) : C.consoleErrors.length,

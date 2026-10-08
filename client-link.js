@@ -184,6 +184,7 @@
       const row = await currentLink();
       render(row, row ? await currentAcceptance() : null);
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'client link: open');
       hintEl.textContent = errorText(e);
     }
   }
@@ -215,6 +216,7 @@
       render({ ...row, view_count: 0, last_seen_at: null }, null);
       toast('Client link created');
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'client link: create');
       hintEl.textContent = errorText(e);
     } finally {
       createBtn.disabled = false;
@@ -233,6 +235,7 @@
       liveRow.acceptance_requested_at = next;
       toast(on ? 'The client will be asked to accept' : 'The client will only see their report');
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'client link: ask for acceptance');
       // Put the box back where it was. A tick that silently did not save is
       // worse than one that visibly refused.
       liveRow.acceptance_requested_at = was;
@@ -272,6 +275,7 @@
       renderAcceptance(liveRow, liveAcceptance);
       toast('Signature added to the report');
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'client link: apply signature');
       // The report was changed either way — this only failed to record that it
       // was, so say so rather than implying nothing happened.
       hintEl.textContent = 'The signature is on the report, but we could not record that here. Try again when you have signal.';
@@ -294,6 +298,7 @@
       render(null, null);
       toast('Link revoked');
     } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'client link: revoke');
       hintEl.textContent = errorText(e);
     } finally {
       revokeBtn.disabled = false;
