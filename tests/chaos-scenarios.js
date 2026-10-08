@@ -136,8 +136,14 @@
       await makeJob({ 'job-name': PAYLOAD_A, 'job-address': PAYLOAD_B + ' 1 Test St', 'job-phone': '0412 345 678', 'job-email': 'a@b.co', 'job-notes': PAYLOAD_A });
       const job = await findJob(PAYLOAD_A);
       must(job, 'the job was not saved with its name intact');
-      await DB.updateJob(job.id, { status: 'review' });
-      await home(); await sleep(200);
+      // Booked for today, so it also shows on the Today screen, which is where the app opens.
+      const noon = new Date(); noon.setHours(12, 0, 0, 0);
+      await DB.updateJob(job.id, { status: 'review', scheduledAt: noon.getTime() });
+      window.TodayUI.setTab('today');
+      await home(); await sleep(500);
+      must(($('today-panel').innerText || '').includes('<img src=x'), 'the markup should be visible as literal text on the Today screen');
+      window.TodayUI.setTab('all');
+      await home(); await sleep(300);
       must(document.body.innerText.includes('<img src=x'), 'the markup should be visible as literal text on the job list');
       await window.showJobViewById(job.id); await sleep(300);
       await openReportFor(job);

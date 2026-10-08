@@ -52,7 +52,7 @@ talks to one Supabase project.
 | Pure logic | `invoicing.js`, `availability.js`, `routing.js`, `reporting.js`, `assets.js`, `clients.js`, `pipeline.js` | Maths and rules with no DOM; best covered by tests |
 | Device | `camera.js`, `qr-scan.js`, `geo.js`, `media.js` | Capture, scan, location, photo upload |
 | Cloud | `sync.js`, `org.js`, `xero.js`, `ai.js`, `email.js`, `comms.js` | Everything that leaves the device |
-| Feature UI | `reminders-ui.js`, `reminder-nudge.js`, `backup.js`, `report.js`, `invoice-ui.js`, `swms-ui.js`, `business-ui.js`, `assets-ui.js`, `leads-ui.js`, `clients-ui.js`, `client-link.js`, `scheduler.js`, `schedule-agent.js`, `calendar-feed.js` | Screens |
+| Feature UI | `today.js` (pure: builds today's plan), `today-ui.js` (the Today screen), `job-details.js` (job card: Call, Directions, Edit), `reminders-ui.js`, `reminder-nudge.js`, `backup.js`, `report.js`, `invoice-ui.js`, `swms-ui.js`, `business-ui.js`, `assets-ui.js`, `leads-ui.js`, `clients-ui.js`, `client-link.js`, `scheduler.js`, `schedule-agent.js`, `calendar-feed.js` | Screens |
 | Shell | `demo.js`, `app.js`, `nav-history.js` | Boot, routing, phone Back button |
 | Test only | `tests/chaos.js`, `tests/chaos-scenarios.js` | Random tapper; refuses to run unless in demo mode |
 

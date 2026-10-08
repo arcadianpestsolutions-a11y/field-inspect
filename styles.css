@@ -2872,3 +2872,96 @@ body:has(#job-form:not(.hidden)) .fab { display: none; }
 .job-details-value { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .job-details-link { flex: 0 0 auto; min-height: 44px; display: inline-flex; align-items: center; padding: 0 6px; }
 .job-details-form { display: flex; flex-direction: column; gap: 8px; }
+
+/* ---------- Today screen (today-ui.js) ---------- */
+.home-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.home-tab {
+  flex: 1;
+  min-height: 44px;
+  background: none;
+  border: 0;
+  border-radius: 9px;
+  color: var(--text-dim);
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+}
+.home-tab.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: var(--glow-accent);
+}
+/* Today shows its own panel instead of the search box, filters and full list. */
+#view-joblist.home-today .joblist-toolbar,
+#view-joblist.home-today #job-list,
+#view-joblist.home-today #job-empty { display: none; }
+#view-joblist:not(.home-today) #today-panel { display: none; }
+body:has(#job-form:not(.hidden)) #today-panel,
+body:has(#job-form:not(.hidden)) .home-tabs { display: none; }
+
+.today-panel { display: flex; flex-direction: column; gap: 10px; padding-bottom: 96px; }
+.today-header { margin: 2px 2px 4px; }
+.today-date { margin: 0; font-size: 1.25rem; font-weight: 800; }
+.today-summary { margin: 4px 0 0; color: var(--text-dim); font-size: 0.88rem; font-family: var(--font-readout); }
+
+.today-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+}
+.today-item:focus-visible, .today-owed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.today-next { border-color: var(--accent); box-shadow: var(--glow-accent); }
+.today-done { opacity: 0.55; }
+.today-time { flex: 0 0 62px; display: flex; flex-direction: column; gap: 2px; font-family: var(--font-readout); }
+.today-start { font-size: 1.05rem; font-weight: 800; color: var(--text); }
+.today-len { font-size: 0.72rem; color: var(--text-dim); }
+.today-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.today-flag { color: var(--accent); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.today-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.today-name { font-weight: 700; font-size: 1.02rem; overflow-wrap: anywhere; }
+.today-address { color: var(--text-dim); font-size: 0.86rem; overflow-wrap: anywhere; }
+.today-note { font-size: 0.8rem; color: var(--text-dim); }
+.today-note-warn { color: var(--warning); }
+.today-note-late { color: var(--danger); font-weight: 600; }
+.today-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.today-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.today-btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+.today-section-title { margin: 10px 2px 0; font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+.today-owed {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; min-height: 44px;
+  background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--warning);
+  border-radius: 10px; cursor: pointer;
+}
+.today-owed-name { font-weight: 700; overflow-wrap: anywhere; }
+.today-owed-when { color: var(--text-dim); font-size: 0.82rem; }
+.today-more { margin: 0 2px; color: var(--text-dim); font-size: 0.82rem; }
+.today-tomorrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 4px; color: var(--text-dim); font-size: 0.9rem; border-top: 1px solid var(--border); }
+.today-unbooked { align-self: flex-start; min-height: 44px; }
+.today-empty { text-align: center; color: var(--text-dim); }
+.today-empty p { margin: 0 0 12px; }

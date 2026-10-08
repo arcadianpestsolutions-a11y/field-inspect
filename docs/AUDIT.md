@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 422 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 436 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -48,6 +48,7 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 18 | Jobs with no name rendered as an empty card; a leftover search could hide every job with no way back; no phone search | Falls back to address; "Show all jobs"; search matches phone digits |
 | 19 | No length limits or phone/email keyboards on several fields | `maxlength`, `inputmode`, `autocapitalize` |
 | 20 | Titles cut to ~12 characters by wide capitals; dangling separators; floating button over content | CSS fixes |
+| 21 | Start Inspection could act on the **wrong job**, or none: the camera permission prompt can take seconds, and after Back (or opening another job) the code read the job from "whichever is open now" | Remembers the job the tap was for; if the person has left it, lets the camera go and does nothing |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
 and no console error in ~2,400 random steps after the fixes.

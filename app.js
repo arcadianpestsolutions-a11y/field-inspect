@@ -906,6 +906,7 @@
     const jobs = await DB.getJobs();
     jobsCache = await Promise.all(jobs.map(async (job) => ({ job, count: await DB.getCaptureCount(job.id) })));
     applyJobListFilters();
+    if (window.TodayUI) window.TodayUI.render(jobs);
   }
 
   // "Due" isn't a job status — it's a completed job whose property has come
@@ -1867,6 +1868,10 @@
   }
 
   async function startInspection() {
+    // The job this tap was FOR. The camera permission prompt can take seconds, and
+    // by the time it answers the technician may have gone Back or opened another
+    // job; everything below must act on this job or on nothing.
+    const startJobId = currentJobId;
     if (startInspectionInProgress) return;
     startInspectionInProgress = true;
 
@@ -1911,6 +1916,15 @@
       return;
     }
 
+    // The permission prompt may have taken a while. If the technician has left
+    // this job in the meantime there is nothing to start: let the camera go
+    // rather than open it over a different screen, or against no job at all.
+    if (!startJobId || currentJobId !== startJobId) {
+      releaseStream();
+      resetButton();
+      return;
+    }
+
     // An inspection is a series of deliberate photographs, not a continuous
     // recording. Video was capturing 20 minutes of mostly floor and ceiling to
     // find the handful of frames that mattered, and the report only ever cited
@@ -1927,24 +1941,24 @@
       inspectionZoneInput.value = '';
       inspectionZonePill.textContent = 'Untagged';
       show(inspectionModal);
-      inspectionActiveJobId = currentJobId;
+      inspectionActiveJobId = startJobId;
       // Open on the one instruction that matters, not on an idle camera.
       // Skipped if this job already has its front shot — a second visit
       // should not ask for the cover photo again.
-      const already = await DB.getCaptures(currentJobId);
+      const already = await DB.getCaptures(startJobId);
       showFrontPhotoPrompt(!already.some((c) => c.isFrontElevation));
 
       inspectionChecklistDone = new Set(already.filter((c) => c.zone).map((c) => c.zone));
-      const jobForChecklist = await DB.getJob(currentJobId);
+      const jobForChecklist = await DB.getJob(startJobId);
       const jobCategoryForChecklist = window.ReportUI && window.ReportUI.getJobCategory
-        ? await window.ReportUI.getJobCategory(currentJobId).catch(() => null)
+        ? await window.ReportUI.getJobCategory(startJobId).catch(() => null)
         : null;
       // A termite job's report can be any one of four document types (see
       // photo-checklists.js) — without reading it, every termite job got
       // the same inspection checklist even mid-visit for a certificate or
       // service record. No report yet (a brand new job) means forJob's own
       // default (the standard inspection) applies, same as always.
-      const existingReport = await DB.getReport(currentJobId).catch(() => null);
+      const existingReport = await DB.getReport(startJobId).catch(() => null);
       const documentTypeForChecklist = existingReport ? existingReport.documentType : null;
       inspectionChecklistItems = (window.PhotoChecklists ? window.PhotoChecklists.forJob(jobForChecklist, jobCategoryForChecklist, documentTypeForChecklist) : [])
         .filter((item) => item.id !== 'frontElevation');
@@ -1968,7 +1982,7 @@
       inspectionTimerEl.textContent = fmtTimer(Date.now() - inspectionStartedAt);
     }, 500);
 
-    const jobIdForStart = currentJobId;
+    const jobIdForStart = startJobId;
     await DB.updateJob(jobIdForStart, { status: 'in_progress', inspectionStartedAt });
     const job = await DB.getJob(jobIdForStart);
     renderInspectionControls(job);

@@ -8,7 +8,7 @@ are `portal.html` and text/email messages.
 | Screen (id) | Reached from | Purpose |
 |---|---|---|
 | Login (`view-login`) | Start, sign-out | Email + password via Supabase Auth; shows build label |
-| Job list (`view-joblist`) | Login, Back from anywhere | Search, status and technician filters, new job, menu |
+| Home (`view-joblist`) | Login, Back from anywhere | Two tabs. **Today** (default): today's jobs in time order with Start, Call, Directions, drive time between jobs, anything still owed from earlier days, tomorrow at a glance. **All jobs**: search, status and technician filters, new job. Choice is remembered |
 | Job (`view-job`) | Job list | Photo gallery, start/finish inspection, voice, status, links to report/invoice |
 | Report chooser (`view-report-btn`) | Job | Which document type this job produces |
 | Report (`view-report`) | Job | Section list, AI draft, pre-flight, finalise |

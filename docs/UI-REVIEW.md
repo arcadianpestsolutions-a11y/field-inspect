@@ -37,10 +37,7 @@ and 390 px wide) in an emulated browser, plus a 2,400-step random-tapping run.
 | **A failed photo save was silent.** The shutter clicked, nothing said it had not kept the picture | iPhone Camera never loses a photo without saying | Plain message ("That photo was NOT saved. This phone is out of storage...") |
 
 ## Still lacklustre (not fixed; ranked by how much they matter)
-1. **No "Today" view.** The first screen is a list of every job. ServiceM8, Jobber,
-   and calendar apps open on *today's jobs, in order, with travel*. For a person
-   driving between properties this is the screen that matters most. (The scheduler
-   exists but is a menu away.)
+1. ~~**No "Today" view.**~~ **Built in v108**: Today is now the first tab on the home screen (today's jobs in time order, Start/Call/Directions, drive time between jobs, tight or clashing days flagged, anything still owed, tomorrow in one line). Still to judge on a real phone.
 2. **Navigation is hidden behind "..."**. Clients, Business/invoices, Archive, SWMS,
    and Assets are two taps away; the top bar has two emoji icons. Good apps use a
    bottom tab bar (Today, Jobs, Clients, More). The emoji icons also clash with the

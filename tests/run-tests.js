@@ -9163,6 +9163,273 @@
   });
 
 
+  // ---------- Today screen (today.js, today-ui.js) ----------
+  // Fixed clock, in local time, far from any real date: 14 March 2031, 9:30am.
+  const todayNow = () => new Date(2031, 2, 14, 9, 30).getTime();
+  const todayAt = (h, m, dayOffset) => new Date(2031, 2, 14 + (dayOffset || 0), h, m || 0).getTime();
+  // For the screen tests, which use the real clock: a time on the real current day.
+  const liveAt = (h) => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, 0).getTime(); };
+
+  test('Today: jobs are ordered by time and only today\'s are listed', () => {
+    const T = frame.contentWindow.Today;
+    const jobs = [
+      { id: 'c', name: 'Afternoon', scheduledAt: todayAt(14), status: 'new' },
+      { id: 'a', name: 'Morning', scheduledAt: todayAt(8), status: 'new' },
+      { id: 'y', name: 'Yesterday', scheduledAt: todayAt(10, 0, -1), status: 'completed' },
+      { id: 't', name: 'Tomorrow', scheduledAt: todayAt(9, 0, 1), status: 'new' },
+      { id: 'n', name: 'Unbooked', status: 'new' },
+    ];
+    const m = T.build(jobs, todayNow());
+    assertEqual(m.items.map((i) => i.job.id).join(','), 'a,c', 'today only, earliest first');
+    assertEqual(m.tomorrow.map((j) => j.id).join(','), 't', 'tomorrow is kept separately');
+    assertEqual(m.unbooked, 1, 'a new job with no time is counted');
+    assertEqual(m.summary.count, 2, 'the summary counts today');
+  });
+
+  test('Today: "next up" is the job under way, else the first one not finished', () => {
+    const T = frame.contentWindow.Today;
+    const base = [
+      { id: 'a', name: 'A', scheduledAt: todayAt(8), status: 'completed' },
+      { id: 'b', name: 'B', scheduledAt: todayAt(9), scheduledDurationMins: 60, status: 'new' },
+      { id: 'c', name: 'C', scheduledAt: todayAt(11), status: 'new' },
+    ];
+    assertEqual(T.build(base, todayNow()).next.job.id, 'b', 'first unfinished job');
+    const underWay = base.map((j) => (j.id === 'c' ? { ...j, status: 'in_progress' } : j));
+    assertEqual(T.build(underWay, todayNow()).next.job.id, 'c', 'a job in progress wins');
+    const allDone = base.map((j) => ({ ...j, status: 'completed' }));
+    assertEqual(T.build(allDone, todayNow()).next, null, 'nothing left to do, nothing highlighted');
+    assertEqual(T.build(allDone, todayNow()).summary.doneCount, 3, 'done jobs are counted');
+  });
+
+  test('Today: a job not started past its time is flagged; one in progress is not', () => {
+    const T = frame.contentWindow.Today;
+    const m = T.build([
+      { id: 'a', name: 'Late', scheduledAt: todayAt(9, 0), status: 'new' },
+      { id: 'b', name: 'Just due', scheduledAt: todayAt(9, 28), status: 'new' },
+      { id: 'c', name: 'Under way', scheduledAt: todayAt(8, 0), status: 'in_progress' },
+    ], todayNow());
+    const by = (id) => m.items.find((i) => i.job.id === id);
+    assertEqual(by('a').lateByMins, 30, 'thirty minutes late');
+    assertEqual(by('b').lateByMins, 0, 'two minutes past is not worth a warning');
+    assertEqual(by('c').lateByMins, 0, 'started jobs are not late');
+  });
+
+  test('Today: the drive between jobs is shown, and tight or clashing days are called out', () => {
+    const T = frame.contentWindow.Today;
+    // About 0.45 degrees of latitude is roughly 50 km.
+    const near = { lat: -34.0, lng: 150.8 };
+    const far = { lat: -34.45, lng: 150.8 };
+    const m = T.build([
+      { id: 'a', name: 'A', scheduledAt: todayAt(9), scheduledDurationMins: 60, status: 'new', addressLat: near.lat, addressLng: near.lng },
+      { id: 'b', name: 'B', scheduledAt: todayAt(10, 5), scheduledDurationMins: 60, status: 'new', addressLat: far.lat, addressLng: far.lng },
+      { id: 'c', name: 'C', scheduledAt: todayAt(10, 30), scheduledDurationMins: 60, status: 'new', addressLat: far.lat, addressLng: far.lng },
+    ], todayNow());
+    const b = m.items[1];
+    assert(typeof b.travelMins === 'number' && b.travelMins >= 30, `a 50 km drive takes real time (got ${b.travelMins})`);
+    assertEqual(b.gapMins, 5, 'five minutes between the end of A and the start of B');
+    assert(b.tight && !b.overlaps, 'five minutes for a long drive is tight');
+    assert(m.items[2].overlaps, 'C starts before B finishes');
+    assert(m.summary.travelMins > 0, 'the day\'s driving is totalled');
+    const noCoords = T.build([
+      { id: 'a', name: 'A', scheduledAt: todayAt(9), status: 'new' },
+      { id: 'b', name: 'B', scheduledAt: todayAt(11), status: 'new' },
+    ], todayNow());
+    assertEqual(noCoords.items[1].travelMins, null, 'no map positions: no invented drive time');
+    assertEqual(noCoords.summary.travelMins, null, 'and no driving total');
+  });
+
+  test('Today: earlier unfinished jobs are listed newest first, capped, and old ones are dropped', () => {
+    const T = frame.contentWindow.Today;
+    const jobs = [];
+    for (let d = 1; d <= 7; d++) jobs.push({ id: `o${d}`, name: `Owed ${d}`, scheduledAt: todayAt(9, 0, -d), status: 'new' });
+    jobs.push({ id: 'done', name: 'Done', scheduledAt: todayAt(9, 0, -1), status: 'completed' });
+    jobs.push({ id: 'ancient', name: 'Ancient', scheduledAt: todayAt(9, 0, -60), status: 'new' });
+    jobs.push({ id: 'rev', name: 'Needs report', scheduledAt: todayAt(7, 0, -1), status: 'review' });
+    const m = T.build(jobs, todayNow());
+    assertEqual(m.overdue.length, 5, 'at most five are shown');
+    assertEqual(m.overdue[0].id, 'o1', 'the most recent first');
+    assert(!m.overdue.some((j) => j.id === 'done' || j.id === 'ancient'), 'finished and ancient jobs are not owed');
+    assertEqual(m.overdueMore, 3, 'and it says how many more there are (7 owed + 1 review = 8, minus 5)');
+    assert(m.overdue.concat([]).every((j) => j.status !== 'completed'), 'nothing completed');
+  });
+
+  test('Today: day boundaries survive daylight-saving changes in any time zone', () => {
+    const T = frame.contentWindow.Today;
+    let ts = new Date(2031, 0, 1, 15, 0).getTime();
+    for (let i = 0; i < 400; i++) {
+      const start = T.startOfDay(ts);
+      const d = new Date(start);
+      assertEqual(`${d.getHours()}:${d.getMinutes()}`, '0:0', `day ${i} starts at midnight local time`);
+      const next = T.addDays(start, 1);
+      assertEqual(new Date(next).getDate(), new Date(new Date(start).getFullYear(), new Date(start).getMonth(), new Date(start).getDate() + 1).getDate(), 'the next day is the next calendar day');
+      ts = next + 15 * 3600 * 1000;
+    }
+  });
+
+  test('Today: times and durations read the way a person says them', () => {
+    const T = frame.contentWindow.Today;
+    assertEqual(T.timeLabel(todayAt(0, 0)), '12am', 'midnight');
+    assertEqual(T.timeLabel(todayAt(8, 0)), '8am', 'on the hour');
+    assertEqual(T.timeLabel(todayAt(12, 5)), '12:05pm', 'noon-ish');
+    assertEqual(T.timeLabel(todayAt(14, 30)), '2:30pm', 'afternoon');
+    assertEqual(T.durationLabel(45), '45 min', 'under an hour');
+    assertEqual(T.durationLabel(60), '1h', 'an hour');
+    assertEqual(T.durationLabel(70), '1h 10m', 'an hour and a bit');
+    assertEqual(T.durationLabel(null), '0 min', 'nothing');
+  });
+
+  test('Today screen: shows today\'s jobs in order, with Call and Directions, and opens a job', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const jobs = [
+      { id: 'tj2', name: 'Second Stop', address: '2 Two St', clientPhone: '0412 000 222', scheduledAt: liveAt(13), status: 'new', createdAt: 1, updatedAt: 1 },
+      { id: 'tj1', name: 'First Stop', address: '1 One St', clientPhone: '0412 000 111', scheduledAt: liveAt(8), status: 'new', createdAt: 1, updatedAt: 1 },
+    ];
+    win.localStorage.setItem('scope-home-tab', 'today');
+    try {
+      win.showJobListView();
+      await wait(700); // let the list's own refresh finish first, or it redraws over the injected jobs
+      await win.TodayUI.render(jobs);
+      const names = Array.from(doc.querySelectorAll('#today-panel .today-name')).map((e) => e.textContent);
+      assertEqual(names.join(','), 'First Stop,Second Stop', 'in time order');
+      assert(doc.querySelector('#today-panel a[href="tel:0412000111"]'), 'one-tap Call');
+      assert(doc.querySelector('#today-panel a[href^="https://www.google.com/maps"]'), 'one-tap Directions');
+      assert(doc.getElementById('view-joblist').classList.contains('home-today'), 'the screen is in Today mode');
+      assertEqual(getComputedStyle(doc.getElementById('job-list')).display, 'none', 'the full list is out of the way');
+      assert(doc.getElementById('today-summary').textContent.includes('2 jobs'), 'the summary counts them');
+    } finally {
+      win.localStorage.setItem('scope-home-tab', 'all');
+      win.showJobListView();
+    }
+  });
+
+  test('Today screen: the buttons open the job without also firing the card', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const real = await win.DB.addJob({ name: 'Open Me', address: '5 Open Rd', clientPhone: '0412 555 000', scheduledAt: liveAt(10) });
+    win.localStorage.setItem('scope-home-tab', 'today');
+    try {
+      win.showJobListView();
+      await wait(700); // let the list's own refresh finish first, or it redraws over the injected jobs
+      await win.TodayUI.render([real]);
+      doc.querySelector('#today-panel .today-btn-primary').click();
+      await waitFor(() => !doc.getElementById('view-job').classList.contains('hidden'), 'Start opens the job');
+      assertEqual(doc.getElementById('job-title').textContent, 'Open Me', 'the right job');
+    } finally {
+      win.localStorage.setItem('scope-home-tab', 'all');
+      win.showJobListView();
+      await win.DB.deleteJob(real.id);
+    }
+  });
+
+  test('Today screen: with nothing booked it says so and offers the next step', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.localStorage.setItem('scope-home-tab', 'today');
+    try {
+      win.showJobListView();
+      await wait(700); // let the list's own refresh finish first, or it redraws over the injected jobs
+      await win.TodayUI.render([{ id: 'n1', name: 'No Time Yet', status: 'new', createdAt: 1, updatedAt: 1 }]);
+      assert(/Nothing is booked for today/.test(doc.getElementById('today-panel').textContent), 'it says so');
+      assert(doc.getElementById('today-new-job') && doc.getElementById('today-open-scheduler'), 'and offers New job and the diary');
+      assert(/1 new job has no time booked/.test(doc.getElementById('today-unbooked').textContent), 'it counts unbooked jobs');
+      doc.getElementById('today-unbooked').click();
+      await waitFor(() => !doc.getElementById('view-joblist').classList.contains('home-today'), 'the link goes to All jobs');
+      assert(doc.querySelector('.status-filter-chip[data-status="new"]').classList.contains('active'), 'filtered to New');
+    } finally {
+      doc.querySelector('.status-filter-chip[data-status="all"]').click();
+      win.localStorage.setItem('scope-home-tab', 'all');
+    }
+  });
+
+  test('Today screen: the tab choice is remembered, and tests start on All jobs', async () => {
+    const win = frame.contentWindow;
+    win.localStorage.removeItem('scope-home-tab');
+    assertEqual(win.TodayUI.getTab(), 'all', 'with nothing saved, the test build opens All jobs');
+    win.TodayUI.setTab('today');
+    assertEqual(win.localStorage.getItem('scope-home-tab'), 'today', 'the choice is stored');
+    assertEqual(win.TodayUI.getTab(), 'today', 'and read back');
+    win.TodayUI.setTab('all');
+    const src = await (await fetch('../today-ui.js', { cache: 'reload' })).text();
+    assert(/window\.IS_TEST \? TABS\.ALL : TABS\.TODAY/.test(src), 'real use defaults to Today');
+  });
+
+  test('Today screen: a broken save of the tab choice (storage blocked) does not break the screen', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realSet = win.Storage.prototype.setItem;
+    const realGet = win.Storage.prototype.getItem;
+    win.Storage.prototype.setItem = () => { throw new Error('blocked'); };
+    win.Storage.prototype.getItem = () => { throw new Error('blocked'); };
+    try {
+      win.TodayUI.setTab('today');
+      await wait(100);
+      assert(doc.getElementById('today-panel'), 'the panel still exists');
+      assert(['today', 'all'].includes(win.TodayUI.getTab()), 'a tab is still chosen');
+    } finally {
+      win.Storage.prototype.setItem = realSet;
+      win.Storage.prototype.getItem = realGet;
+      win.TodayUI.setTab('all');
+    }
+  });
+
+  test('Today: registered in the page and the offline shell, and shown before the list is built', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    for (const f of ['today.js', 'today-ui.js']) {
+      assert(idx.indexOf(f) > 0 && idx.indexOf(f) < idx.indexOf('src="app.js"'), `${f} loads before app.js`);
+      assert(sw.includes(`'./${f}'`), `${f} is in the offline shell`);
+    }
+    assert(idx.indexOf('today.js') < idx.indexOf('today-ui.js'), 'logic before screen');
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(/TodayUI\.render\(jobs\)/.test(app), 'the job list refresh redraws Today too');
+  });
+
+
+  test('Camera: leaving the job before the permission prompt answers starts nothing', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Left Before Camera' });
+    await win.showJobViewById(job.id);
+    await wait(300);
+
+    const origPerm = win.navigator.permissions.query;
+    const origGum = win.navigator.mediaDevices.getUserMedia;
+    const stops = [];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    try {
+      win.navigator.permissions.query = async () => ({ state: 'granted' });
+      win.navigator.mediaDevices.getUserMedia = async () => {
+        await gate; // the person is still looking at the permission prompt
+        const c = win.document.createElement('canvas');
+        c.width = 160; c.height = 120;
+        c.getContext('2d').fillRect(0, 0, 160, 120);
+        const s = c.captureStream(5);
+        s.getTracks().forEach((t) => { const stop = t.stop.bind(t); t.stop = () => { stops.push(1); stop(); }; });
+        return s;
+      };
+
+      doc.getElementById('start-inspection-btn').click();
+      await wait(150);
+      win.showJobListView(); // they pressed Back while the prompt was up
+      await wait(150);
+      release(); // ...and then it was answered
+      await wait(1200);
+
+      assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'no camera screen opens over the job list');
+      assert(stops.length > 0, 'the camera that was granted is let go again');
+      assertEqual((await win.DB.getJob(job.id)).status, 'new', 'the job was not started behind their back');
+      assert(!/camera preview/i.test(doc.getElementById('toast').textContent), 'and no confusing error is shown');
+    } finally {
+      release();
+      win.navigator.permissions.query = origPerm;
+      win.navigator.mediaDevices.getUserMedia = origGum;
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler
