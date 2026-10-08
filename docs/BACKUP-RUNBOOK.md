@@ -107,6 +107,43 @@ Open the new folder. You should see:
 If there is a file called `INCOMPLETE.txt`, the backup did not finish. Delete that
 folder and run it again.
 
+## Making it automatic (weekly)
+
+Do the three set-up steps above first, and make one backup by hand to prove it works.
+Then, once:
+
+1. Save the database password for the schedule. It asks you to type it (hidden). It is
+   saved scrambled so that only **your Windows login on this computer** can unscramble
+   it, in `%LOCALAPPDATA%\Scope-Backup`, outside the project and never inside a backup:
+
+   `powershell -ExecutionPolicy Bypass -File tools\backup-scope.ps1 -SavePassword`
+
+2. Test that the automatic version has everything it needs:
+
+   `powershell -ExecutionPolicy Bypass -File tools\backup-scope.ps1 -Check -Unattended`
+
+3. Switch on the weekly schedule (Sundays 10:00; if the computer is off it runs when
+   next on). Add `-DryRun` first to see what it would do:
+
+   `powershell -ExecutionPolicy Bypass -File tools\install-backup-schedule.ps1`
+
+   Add `-CopyTo "D:\Backups"` (or a Google Drive / OneDrive folder) to also put a second
+   copy somewhere else. **Do this**: a backup that only lives on this computer does not
+   survive this computer failing.
+
+What it does by itself:
+* Runs only while you are logged in (that is what lets it unscramble the password).
+* Keeps the newest 8 finished backups and removes older ones (`-Keep 0` keeps all).
+  It only ever removes folders it made itself, and never the newest.
+* Writes `backup.log`, and leaves **`LAST-BACKUP-OK.txt`** after a good run or
+  **`BACKUP-FAILED.txt`** (with the reason) after a bad one, in `Documents\Scope-Backups`.
+  **Look for these once a week**; nothing else tells you. A missing `LAST-BACKUP-OK.txt`
+  date more than 8 days old means it is not running.
+* If you change the database password in Supabase, run step 1 again.
+* To stop it: `powershell -ExecutionPolicy Bypass -File tools\install-backup-schedule.ps1 -Remove`
+  (to forget the password too, delete the `Scope-Backup` folder in `%LOCALAPPDATA%`).
+
+
 ## Getting it back
 
 **Do not wait until there is an emergency to find out whether this works.** A backup

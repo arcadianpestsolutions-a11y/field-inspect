@@ -92,14 +92,14 @@
         <button type="button" class="job-type-chip" data-job-type="termite" data-doc-type="termite_monitoring">📍 Monitoring Station Visit</button>
         <button type="button" class="job-type-chip" data-job-type="pest_treatment" data-doc-type="general_pest">🧪 General Pest Treatment</button>
       </div>
-      <input id="job-name" type="text" placeholder="Client / site name" autocomplete="off" />
+      <input id="job-name" type="text" maxlength="120" autocapitalize="words" placeholder="Client / site name" autocomplete="off" />
       <div class="address-field">
-        <input id="job-address" type="text" placeholder="Property address (optional)" autocomplete="off" />
+        <input id="job-address" type="text" maxlength="200" placeholder="Property address (optional)" autocomplete="off" />
         <ul id="job-address-suggestions" class="address-suggestions hidden"></ul>
         <span class="address-attribution">Address search © OpenStreetMap contributors</span>
       </div>
-      <input id="job-phone" type="tel" placeholder="Client phone (optional)" autocomplete="off" />
-      <input id="job-email" type="email" placeholder="Client email (optional)" autocomplete="off" />
+      <input id="job-phone" type="tel" maxlength="20" placeholder="Client phone (optional)" autocomplete="off" />
+      <input id="job-email" type="email" maxlength="120" autocapitalize="none" placeholder="Client email (optional)" autocomplete="off" />
       <!-- Shown when a phone/email matches an existing job — there is no
            client record to open, just a look back at what this same
            contact has booked before. See findClientHistory in db.js. -->
@@ -109,7 +109,7 @@
         <input id="job-scheduled-date" type="date" />
         <input id="job-scheduled-time" type="time" value="09:00" />
       </div>
-      <textarea id="job-notes" placeholder="Notes (optional)" rows="2"></textarea>
+      <textarea id="job-notes" maxlength="2000" placeholder="Notes (optional)" rows="2"></textarea>
       <div class="row gap">
         <button id="job-form-cancel" class="btn btn-secondary flex1">Cancel</button>
         <button id="job-form-save" class="btn btn-primary flex1">Create Job</button>
@@ -857,6 +857,7 @@
 <script src="assets-ui.js"></script>
 <script src="leads-ui.js"></script>
 <script src="clients-ui.js"></script>
+<script src="job-details.js"></script>
 <script src="client-link.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>

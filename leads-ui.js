@@ -37,10 +37,10 @@
   const LEAD_SECTION = {
     id: 'lead',
     fields: [
-      { id: 'name', label: 'Name', type: 'text', required: true },
-      { id: 'phone', label: 'Phone', type: 'text' },
-      { id: 'email', label: 'Email', type: 'text' },
-      { id: 'address', label: 'Address', type: 'text' },
+      { id: 'name', label: 'Name', type: 'text', required: true, maxLength: 120, autocapitalize: 'words' },
+      { id: 'phone', label: 'Phone', type: 'text', inputMode: 'tel', maxLength: 20 },
+      { id: 'email', label: 'Email', type: 'text', inputMode: 'email', maxLength: 120, autocapitalize: 'none' },
+      { id: 'address', label: 'Address', type: 'text', maxLength: 200 },
       {
         id: 'jobType', label: 'What they want', type: 'select',
         options: ['termite', 'pest_treatment'],
@@ -215,6 +215,12 @@
   }
 
   async function convert() {
+    // The Name field only carries an asterisk; nothing stops an enquiry being saved
+    // without one. A job with no name shows up as a blank card, so stop here.
+    if (!String(values.name || current.name || '').trim()) {
+      toast('Give this enquiry a name before booking it as a job.');
+      return;
+    }
     const ok = await askConfirm(
       `${current.name || 'This enquiry'} becomes a job, and the enquiry is kept against it.`,
       { title: 'Book it as a job?', okLabel: 'Create the job' }
@@ -254,9 +260,26 @@
     dueBannerEl.classList.add('hidden');
   }
 
+  // True for an enquiry nobody has typed anything into.
+  function isBlankLead(lead) {
+    return !!lead && lead.stage === 'new'
+      && !String(lead.name || '').trim() && !String(lead.phone || '').trim()
+      && !String(lead.email || '').trim() && !String(lead.address || '').trim()
+      && !String(lead.notes || '').trim() && lead.quotedCents == null;
+  }
+
+  // One at a time: a second tap before the first finishes made a second
+  // (blank) enquiry.
+  let creatingLead = false;
   async function newLead() {
-    const lead = await DB.addLead({ name: '' });
-    await openLead(lead.id);
+    if (creatingLead) return;
+    creatingLead = true;
+    try {
+      const lead = await DB.addLead({ name: '' });
+      await openLead(lead.id);
+    } finally {
+      creatingLead = false;
+    }
   }
 
   async function removeLead() {
@@ -283,7 +306,15 @@
   // Back saves. The fields here are a name and a phone number taken down
   // mid-call; losing them to a back button would be indefensible.
   el('lead-back-btn').addEventListener('click', async () => {
-    if (current) await persist({});
+    if (current) {
+      await persist({});
+      // "+ New enquiry" creates the record the moment it is tapped. Backing out
+      // without typing anything must not leave a blank enquiry on the board.
+      if (isBlankLead(current)) {
+        await DB.deleteLead(current.id);
+        current = null;
+      }
+    }
     await openBoard();
   });
 

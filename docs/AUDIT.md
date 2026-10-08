@@ -1,11 +1,11 @@
 # Code audit - findings, fixes, and what is still open
 
-Audit of 8 Oct 2026 (build v106). Method: read-only scripts over the whole
+Audit of 8 Oct 2026 (build v106; round 2 below, v107). Method: read-only scripts over the whole
 repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 406 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 422 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -32,6 +32,25 @@ libraries. No `package.json`, linter, formatter or CI (see Known debt).
 | 10 | Two dead functions (`shutterFeedback`, `getCurrentUserEmail`). | Deleted. |
 | 11 | Real business phone/ABN/email/name/address were used as test fixtures in a public repo. | Replaced with invented values. |
 Every behavioural fix has a test (suite groups "HtmlSafe", "Audit:", "Comms: a halted sweep…").
+
+## Round 2 (v107): exploratory testing and UI review
+Found by random-tapping the demo app (~2,400 steps), probing by hand, and reading
+the screens. Each has a test that fails on the old code (13 do, confirmed by running
+the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
+| # | Finding | Fix |
+|---|---|---|
+| 12 | A report, invoice or photo could be saved for a job that had been **deleted** (a late autosave or camera frame), leaving orphans that sync would push at a job the server no longer has | `DB.assertJobAlive` refuses the write with a plain message |
+| 13 | A failed photo or voice-note save was **silent** (no message, no record) | Try/catch with "That photo was NOT saved..." (storage full is named) and an error-log entry |
+| 14 | The browser was never asked to protect the app's data from eviction while a photo exists only on the phone | `navigator.storage.persist()` requested at start |
+| 15 | A job's name, phone, email and address **could not be edited** after creation | `job-details.js`: Edit form, Call, Email, Directions |
+| 16 | A double tap on Create Job made two jobs and two clients; same for new enquiry, client and safety statement | One-at-a-time guard on each |
+| 17 | "New enquiry" and "New client" saved a blank record immediately; backing out left it; an enquiry with no name could become a blank job | Blank records removed on Back; convert refuses without a name |
+| 18 | Jobs with no name rendered as an empty card; a leftover search could hide every job with no way back; no phone search | Falls back to address; "Show all jobs"; search matches phone digits |
+| 19 | No length limits or phone/email keyboards on several fields | `maxlength`, `inputmode`, `autocapitalize` |
+| 20 | Titles cut to ~12 characters by wide capitals; dangling separators; floating button over content | CSS fixes |
+
+Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
+and no console error in ~2,400 random steps after the fixes.
 
 ## Known debt (stated plainly, not hidden)
 1. **Two giant closures**: `app.js` (~2,600 lines) and `report.js` (~4,400). Each

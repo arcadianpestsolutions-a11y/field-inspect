@@ -2839,3 +2839,36 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 }
 .backup-status[data-tone="due"],
 .backup-status[data-tone="never"] { color: var(--accent-2); }
+
+/* ---------- Audit fixes (v107) ---------- */
+
+/* A screen's title is usually a CLIENT'S NAME. Wide-tracked capitals made every
+   name cut off after about twelve characters, so on a job you could not read
+   whose job it was. Only the app's own nameplate keeps the theatre; titles are
+   normal case, tighter, and may use two lines before cutting. */
+.topbar-title h1 {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Room under the last job card for the floating "+ New Job" button. */
+.job-list { padding-bottom: 96px; }
+/* While the new-job form is open the button only gets in the way of the fields. */
+body:has(#job-form:not(.hidden)) .fab { display: none; }
+
+/* Details/meta rows wrap as whole items; there are no dangling "·" separators. */
+.job-item-meta { gap: 2px 12px; }
+
+/* Job details card (job-details.js) */
+.job-details-card { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.job-details-row { display: flex; align-items: baseline; gap: 10px; }
+.job-details-label { flex: 0 0 64px; color: var(--text-dim); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.job-details-value { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.job-details-link { flex: 0 0 auto; min-height: 44px; display: inline-flex; align-items: center; padding: 0 6px; }
+.job-details-form { display: flex; flex-direction: column; gap: 8px; }

@@ -8928,6 +8928,241 @@
   });
 
 
+  // ---------- Audit round 2: found by exploratory testing and a UI review ----------
+
+  test('Job details: clean, validate and changesFor behave', () => {
+    const J = frame.contentWindow.JobDetails;
+    const c = J.clean({ name: '  Jo   Citizen ', phone: '0412 345 678', email: ' a@b.co ', address: 'x'.repeat(500), notes: ' hi ' });
+    assertEqual(c.name, 'Jo Citizen', 'inner spaces collapse');
+    assertEqual(c.address.length, J.LIMITS.address, 'an overlong address is cut to the limit');
+    assertEqual(c.notes, 'hi', 'notes are trimmed');
+    assertEqual(J.validate({ name: '  ' }), 'Enter a job name.', 'a name is required');
+    assert(/too short/.test(J.validate({ name: 'A', phone: '12' })), 'a two-digit phone is refused');
+    assert(/email/i.test(J.validate({ name: 'A', email: 'not an email' })), 'a malformed email is refused');
+    assertEqual(J.validate({ name: 'A', phone: '', email: '' }), null, 'phone and email stay optional');
+    const job = { address: '1 Old St', addressLat: -34, addressLng: 150 };
+    const same = J.changesFor(job, { name: 'A', address: '1 Old St' });
+    assert(!('addressLat' in same), 'an unchanged address keeps its map position');
+    const moved = J.changesFor(job, { name: 'A', address: '2 New St' });
+    assertEqual(moved.addressLat, null, 'a changed address drops the OLD position');
+    assertEqual(moved.addressLng, null, 'both halves of it');
+  });
+
+  test('Job details: Call and Directions links are built only when there is something to use', () => {
+    const J = frame.contentWindow.JobDetails;
+    assertEqual(J.telHref('0412 345 678'), 'tel:0412345678', 'spaces are removed for the dialler');
+    assertEqual(J.telHref('+61 412 345 678'), 'tel:+61412345678', 'a leading plus is kept');
+    assertEqual(J.telHref(''), '', 'no number, no link');
+    assertEqual(J.telHref('ab'), '', 'junk, no link');
+    assert(J.directionsUrl({ address: '1 A St & B' }).includes(encodeURIComponent('1 A St & B')), 'the address is encoded');
+    assert(J.directionsUrl({ address: 'x', addressLat: -34.1, addressLng: 150.2 }).includes('-34.1'), 'coordinates win when known');
+    assertEqual(J.directionsUrl({}), '', 'no address, no link');
+  });
+
+  test('Job details: a job can be corrected after it is created', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Typo Name', address: '1 Old St', clientPhone: '0400 000 000', addressLat: -34, addressLng: 150 });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('job-details-card'), 'the details card should be on the job');
+    const call = doc.querySelector('#job-details-card a[href^="tel:"]');
+    assert(call && call.getAttribute('href') === 'tel:0400000000', 'the phone number is one tap to call');
+    doc.getElementById('job-details-edit-btn').click();
+    doc.getElementById('jd-name').value = 'Right Name';
+    doc.getElementById('jd-address').value = '2 New St';
+    doc.getElementById('jd-phone').value = '0411 111 111';
+    doc.getElementById('jd-save').click();
+    await waitFor(async () => (await win.DB.getJob(job.id)).name === 'Right Name', 'the correction should be saved');
+    const saved = await win.DB.getJob(job.id);
+    assertEqual(saved.clientPhone, '0411 111 111', 'phone corrected');
+    assertEqual(saved.addressLat, null, 'the old address position was dropped');
+    assertEqual(doc.getElementById('job-title').textContent, 'Right Name', 'the screen title follows');
+  });
+
+  test('Job details: saving with no name keeps the form open and says why', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Keep Me' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('job-details-edit-btn'), 'edit button');
+    doc.getElementById('job-details-edit-btn').click();
+    doc.getElementById('jd-name').value = '   ';
+    doc.getElementById('jd-save').click();
+    await wait(150);
+    assert(/job name/i.test(doc.getElementById('jd-hint').textContent), 'it says a name is needed');
+    assertEqual((await win.DB.getJob(job.id)).name, 'Keep Me', 'nothing was written');
+  });
+
+  test('Orphans: nothing can be saved against a job that was deleted', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Doomed' });
+    await win.DB.deleteJob(job.id);
+    for (const [what, fn] of [
+      ['report', () => win.DB.saveReport({ jobId: job.id, sections: {} })],
+      ['invoice', () => win.DB.saveInvoice({ id: 'late-inv', jobId: job.id, lineItems: [], status: 'draft' })],
+      ['photo', () => win.DB.addCapture({ jobId: job.id, type: 'photo', zone: 'x', photoBlob: new Blob(['x']) })],
+    ]) {
+      let err = null;
+      try { await fn(); } catch (e) { err = e; }
+      assert(err && err.code === 'JOB_DELETED', `a late ${what} must be refused`);
+      assert(/deleted/i.test(err.message), `and the ${what} refusal says why`);
+    }
+    assertEqual(await win.DB.getReport(job.id), undefined, 'no report was recreated');
+    assertEqual((await win.DB.getInvoicesForJob(job.id)).length, 0, 'no invoice was recreated');
+    assertEqual((await win.DB.getCaptures(job.id)).length, 0, 'no photo was recreated');
+  });
+
+  test('Save failures: the technician is told a photo was NOT kept, in plain words', () => {
+    const d = frame.contentWindow.DB.describeSaveFailure;
+    const quota = new Error('The quota has been exceeded.'); quota.name = 'QuotaExceededError';
+    assert(/NOT saved/.test(d(quota, 'That photo')) && /out of storage/i.test(d(quota, 'That photo')), 'storage full is named');
+    const gone = new Error('This job was deleted, so that change was not saved.'); gone.code = 'JOB_DELETED';
+    assertEqual(d(gone, 'That photo'), gone.message, 'a deleted job explains itself');
+    assert(/NOT saved/.test(d(new Error('boom'), 'That voice note')), 'any other failure still says it was not kept');
+    assert(!/undefined|\[object/.test(d(null, 'That photo')), 'even a missing error reads as a sentence');
+  });
+
+  test('Camera and voice: a failed save is reported, never silent', async () => {
+    const src = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(/describeSaveFailure\(err, 'That photo'\)/.test(src), 'the shutter reports a failed save');
+    assert(/describeSaveFailure\(err, 'That voice note'\)/.test(src), 'a voice note reports a failed save');
+    assert(/storage\.persist\(\)/.test(src), 'the app asks the browser not to evict its data');
+  });
+
+  test('Enquiry to job: an enquiry with no name is not turned into a blank job', async () => {
+    const src = await (await fetch('../leads-ui.js', { cache: 'reload' })).text();
+    const i = src.indexOf('async function convert()');
+    assert(i > 0, 'convert exists');
+    assert(/Give this enquiry a name/.test(src.slice(i, i + 700)), 'convert refuses before creating anything');
+  });
+
+  test('Job list: a job with no name still shows, and a lost search can be undone', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const nameless = await win.DB.addJob({ name: '', address: '9 Blank Rd' });
+    win.showJobListView();
+    await wait(200);
+    const names = Array.from(doc.querySelectorAll('.job-item-name')).map((e) => e.textContent);
+    assert(names.includes('9 Blank Rd'), 'an unnamed job falls back to its address');
+    const search = doc.getElementById('job-search-input');
+    search.value = 'zzz-no-such-job';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await waitFor(() => doc.getElementById('job-filters-clear'), 'an empty result offers a way back');
+    doc.getElementById('job-filters-clear').click();
+    await waitFor(() => doc.querySelectorAll('.job-item').length > 0 && search.value === '', 'it brings every job back');
+    await win.DB.deleteJob(nameless.id);
+  });
+
+  test('Job list: searching by phone number finds the job whatever the spacing', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Phone Search Job', clientPhone: '0412 345 678' });
+    win.showJobListView();
+    await wait(200);
+    const search = doc.getElementById('job-search-input');
+    search.value = '0412345678';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await waitFor(() => Array.from(doc.querySelectorAll('.job-item-name')).some((e) => e.textContent === 'Phone Search Job'), 'found by number');
+    search.value = '';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Inputs: names, phones and emails are length-limited and use the right keyboard', async () => {
+    const doc = frame.contentDocument;
+    assertEqual(doc.getElementById('job-phone').maxLength, 20, 'phone cannot hold a pasted paragraph');
+    assertEqual(doc.getElementById('job-name').maxLength, 120, 'name is limited');
+    assertEqual(doc.getElementById('job-email').getAttribute('autocapitalize'), 'none', 'an email is not capitalised');
+    const fr = await (await fetch('../leads-ui.js', { cache: 'reload' })).text();
+    assert(/inputMode: 'tel', maxLength: 20/.test(fr), 'the enquiry phone gets the number keyboard and a limit');
+  });
+
+  test('Registration: job-details.js is in the page and the offline shell', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.indexOf('job-details.js') > 0 && idx.indexOf('job-details.js') < idx.indexOf('src="app.js"'), 'loaded before app.js');
+    assert(sw.includes("'./job-details.js'"), 'in the offline shell');
+  });
+
+
+  test('Double tap: Create Job made twice-over (two jobs, two clients) - now exactly one of each', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(200);
+    doc.getElementById('new-job-btn').click();
+    await wait(200);
+    doc.getElementById('job-name').value = 'Double Tap Probe';
+    doc.getElementById('job-phone').value = '0466 777 888';
+    const save = doc.getElementById('job-form-save');
+    save.click();
+    save.click();
+    await waitFor(async () => (await win.DB.getJobs()).some((j) => j.name === 'Double Tap Probe'), 'the job is made');
+    await wait(500);
+    assertEqual((await win.DB.getJobs()).filter((j) => j.name === 'Double Tap Probe').length, 1, 'one job');
+    assertEqual((await win.DB.getClients()).filter((c) => c.phone === '0466 777 888').length, 1, 'one client record');
+    assert(!save.disabled, 'and the button works again afterwards');
+  });
+
+  test('Double tap: a new enquiry, client or statement is made once, however fast it is tapped', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const count = async (fn) => (await fn()).length;
+    win.showJobListView(); await wait(150);
+    doc.getElementById('open-leads-btn').click(); await wait(300);
+    let before = await count(() => win.DB.getLeads());
+    const lead = doc.getElementById('lead-new-btn'); lead.click(); lead.click(); await wait(600);
+    assertEqual((await count(() => win.DB.getLeads())) - before, 1, 'one enquiry');
+    doc.getElementById('lead-back-btn').click(); await wait(400);
+
+    win.showJobListView(); await wait(150);
+    doc.getElementById('open-clients-btn').click(); await wait(300);
+    before = await count(() => win.DB.getClients());
+    const client = doc.getElementById('client-new-btn'); client.click(); client.click(); await wait(600);
+    assertEqual((await count(() => win.DB.getClients())) - before, 1, 'one client');
+    doc.getElementById('client-back-btn').click(); await wait(400);
+
+    win.showJobListView(); await wait(150);
+    doc.getElementById('open-swms-btn').click(); await wait(300);
+    before = await count(() => win.DB.getAllSwms());
+    const swms = doc.getElementById('swms-new-btn'); swms.click(); swms.click(); await wait(600);
+    assertEqual((await count(() => win.DB.getAllSwms())) - before, 1, 'one statement');
+  });
+
+  test('Blank records: tapping New and backing out leaves nothing behind', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView(); await wait(150);
+    doc.getElementById('open-leads-btn').click(); await wait(300);
+    const leadsBefore = (await win.DB.getLeads()).length;
+    doc.getElementById('lead-new-btn').click(); await wait(500);
+    assertEqual((await win.DB.getLeads()).length, leadsBefore + 1, 'the enquiry exists while its screen is open');
+    doc.getElementById('lead-back-btn').click(); await wait(500);
+    assertEqual((await win.DB.getLeads()).length, leadsBefore, 'a blank enquiry is removed on Back');
+
+    win.showJobListView(); await wait(150);
+    doc.getElementById('open-clients-btn').click(); await wait(300);
+    const clientsBefore = (await win.DB.getClients()).length;
+    doc.getElementById('client-new-btn').click(); await wait(500);
+    doc.getElementById('client-back-btn').click(); await wait(500);
+    assertEqual((await win.DB.getClients()).length, clientsBefore, 'a blank client is removed on Back');
+  });
+
+  test('Blank records: an enquiry with something typed in it is kept', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView(); await wait(150);
+    doc.getElementById('open-leads-btn').click(); await wait(300);
+    doc.getElementById('lead-new-btn').click(); await wait(500);
+    const phone = Array.from(doc.querySelectorAll('#view-lead input')).find((i) => i.inputMode === 'tel');
+    assert(phone, 'the phone box uses the number keyboard');
+    phone.value = '0455 000 999';
+    phone.dispatchEvent(new win.Event('input', { bubbles: true }));
+    doc.getElementById('lead-back-btn').click(); await wait(500);
+    assert((await win.DB.getLeads()).some((l) => l.phone === '0455 000 999'), 'a half-filled enquiry survives Back');
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

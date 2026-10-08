@@ -234,6 +234,11 @@
         const input = document.createElement('input');
         input.type = 'text';
         if (field.placeholder) input.placeholder = field.placeholder;
+        // Optional hints a schema may give: the right on-screen keyboard, a sane
+        // length cap, and no automatic capital on an email address.
+        if (field.inputMode) input.inputMode = field.inputMode;
+        if (field.maxLength) input.maxLength = field.maxLength;
+        if (field.autocapitalize) input.setAttribute('autocapitalize', field.autocapitalize);
         input.value = values[field.id] || '';
         input.addEventListener('input', () => setValue(field, input.value));
         row.appendChild(input);

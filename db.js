@@ -555,6 +555,7 @@ const DB = {
 
   // ---------- Photo / voice captures ----------
   async addCapture({ jobId, zone, type, photoBlob, audioBlob }) {
+    await this.assertJobAlive(jobId);
     const store = await tx('captures', 'readwrite');
     const now = Date.now();
     const capture = {
@@ -621,7 +622,33 @@ const DB = {
     return reqToPromise(store.get(jobId));
   },
 
+  // Writes that belong to a job refuse to run once that job has been deleted.
+  // Without this, an autosave, a late camera frame, or a stale open screen
+  // recreates a report/invoice/photo for a job that no longer exists, and sync
+  // then pushes the orphan to a server that has no job for it, every time.
+  // What to tell the technician when a save to this phone fails. Plain words, says
+  // whether anything was kept, and what to do next. Pure, so it is unit-tested.
+  describeSaveFailure(err, what) {
+    const label = what || 'That';
+    if (err && err.code === 'JOB_DELETED') return err.message;
+    const name = err && err.name;
+    const text = String((err && err.message) || err || '');
+    if (name === 'QuotaExceededError' || /quota/i.test(text)) {
+      return `${label} was NOT saved. This phone is out of storage. Free up some space, then take it again.`;
+    }
+    return `${label} was NOT saved (${text || 'unknown problem'}). Please try again.`;
+  },
+
+  async assertJobAlive(jobId) {
+    if (hasKey(jobId) && await this.isDeleted('jobs', jobId)) {
+      const err = new Error('This job was deleted, so that change was not saved.');
+      err.code = 'JOB_DELETED';
+      throw err;
+    }
+  },
+
   async saveReport(report) {
+    await this.assertJobAlive(report && report.jobId);
     const store = await tx('reports', 'readwrite');
     const toSave = { ...report, updatedAt: Date.now() };
     await reqToPromise(store.put(toSave));
@@ -644,6 +671,7 @@ const DB = {
 
   // ---------- Invoices ----------
   async saveInvoice(invoice) {
+    await this.assertJobAlive(invoice && invoice.jobId);
     const store = await tx('invoices', 'readwrite');
     const toSave = { ...invoice, updatedAt: Date.now() };
     await reqToPromise(store.put(toSave));

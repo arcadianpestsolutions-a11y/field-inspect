@@ -481,6 +481,17 @@
     renderJobPermissions(job);
     renderCommsRow(job);
     renderPlanRow(job);
+    if (window.JobDetails) {
+      window.JobDetails.render(job, {
+        canEdit: canEditJob(job),
+        onSaved: (saved) => {
+          jobTitleEl.textContent = saved.name;
+          jobSubtitleEl.textContent = saved.address ? `${saved.address} · ${fmtDate(saved.createdAt)}` : fmtDate(saved.createdAt);
+          renderCommsRow(saved);
+          toast('Details saved');
+        },
+      });
+    }
     activeZoneFilter = null;
     selectMode = false;
     selectedCaptureIds.clear();
@@ -941,7 +952,12 @@
       }
       if (jobTechnicianFilter !== 'all' && job.assignedTo !== jobTechnicianFilter) return false;
       if (!q) return true;
-      return job.name.toLowerCase().includes(q) || (job.address || '').toLowerCase().includes(q);
+      // Name, address, or phone: "who was the one at 0412...?" is how jobs are
+      // remembered. Digits are compared without spaces so 0412345678 matches 0412 345 678.
+      const digits = q.replace(/\D/g, '');
+      return String(job.name || '').toLowerCase().includes(q)
+        || (job.address || '').toLowerCase().includes(q)
+        || (digits.length >= 3 && (job.clientPhone || '').replace(/\D/g, '').includes(digits));
     });
     // Most overdue first — the list should answer "what am I behind on?".
     if (jobStatusFilter === 'due') {
@@ -953,7 +969,23 @@
       jobEmptyEl.textContent = 'No jobs yet. Tap "+ New Job" to start your first inspection.';
       show(jobEmptyEl);
     } else if (filtered.length === 0) {
-      jobEmptyEl.textContent = 'No jobs match your search or filter.';
+      jobEmptyEl.textContent = 'No jobs match your search or filter. ';
+      // A leftover search or filter that hides every job looks exactly like lost
+      // jobs, so the way out is on the screen rather than something to remember.
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.id = 'job-filters-clear';
+      clearBtn.className = 'link-btn';
+      clearBtn.textContent = 'Show all jobs';
+      clearBtn.addEventListener('click', () => {
+        jobSearchQuery = '';
+        jobSearchInput.value = '';
+        jobStatusFilter = 'all';
+        jobTechnicianFilter = 'all';
+        jobStatusFilters.querySelectorAll('.status-filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.status === 'all'));
+        applyJobListFilters();
+      });
+      jobEmptyEl.appendChild(clearBtn);
       show(jobEmptyEl);
     } else {
       hide(jobEmptyEl);
@@ -969,13 +1001,12 @@
         </span>
         <span class="job-item-meta">
           <span class="job-item-type"></span>
-          <span>·</span>
           <span class="job-item-date"></span>
-          <span>·</span>
           <span>${count} capture${count === 1 ? '' : 's'}</span>
         </span>
       `;
-      li.querySelector('.job-item-name').textContent = job.name;
+      // A job with no name (an old import, or a synced row) must still be tappable.
+      li.querySelector('.job-item-name').textContent = job.name || job.address || 'Unnamed job';
       li.querySelector('.status-badge').textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
       li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment' : '🐜 Termite';
       li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
@@ -1123,7 +1154,11 @@
   jobPhoneInput.addEventListener('input', scheduleClientHistoryCheck);
   jobEmailInput.addEventListener('input', scheduleClientHistoryCheck);
 
-  jobFormSave.addEventListener('click', async () => {
+  // A second tap while the first is still writing used to make a second job AND a
+  // second client record (the second tap looked for the client before the first had
+  // saved it). One save at a time.
+  let jobFormSaving = false;
+  async function createJobFromForm() {
     const name = jobNameInput.value.trim();
     if (!name) { toast('Enter a job name'); jobNameInput.focus(); return; }
     const newScheduledAt = readScheduledAtFromForm();
@@ -1173,6 +1208,18 @@
     await renderJobList();
     showJobView(job.id);
     confirmBookingByEmail(job);
+  }
+
+  jobFormSave.addEventListener('click', async () => {
+    if (jobFormSaving) return;
+    jobFormSaving = true;
+    jobFormSave.disabled = true;
+    try {
+      await createJobFromForm();
+    } finally {
+      jobFormSaving = false;
+      jobFormSave.disabled = false;
+    }
   });
 
   // Emails the client that their appointment is booked. Deliberately fired
@@ -1699,20 +1746,27 @@
     const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
     recordedChunks = [];
 
-    if (recordingTarget && recordingTarget.mode === 'attach') {
-      await DB.updateCapture(recordingTarget.captureId, { audioBlob: blob });
-      toast('Voice note attached');
-      if (!detailModal.classList.contains('hidden') && currentDetailCaptureId === recordingTarget.captureId) {
-        await openDetail(recordingTarget.captureId);
+    try {
+      if (recordingTarget && recordingTarget.mode === 'attach') {
+        await DB.updateCapture(recordingTarget.captureId, { audioBlob: blob });
+        toast('Voice note attached');
+        if (!detailModal.classList.contains('hidden') && currentDetailCaptureId === recordingTarget.captureId) {
+          await openDetail(recordingTarget.captureId);
+        }
+      } else {
+        await DB.addCapture({
+          jobId: currentJobId,
+          zone: '', // zoneInput was removed; the standalone zone-memo entry point is currently unreachable anyway
+          type: 'memo',
+          audioBlob: blob,
+        });
+        toast('Zone note saved');
       }
-    } else {
-      await DB.addCapture({
-        jobId: currentJobId,
-        zone: '', // zoneInput was removed; the standalone zone-memo entry point is currently unreachable anyway
-        type: 'memo',
-        audioBlob: blob,
-      });
-      toast('Zone note saved');
+    } catch (err) {
+      if (window.ErrorLog) window.ErrorLog.note(err, 'voice: save note');
+      toast(DB.describeSaveFailure(err, 'That voice note'));
+      recordingTarget = null;
+      return;
     }
 
     recordingTarget = null;
@@ -1957,12 +2011,23 @@
     const zoneAtCapture = isFront ? 'Front Elevation' : inspectionZoneInput.value.trim();
     canvas.toBlob(async (blob) => {
       if (!blob) { toast('Capture failed, try again'); return; }
-      const capture = await DB.addCapture({
-        jobId: jobIdAtCapture,
-        zone: zoneAtCapture,
-        type: 'photo',
-        photoBlob: blob,
-      });
+      let capture;
+      try {
+        capture = await DB.addCapture({
+          jobId: jobIdAtCapture,
+          zone: zoneAtCapture,
+          type: 'photo',
+          photoBlob: blob,
+        });
+      } catch (err) {
+        // The shutter must never fail silently: a technician moves on the moment
+        // they hear it. Say the photo is NOT kept, and give the front-photo slot
+        // back so the cover shot can be retaken.
+        if (window.ErrorLog) window.ErrorLog.note(err, 'camera: save photo');
+        toast(DB.describeSaveFailure(err, 'That photo'));
+        if (isFront) showFrontPhotoPrompt(true);
+        return;
+      }
 
       if (!isFront) {
         if (zoneAtCapture && inspectionChecklistItems.some((item) => item.label === zoneAtCapture)) {
@@ -2521,6 +2586,13 @@
     if (window.IS_DEMO) {
       showJobListView();
       return;
+    }
+    // Ask the browser not to evict this app's data when the phone runs low on
+    // space. Until a photo has synced, this phone holds the only copy, so being
+    // evicted is the same as losing it. Best effort: browsers decide for
+    // themselves, and a refusal changes nothing visible.
+    if (!window.IS_TEST && navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(() => {});
     }
     if (!window.Sync) {
       // Supabase not configured — fall back to fully local-only mode.

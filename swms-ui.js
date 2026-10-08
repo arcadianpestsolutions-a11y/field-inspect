@@ -221,7 +221,19 @@
   }
 
   // ---------- create and delete ----------
+  // One at a time: a second tap before the first finished made a second statement.
+  let creatingStatement = false;
   async function createStatement() {
+    if (creatingStatement) return;
+    creatingStatement = true;
+    try {
+      await createStatementNow();
+    } finally {
+      creatingStatement = false;
+    }
+  }
+
+  async function createStatementNow() {
     // Offered against the job on screen when there is one, because that is
     // where the address and the client already are. A statement with no job
     // is equally valid — see the store — so this is a default, not a rule.

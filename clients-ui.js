@@ -201,16 +201,38 @@
     await openList();
   }
 
+  // One at a time: a second tap before the first finishes made a second blank client.
+  let creatingClient = false;
   async function newClient() {
-    const created = await DB.addClient({ name: '' });
-    await openClient(created.id);
+    if (creatingClient) return;
+    creatingClient = true;
+    try {
+      const created = await DB.addClient({ name: '' });
+      await openClient(created.id);
+    } finally {
+      creatingClient = false;
+    }
+  }
+
+  // "+ New client" creates the record at once. Backing out with nothing typed
+  // (and no jobs hanging off it) must not leave a blank client in the list.
+  async function leaveClient() {
+    if (current) {
+      const empty = !['name', 'phone', 'email', 'address', 'notes']
+        .some((k) => String((values && values[k]) || '').trim() || String(current[k] || '').trim());
+      if (empty && !(await DB.getJobsForClient(current.id)).length) {
+        await DB.deleteClient(current.id);
+        current = null;
+      }
+    }
+    await openList();
   }
 
   searchEl.addEventListener('input', renderList);
   el('client-save-btn').addEventListener('click', save);
   el('client-delete-btn').addEventListener('click', removeClient);
   el('client-new-btn').addEventListener('click', newClient);
-  el('client-back-btn').addEventListener('click', openList);
+  el('client-back-btn').addEventListener('click', leaveClient);
   el('clients-back-btn').addEventListener('click', () => {
     if (window.showJobListView) window.showJobListView();
   });
