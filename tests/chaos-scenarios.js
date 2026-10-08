@@ -150,8 +150,10 @@
       await home();
       for (const id of ['open-scheduler-btn', 'open-leads-btn', 'open-clients-btn', 'open-archive-btn']) {
         await home();
-        let b = $(id);
-        if (!visible(b) && visible($('open-more-btn'))) { await tap($('open-more-btn')); await sleep(100); b = $(id); }
+        // Header icons moved into the bottom tab bar (Diary, Enquiries; the rest behind More).
+        const viaTab = { 'open-scheduler-btn': 'tab-diary', 'open-leads-btn': 'tab-leads' }[id];
+        let b = $(viaTab || id);
+        if (!viaTab && !visible(b) && visible($('tab-more'))) { await tap($('tab-more')); await sleep(100); b = $(id); }
         await tapVisible(b, id); await sleep(300);
         n.push(id + ' -> ' + viewId());
       }
@@ -260,8 +262,7 @@
     ['Convert an enquiry to a job with two quick taps: exactly one job is made', async (n) => {
       await DB.addLead({ name: 'Scenario Lead', phone: '0455 000 111', address: '9 Lead Rd', source: 'Google' });
       await home();
-      let btn = $('open-leads-btn');
-      if (!visible(btn) && visible($('open-more-btn'))) { await tap($('open-more-btn')); await sleep(100); btn = $('open-leads-btn'); }
+      const btn = $('tab-leads');
       await tapVisible(btn, 'Leads'); await sleep(500);
       const card = byText('#view-leads .lead-card', /Scenario Lead/);
       must(card, 'the enquiry is not on the board');

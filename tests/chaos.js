@@ -156,7 +156,7 @@
   const currentViewId = () => (currentViews()[0] || {}).id || 'none';
 
   // Controls that take you somewhere else.
-  const NAV_SELECTOR = 'button[id*="back"], button[id*="cancel"], button[id*="close"], #open-more-btn, '
+  const NAV_SELECTOR = 'button[id*="back"], button[id*="cancel"], button[id*="close"], .tab-btn, #open-more-btn, '
     + '#open-scheduler-btn, #open-leads-btn, #open-clients-btn, #open-swms-btn, #open-assets-btn, '
     + '#open-business-btn, #open-archive-btn';
 
@@ -517,9 +517,12 @@
     for (let i = targets.length - 1; i > 0; i--) { const j = Math.floor(C.rand() * (i + 1)); [targets[i], targets[j]] = [targets[j], targets[i]]; }
     for (const id of targets) {
       if (!await goHome()) { C.harnessErrors.push({ step: 0, msg: 'tour could not get home before ' + id }); continue; }
-      const more = document.getElementById('open-more-btn');
-      let btn = document.getElementById(id);
-      if (btn && !visible(btn) && more && visible(more)) { await tap(more); await sleep(120); btn = document.getElementById(id); }
+      // The header icons moved into the bottom tab bar: Diary and Enquiries are
+      // tabs, everything else is behind the More tab.
+      const viaTab = { 'open-scheduler-btn': 'tab-diary', 'open-leads-btn': 'tab-leads' }[id];
+      const more = document.getElementById('tab-more');
+      let btn = document.getElementById(viaTab || id);
+      if (!viaTab && btn && !visible(btn) && more && visible(more)) { await tap(more); await sleep(120); btn = document.getElementById(id); }
       if (btn && visible(btn) && reachable(btn)) { await tap(btn); await sleep(250); C.clicked.set(keyOf(btn), 1); }
       else C.harnessErrors.push({ step: 0, msg: 'tour could not reach ' + id });
       try { await checkInvariants('tour ' + id); } catch (e) { /* recorded elsewhere */ }

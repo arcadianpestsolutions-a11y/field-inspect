@@ -9430,6 +9430,156 @@
   });
 
 
+  // ---------- Bottom tab bar (tabbar.js) ----------
+
+  const shownViews = (doc) => Array.from(doc.querySelectorAll('.view')).filter((v) => !v.classList.contains('hidden')).map((v) => v.id);
+  const activeTab = (doc) => Array.from(doc.querySelectorAll('.tab-btn.active')).map((b) => b.dataset.tab).join(',');
+
+  test('Tab bar: each top-level screen lights the right tab', () => {
+    const tf = frame.contentWindow.TabBar.tabFor;
+    assertEqual(tf('view-joblist', 'today'), 'today', 'the list on its Today tab');
+    assertEqual(tf('view-joblist', 'all'), 'jobs', 'the list on All jobs');
+    assertEqual(tf('view-scheduler'), 'diary', 'the diary');
+    assertEqual(tf('view-leads'), 'leads', 'the enquiries board');
+    for (const v of ['view-clients', 'view-swms-list', 'view-assets', 'view-business', 'view-archive']) {
+      assertEqual(tf(v), 'more', `${v} belongs to More`);
+    }
+    for (const v of ['view-job', 'view-report', 'view-invoice', 'view-lead', 'view-login', 'view-client']) {
+      assertEqual(tf(v), null, `${v} is a drill-in screen: no bar`);
+    }
+  });
+
+  test('Tab bar: five tabs, shown on the list and hidden on a job', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await waitFor(() => !doc.getElementById('tab-bar').classList.contains('hidden'), 'the bar shows on the list');
+    assertEqual(doc.querySelectorAll('#tab-bar .tab-btn').length, 5, 'five tabs');
+    assertEqual(Array.from(doc.querySelectorAll('#tab-bar .tab-label')).map((e) => e.textContent).join(','), 'Today,Jobs,Diary,Enquiries,More', 'in order');
+    assert(doc.body.classList.contains('has-tabbar'), 'the page makes room for it');
+    const job = await win.DB.addJob({ name: 'Bar Hidden Job' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('tab-bar').classList.contains('hidden'), 'the bar hides on a job');
+    assert(!doc.body.classList.contains('has-tabbar'), 'and the room is given back');
+    win.showJobListView();
+    await waitFor(() => !doc.getElementById('tab-bar').classList.contains('hidden'), 'and returns on Back');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Tab bar: Today and Jobs switch the list, and the lit tab follows', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.localStorage.setItem('scope-home-tab', 'all');
+    try {
+      win.showJobListView();
+      await waitFor(() => activeTab(doc) === 'jobs', 'Jobs is lit on All jobs');
+      doc.getElementById('tab-today').click();
+      await waitFor(() => activeTab(doc) === 'today' && doc.getElementById('view-joblist').classList.contains('home-today'), 'Today');
+      doc.getElementById('tab-jobs').click();
+      await waitFor(() => activeTab(doc) === 'jobs' && !doc.getElementById('view-joblist').classList.contains('home-today'), 'Jobs');
+      // The in-screen switch is the same control, so the bar follows it.
+      doc.getElementById('home-tab-today').click();
+      await waitFor(() => activeTab(doc) === 'today', 'the bar follows the Today / All jobs switch');
+    } finally {
+      win.localStorage.setItem('scope-home-tab', 'all');
+      win.showJobListView();
+    }
+  });
+
+  test('Tab bar: Diary, Enquiries and More go where the header icons used to', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(300);
+    doc.getElementById('tab-diary').click();
+    await waitFor(() => shownViews(doc).join() === 'view-scheduler' && activeTab(doc) === 'diary', 'the diary opens');
+    doc.getElementById('tab-leads').click();
+    await waitFor(() => shownViews(doc).join() === 'view-leads' && activeTab(doc) === 'leads', 'the enquiries board opens straight from the diary');
+    doc.getElementById('tab-more').click();
+    await waitFor(() => !doc.getElementById('more-sheet').classList.contains('hidden') && activeTab(doc) === 'more', 'More opens its sheet and lights');
+    doc.getElementById('open-clients-btn').click();
+    await waitFor(() => shownViews(doc).join() === 'view-clients' && activeTab(doc) === 'more', 'a More screen keeps More lit');
+    doc.getElementById('tab-today').click();
+    await waitFor(() => shownViews(doc).join() === 'view-joblist', 'and any tab gets you out again');
+    win.showJobListView();
+  });
+
+  test('Tab bar: the header icons are hidden but still the thing that opens each screen', async () => {
+    const doc = frame.contentDocument;
+    for (const id of ['open-scheduler-btn', 'open-leads-btn', 'open-more-btn']) {
+      const b = doc.getElementById(id);
+      assert(b, `${id} still exists`);
+      assertEqual(getComputedStyle(b).display, 'none', `${id} is not shown twice`);
+    }
+  });
+
+  test('Tab bar: it steps aside while a text box has the keyboard', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(300);
+    doc.getElementById('tab-jobs').click();
+    await wait(200);
+    const search = doc.getElementById('job-search-input');
+    // The suite's frame is not the focused window, so a real .focus() raises no event;
+    // send the one the browser would.
+    search.dispatchEvent(new win.FocusEvent('focusin', { bubbles: true }));
+    await waitFor(() => doc.body.classList.contains('tabbar-typing'), 'typing hides the bar');
+    assertEqual(getComputedStyle(doc.getElementById('tab-bar')).display, 'none', 'really hidden');
+    search.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+    await waitFor(() => !doc.body.classList.contains('tabbar-typing'), 'and it returns');
+  });
+
+  test('Tab bar: the Today tab carries a count of jobs still to do', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(700);
+    const live = (h, st) => { const d = new Date(); return { id: `b${h}${st}`, name: `Badge ${h}`, status: st, scheduledAt: new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, 0).getTime(), createdAt: 1, updatedAt: 1 }; };
+    win.localStorage.setItem('scope-home-tab', 'today');
+    try {
+      await win.TodayUI.render([live(8, 'new'), live(10, 'new'), live(12, 'completed')]);
+      await waitFor(() => !doc.getElementById('tab-today-badge').classList.contains('hidden'), 'a badge shows');
+      assertEqual(doc.getElementById('tab-today-badge').textContent, '2', 'two jobs left, the finished one is not counted');
+      await win.TodayUI.render([live(12, 'completed')]);
+      await waitFor(() => doc.getElementById('tab-today-badge').classList.contains('hidden'), 'no badge when nothing is left');
+    } finally {
+      win.localStorage.setItem('scope-home-tab', 'all');
+      win.showJobListView();
+    }
+  });
+
+  test('Tab bar: registered in the page and the offline shell, and the floating button clears it', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
+    assert(idx.indexOf('tabbar.js') > idx.indexOf('today-ui.js') && idx.indexOf('tabbar.js') < idx.indexOf('src="app.js"'), 'after Today, before app.js');
+    assert(sw.includes("'./tabbar.js'"), 'in the offline shell');
+    assert(/body\.has-tabbar \.fab \{ bottom:/.test(css), 'the New Job button rides above the bar');
+    assert(/body\.has-tabbar \.view \{[^}]*padding-bottom:/.test(css), 'each screen gives up the bar\'s height, so bottom buttons are not covered');
+  });
+
+
+  test('Tab bar: the buttons at the bottom of a screen sit above the bar, not under it', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(300);
+    for (const [openId, via, btnId] of [['open-clients-btn', 'tab-more', 'client-new-btn'], ['tab-leads', null, 'lead-new-btn']]) {
+      if (via) { doc.getElementById(via).click(); await wait(200); }
+      doc.getElementById(openId).click();
+      await waitFor(() => doc.getElementById(btnId).offsetParent !== null, `${btnId} is on screen`);
+      await wait(200);
+      const btn = doc.getElementById(btnId).getBoundingClientRect();
+      const bar = doc.getElementById('tab-bar').getBoundingClientRect();
+      assert(btn.bottom <= bar.top + 1, `${btnId} ends at ${Math.round(btn.bottom)}, the bar starts at ${Math.round(bar.top)}`);
+      const hit = doc.elementFromPoint(btn.left + btn.width / 2, btn.top + btn.height / 2);
+      assert(hit && (hit === doc.getElementById(btnId) || doc.getElementById(btnId).contains(hit)), `${btnId} can be tapped`);
+    }
+    win.showJobListView();
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

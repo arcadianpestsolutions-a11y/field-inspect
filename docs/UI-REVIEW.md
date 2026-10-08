@@ -38,10 +38,7 @@ and 390 px wide) in an emulated browser, plus a 2,400-step random-tapping run.
 
 ## Still lacklustre (not fixed; ranked by how much they matter)
 1. ~~**No "Today" view.**~~ **Built in v108**: Today is now the first tab on the home screen (today's jobs in time order, Start/Call/Directions, drive time between jobs, tight or clashing days flagged, anything still owed, tomorrow in one line). Still to judge on a real phone.
-2. **Navigation is hidden behind "..."**. Clients, Business/invoices, Archive, SWMS,
-   and Assets are two taps away; the top bar has two emoji icons. Good apps use a
-   bottom tab bar (Today, Jobs, Clients, More). The emoji icons also clash with the
-   instrument-panel look.
+2. ~~**Navigation is hidden behind "..."**~~ **Built in v109**: a bottom tab bar (Today, Jobs, Diary, Enquiries, More) with line icons, a count of jobs left on the Today tab, shown on the main screens and hidden on a job, report, invoice or enquiry, and while typing. Still to judge on a real phone.
 3. **The job screen buries the next step.** Cards for "Automated messages" and
    "standing plan" sit above the main action, and the document-type chooser takes
    half the screen on a job that already knows its document. "Open Report" looks

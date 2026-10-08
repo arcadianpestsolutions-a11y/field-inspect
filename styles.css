@@ -2965,3 +2965,81 @@ body:has(#job-form:not(.hidden)) .home-tabs { display: none; }
 .today-unbooked { align-self: flex-start; min-height: 44px; }
 .today-empty { text-align: center; color: var(--text-dim); }
 .today-empty p { margin: 0 0 12px; }
+
+/* ---------- Bottom tab bar (tabbar.js) ---------- */
+.tab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40; /* above the page, below sheets (60), modals and the toast */
+  display: flex;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  padding-bottom: var(--safe-bottom);
+}
+.tab-bar.hidden { display: none; }
+.tab-btn {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font-family: inherit;
+}
+.tab-icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tab-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; }
+.tab-btn.active { color: var(--accent); }
+.tab-btn.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+.tab-btn:active { opacity: 0.6; }
+.tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+.tab-badge {
+  position: absolute;
+  top: 6px;
+  left: calc(50% + 6px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+}
+.tab-badge.hidden { display: none; }
+
+/* Room for the bar. Each screen is a full-height column (content, then its own
+   action bar), so the whole column gives up the bar's height; anything at the
+   bottom of a screen, such as "+ New enquiry", then sits just above the bar
+   instead of underneath it. The floating button and toasts ride above it too. */
+body.has-tabbar .view { box-sizing: border-box; padding-bottom: calc(59px + var(--safe-bottom)); }
+body.has-tabbar .fab { bottom: calc(74px + var(--safe-bottom)); }
+body.has-tabbar .toast { bottom: calc(138px + var(--safe-bottom)); }
+/* Keyboard open: the bar steps aside. */
+body.tabbar-typing .tab-bar { display: none; }
+body.tabbar-typing .fab { bottom: calc(18px + var(--safe-bottom)); }
+
+/* The three header icons moved into the bar. They stay in the page because they
+   are the code that opens those screens; the bar presses them. */
+#view-joblist .topbar #open-scheduler-btn,
+#view-joblist .topbar #open-leads-btn,
+#view-joblist .topbar #open-more-btn { display: none; }

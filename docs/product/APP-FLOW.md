@@ -8,7 +8,7 @@ are `portal.html` and text/email messages.
 | Screen (id) | Reached from | Purpose |
 |---|---|---|
 | Login (`view-login`) | Start, sign-out | Email + password via Supabase Auth; shows build label |
-| Home (`view-joblist`) | Login, Back from anywhere | Two tabs. **Today** (default): today's jobs in time order with Start, Call, Directions, drive time between jobs, anything still owed from earlier days, tomorrow at a glance. **All jobs**: search, status and technician filters, new job. Choice is remembered |
+| Home (`view-joblist`) | Login, Back from anywhere, or the Today / Jobs tabs of the bottom bar | Two tabs. **Today** (default): today's jobs in time order with Start, Call, Directions, drive time between jobs, anything still owed from earlier days, tomorrow at a glance. **All jobs**: search, status and technician filters, new job. Choice is remembered |
 | Job (`view-job`) | Job list | Photo gallery, start/finish inspection, voice, status, links to report/invoice |
 | Report chooser (`view-report-btn`) | Job | Which document type this job produces |
 | Report (`view-report`) | Job | Section list, AI draft, pre-flight, finalise |
@@ -102,3 +102,11 @@ Xero (if connected); status read back..
 `?demo=1` opens a separate local database with sample data and no network or
 client contact; it is the only mode for manual exploration and for the chaos
 tester. `?test=1` is used by the test suite.
+
+## 7. Bottom tab bar (v109)
+Five tabs on the main screens: **Today**, **Jobs** (all jobs), **Diary** (scheduler), **Enquiries**
+(leads) and **More** (opens the sheet: Clients, Safety statements, Station register, Business
+figures, Saved reports). The lit tab shows where you are; More stays lit on every screen it opens.
+The Today tab shows how many of today's jobs are not yet done. The bar is hidden on screens you
+drill into (a job, report, invoice, one enquiry, one client) and while the keyboard is up. The
+old header icons are hidden; the bar presses them, so each screen opens exactly as before.

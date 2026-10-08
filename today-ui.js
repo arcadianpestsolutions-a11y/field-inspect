@@ -89,6 +89,8 @@
       t.setAttribute('aria-selected', String(tab === TABS.TODAY));
       a.setAttribute('aria-selected', String(tab === TABS.ALL));
     }
+    // Tells the bottom tab bar which of its two list tabs to light.
+    document.dispatchEvent(new Event('scope-hometab'));
   }
 
   // ---------- Rendering ----------
@@ -272,6 +274,9 @@
       const jobs = Array.isArray(jobsOverride) ? jobsOverride : await window.DB.getJobs();
       const now = Date.now();
       const model = window.Today.build(jobs, now);
+      // Jobs left to do today, for the badge on the Today tab.
+      window.TodayUI.remaining = model.items.filter((it) => !it.done).length;
+      document.dispatchEvent(new Event('scope-today-updated'));
       const panel = document.getElementById('today-panel');
       if (!panel) return;
       panel.textContent = '';
@@ -299,5 +304,5 @@
     if (!document.hidden && panel && panel.offsetParent !== null) render();
   });
 
-  window.TodayUI = { render, setTab, getTab, install, TABS };
+  window.TodayUI = { render, setTab, getTab, install, TABS, remaining: 0 };
 })();
