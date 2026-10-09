@@ -775,12 +775,13 @@ const DB = {
   async getClient(id) {
     if (!id) return undefined;
     const store = await tx('clients', 'readonly');
-    return reqToPromise(store.get(id));
+    const client = await reqToPromise(store.get(id));
+    return pendingDelete('client', id) ? undefined : client;
   },
 
   async getClients() {
     const store = await tx('clients', 'readonly');
-    const all = await reqToPromise(store.getAll());
+    const all = (await reqToPromise(store.getAll())).filter((c) => !pendingDelete('client', c.id));
     return all.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   },
 
@@ -897,13 +898,15 @@ const DB = {
   },
 
   async getLead(id) {
+    if (!hasKey(id)) return undefined;
     const store = await tx('leads', 'readonly');
-    return reqToPromise(store.get(id));
+    const lead = await reqToPromise(store.get(id));
+    return pendingDelete('lead', id) ? undefined : lead;
   },
 
   async getLeads() {
     const store = await tx('leads', 'readonly');
-    const all = await reqToPromise(store.getAll());
+    const all = (await reqToPromise(store.getAll())).filter((l) => !pendingDelete('lead', l.id));
     return all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   },
 
@@ -959,21 +962,23 @@ const DB = {
   },
 
   async getSwms(id) {
+    if (!hasKey(id)) return undefined;
     const store = await tx('swms', 'readonly');
-    return reqToPromise(store.get(id));
+    const statement = await reqToPromise(store.get(id));
+    return pendingDelete('swms', id) ? undefined : statement;
   },
 
   async getSwmsForJob(jobId) {
     if (!hasKey(jobId)) return []; // see hasKey
     const store = await tx('swms', 'readonly');
     const idx = store.index('jobId');
-    const all = await reqToPromise(idx.getAll(jobId));
+    const all = (await reqToPromise(idx.getAll(jobId))).filter((s) => !pendingDelete('swms', s.id));
     return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   },
 
   async getAllSwms() {
     const store = await tx('swms', 'readonly');
-    const all = await reqToPromise(store.getAll());
+    const all = (await reqToPromise(store.getAll())).filter((s) => !pendingDelete('swms', s.id));
     return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   },
 

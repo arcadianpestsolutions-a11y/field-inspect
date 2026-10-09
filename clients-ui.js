@@ -195,10 +195,18 @@
       { title: 'Delete this client?', okLabel: 'Delete', danger: true }
     );
     if (!ok) return;
-    await DB.deleteClient(current.id);
+    const client = current;
     current = null;
-    toast('Client deleted');
+    // Held back for ten seconds with an Undo (undo-delete.js). The jobs are only
+    // unlinked from this client when the delete really happens.
     await openList();
+    await window.UndoDelete.start({
+      kind: 'client',
+      ids: [client.id],
+      message: `${window.Clients ? window.Clients.labelFor(client) : (client.name || 'Client')} deleted`,
+      commit: () => DB.deleteClient(client.id),
+      refresh: async () => { if (!listView.classList.contains('hidden')) await openList(); },
+    });
   }
 
   // One at a time: a second tap before the first finishes made a second blank client.

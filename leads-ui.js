@@ -288,10 +288,18 @@
       { title: 'Delete this enquiry?', okLabel: 'Delete', danger: true }
     );
     if (!ok) return;
-    await DB.deleteLead(current.id);
+    const lead = current;
     current = null;
-    toast('Enquiry deleted');
+    // Held back for ten seconds with an Undo (undo-delete.js); nothing is deleted,
+    // here or in the cloud, until that window closes.
     await openBoard();
+    await window.UndoDelete.start({
+      kind: 'lead',
+      ids: [lead.id],
+      message: `${lead.name || 'Enquiry'} deleted`,
+      commit: () => DB.deleteLead(lead.id),
+      refresh: async () => { if (!boardView.classList.contains('hidden')) await openBoard(); },
+    });
   }
 
   el('lead-new-btn').addEventListener('click', newLead);

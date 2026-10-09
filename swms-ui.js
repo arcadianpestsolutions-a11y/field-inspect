@@ -254,10 +254,17 @@
       { title: 'Delete this statement?', okLabel: 'Delete', danger: true }
     );
     if (!ok) return;
-    await DB.deleteSwms(current.id);
+    const statement = current;
     current = null;
-    toast('Statement deleted');
+    // Held back for ten seconds with an Undo (undo-delete.js).
     await openList();
+    await window.UndoDelete.start({
+      kind: 'swms',
+      ids: [statement.id],
+      message: `${statementLabel(statement)} deleted`,
+      commit: () => DB.deleteSwms(statement.id),
+      refresh: async () => { if (!listView.classList.contains('hidden')) await openList(); },
+    });
   }
 
   async function openList() {

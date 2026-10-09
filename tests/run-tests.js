@@ -10412,6 +10412,133 @@
   });
 
 
+  // ---------- Undo for enquiries, clients and safety statements ----------
+
+  test('Undo: a deleted enquiry, client or statement vanishes from every read and comes back on Undo', async () => {
+    const win = frame.contentWindow;
+    await withUndoDelay(win, 60000, async () => {
+      const lead = await win.DB.addLead({ name: 'Undo Lead', phone: '0400 123 999' });
+      const client = await win.DB.addClient({ name: 'Undo Client', phone: '0400 123 998' });
+      const job = await win.DB.addJob({ name: 'Undo Swms Job' });
+      const swms = await win.DB.createSwms({ jobId: job.id, siteAddress: '1 Undo St' });
+      const cases = [
+        ['lead', lead.id, () => win.DB.getLead(lead.id), () => win.DB.getLeads(), () => win.DB.deleteLead(lead.id)],
+        ['client', client.id, () => win.DB.getClient(client.id), () => win.DB.getClients(), () => win.DB.deleteClient(client.id)],
+        ['swms', swms.id, () => win.DB.getSwms(swms.id), () => win.DB.getAllSwms(), () => win.DB.deleteSwms(swms.id)],
+      ];
+      for (const [kind, id, getOne, getAll, del] of cases) {
+        await win.UndoDelete.start({ kind, ids: [id], message: `${kind} deleted`, commit: del, refresh: async () => {} });
+        assertEqual(await getOne(), undefined, `${kind}: the single read no longer finds it`);
+        assert(!(await getAll()).some((x) => x.id === id), `${kind}: the list no longer shows it`);
+        if (kind === 'swms') assert(!(await win.DB.getSwmsForJob(job.id)).some((x) => x.id === id), 'swms: nor does the job');
+        assert(await win.UndoDelete.undo(), `${kind}: there was something to undo`);
+        assert(await getOne(), `${kind}: it is back`);
+      }
+      await win.DB.deleteLead(lead.id);
+      await win.DB.deleteClient(client.id);
+      await win.DB.deleteSwms(swms.id);
+      await win.DB.deleteJob(job.id);
+    });
+  });
+
+  test('Undo: deleting an enquiry from its screen shows the bar on the board, and Undo puts it back', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realConfirm = win.confirm;
+    win.confirm = () => true;
+    await withUndoDelay(win, 60000, async () => {
+      const lead = await win.DB.addLead({ name: 'Board Undo Lead', phone: '0400 555 321', address: '2 Board St', source: 'Google' });
+      try {
+        win.showJobListView(); await wait(150);
+        doc.getElementById('tab-leads').click(); await wait(400);
+        await win.LeadsUI.openLead(lead.id); await wait(400);
+        doc.getElementById('lead-delete-btn').click();
+        await waitFor(() => !doc.getElementById('undo-bar').classList.contains('hidden'), 'the Undo bar shows');
+        assertEqual(doc.getElementById('undo-text').textContent, 'Board Undo Lead deleted', 'it names the enquiry');
+        assert(!doc.getElementById('view-leads').classList.contains('hidden'), 'on the board');
+        assert(!doc.getElementById('view-leads').textContent.includes('Board Undo Lead'), 'which no longer shows it');
+        doc.getElementById('undo-btn').click();
+        await waitFor(() => doc.getElementById('view-leads').textContent.includes('Board Undo Lead'), 'Undo brings it back onto the board');
+      } finally {
+        win.confirm = realConfirm;
+        await win.DB.deleteLead(lead.id);
+      }
+    });
+  });
+
+  test('Undo: deleting a client from its screen can be undone, and its jobs are only unlinked if it really goes', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realConfirm = win.confirm;
+    win.confirm = () => true;
+    await withUndoDelay(win, 300, async () => {
+      const client = await win.DB.addClient({ name: 'Linked Undo Client', phone: '0400 555 777' });
+      const job = await win.DB.addJob({ name: 'Linked Undo Job', clientId: client.id });
+      try {
+        win.showJobListView(); await wait(150);
+        doc.getElementById('tab-more').click(); await wait(150);
+        doc.getElementById('open-clients-btn').click(); await wait(400);
+        const row = Array.from(doc.querySelectorAll('#clients-list li')).find((li) => li.textContent.includes('Linked Undo Client'));
+        assert(row, 'the client is listed');
+        row.click(); await wait(400);
+        doc.getElementById('client-delete-btn').click();
+        await waitFor(() => !doc.getElementById('undo-bar').classList.contains('hidden'), 'the Undo bar shows on the clients list');
+        assertEqual((await win.DB.getJob(job.id)).clientId, client.id, 'the job is still linked while it can be undone');
+        await waitFor(async () => (await win.DB.getJob(job.id)).clientId === null, 'and unlinked once the delete really happens');
+        assertEqual(await win.DB.getClient(client.id), undefined, 'the client is gone');
+      } finally {
+        win.confirm = realConfirm;
+        await win.DB.deleteJob(job.id);
+      }
+    });
+  });
+
+  test('Undo: a deleted safety statement can be undone from its list', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realConfirm = win.confirm;
+    win.confirm = () => true;
+    await withUndoDelay(win, 60000, async () => {
+      win.showJobListView(); await wait(150);
+      doc.getElementById('tab-more').click(); await wait(150);
+      doc.getElementById('open-swms-btn').click(); await wait(400);
+      const before = (await win.DB.getAllSwms()).length;
+      doc.getElementById('swms-new-btn').click();
+      await waitFor(async () => (await win.DB.getAllSwms()).length === before + 1, 'a statement is made');
+      await wait(300);
+      doc.getElementById('swms-delete-btn').click();
+      try {
+        await waitFor(() => !doc.getElementById('undo-bar').classList.contains('hidden'), 'the Undo bar shows on the statements list');
+        assertEqual((await win.DB.getAllSwms()).length, before, 'it is hidden');
+        doc.getElementById('undo-btn').click();
+        await waitFor(async () => (await win.DB.getAllSwms()).length === before + 1, 'Undo brings it back');
+      } finally {
+        win.confirm = realConfirm;
+        const all = await win.DB.getAllSwms();
+        if (all.length > before) await win.DB.deleteSwms(all[0].id);
+      }
+    });
+  });
+
+  test('Undo: the bar for an enquiry stays off the job screens, and the blank-record clean-up is still instant', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await withUndoDelay(win, 60000, async () => {
+      const lead = await win.DB.addLead({ name: 'Bar Place Lead' });
+      win.showJobListView(); await wait(150);
+      await win.UndoDelete.start({ kind: 'lead', ids: [lead.id], message: 'x', commit: () => win.DB.deleteLead(lead.id), refresh: async () => {} });
+      await wait(150);
+      assert(doc.getElementById('undo-bar').classList.contains('hidden'), 'not shown on the job list for an enquiry');
+      doc.getElementById('tab-leads').click();
+      await waitFor(() => !doc.getElementById('undo-bar').classList.contains('hidden'), 'shown on the enquiries board');
+      await win.UndoDelete.undo();
+      await win.DB.deleteLead(lead.id);
+    });
+    const src = await (await fetch('../leads-ui.js', { cache: 'reload' })).text();
+    assert(/if \(isBlankLead\(current\)\) \{\n\s*await DB\.deleteLead\(current\.id\);/.test(src), 'a blank enquiry left with Back is still removed straight away');
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

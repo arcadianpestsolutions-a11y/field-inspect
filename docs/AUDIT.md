@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 486 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 491 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -58,6 +58,7 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 28 | The Undo bar sat on top of Finalize, Save and "+ New enquiry" for its ten seconds | It only shows on the job list and the job, steps aside on other screens (the delete keeps waiting), and sits above the "+ New Job" button |
 | 29 | Contrast had never been measured. Measured on every main screen: dark had near-misses (status badges and due dates at 4.1-4.3:1) | Dim text and the red lifted slightly; `tests/contrast.js` now fails the suite if any text on any main screen, in either theme, drops under WCAG AA |
 | 30 | The sync bar said "Signed in as ... Synced 3:15 PM" and nothing about photos still only on the phone; "Sync now" gave no sign it was working; a first sync on a new phone showed "No jobs yet" | `sync-state.js`: one honest state (dot + sentence), a count of photos not uploaded, a spinning disabled "Sync now", placeholder cards during the first sync, pull-to-sync, an upload marker on each unsent photo |
+| 31 | Deleting an enquiry, client or safety statement was instant and final | The same ten-second Undo as jobs and photos, shown on that list; a client's jobs are only unlinked once the delete really happens |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
 

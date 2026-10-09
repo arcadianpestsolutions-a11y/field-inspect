@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// undo-delete.js - "Deleted. Undo" for jobs and photos.
+// undo-delete.js - "Deleted. Undo" for jobs, photos, enquiries, clients and safety statements.
 //
 // PURPOSE   Deleting a job removes its photos, invoices and report from the phone
 //           AND from the cloud, and there is no in-app restore. A confirm dialog
@@ -24,17 +24,24 @@
 (() => {
   'use strict';
 
-  const hidden = { job: new Set(), capture: new Set() };
+  const hidden = { job: new Set(), capture: new Set(), lead: new Set(), client: new Set(), swms: new Set() };
   let current = null; // { kind, ids, commit, refresh, timer }
   let bar = null;
   let barWanted = false;
-  // Where the bar may show. Elsewhere it would sit on top of a screen's own bottom
-  // buttons (Finalize, Save, + New enquiry) for ten seconds, so it waits out of
-  // sight and comes back if you return to one of these.
-  const BAR_VIEWS = ['view-job', 'view-joblist'];
+  // Where the bar may show, by kind: the list you land on after deleting. Elsewhere
+  // it would sit on top of a screen's own bottom buttons (Finalize, Save) for ten
+  // seconds, so it waits out of sight and comes back if you return to one of these.
+  const BAR_VIEWS = {
+    job: ['view-job', 'view-joblist'],
+    capture: ['view-job', 'view-joblist'],
+    lead: ['view-leads'],
+    client: ['view-clients'],
+    swms: ['view-swms-list'],
+  };
   const onBarView = () => {
     const shown = Array.from(document.querySelectorAll('.view')).filter((v) => !v.classList.contains('hidden'));
-    return shown.length === 1 && BAR_VIEWS.includes(shown[0].id);
+    const allowed = BAR_VIEWS[(current && current.kind) || 'job'] || [];
+    return shown.length === 1 && allowed.includes(shown[0].id);
   };
   function applyBar() {
     const visible = barWanted && onBarView();
@@ -120,7 +127,7 @@
   }
 
   // Hides the item(s) now and deletes them after the delay unless undone.
-  //   kind: 'job' | 'capture'      ids: the ids to hide
+  //   kind: 'job' | 'capture' | 'lead' | 'client' | 'swms'      ids: the ids to hide
   //   message: what the bar says   commit: async () => the real delete
   //   refresh: async () => redraw whatever is on screen
   async function start({ kind, ids, message, commit, refresh }) {
