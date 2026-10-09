@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 469 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 475 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -56,6 +56,7 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 26 | Plan and Reassign wrote to "whichever job is open when the question closes"; leaving the job meanwhile threw errors or pulled you back into it | Each remembers the job the tap was for; the screen is redrawn only if you are still on it |
 | 27 | Asking the database for a job, report or update with no id threw an IndexedDB error | Answers "nothing"; opening or saving a report with no job id is refused in plain words |
 | 28 | The Undo bar sat on top of Finalize, Save and "+ New enquiry" for its ten seconds | It only shows on the job list and the job, steps aside on other screens (the delete keeps waiting), and sits above the "+ New Job" button |
+| 29 | Contrast had never been measured. Measured on every main screen: dark had near-misses (status badges and due dates at 4.1-4.3:1) | Dim text and the red lifted slightly; `tests/contrast.js` now fails the suite if any text on any main screen, in either theme, drops under WCAG AA |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
 

@@ -10021,6 +10021,148 @@
   });
 
 
+  // ---------- Theme (theme.js) and contrast ----------
+
+  test('Theme: dark is the default, the choice is remembered, and Auto follows the phone', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.localStorage.removeItem('scope-theme');
+    try {
+      assertEqual(win.Theme.get(), 'dark', 'nothing chosen means dark, as before');
+      win.Theme.set('light');
+      assertEqual(win.localStorage.getItem('scope-theme'), 'light', 'the choice is stored');
+      assertEqual(doc.documentElement.getAttribute('data-theme'), 'light', 'and applied to the page');
+      assertEqual(win.Theme.resolved(), 'light', 'resolved is what is showing');
+      win.Theme.set('auto');
+      assertEqual(win.Theme.get(), 'auto', 'auto is a choice of its own');
+      assert(['light', 'dark'].includes(doc.documentElement.getAttribute('data-theme')), 'but the page always shows light or dark');
+      win.Theme.set('nonsense');
+      assertEqual(win.Theme.get(), 'dark', 'a bad value falls back to dark');
+    } finally {
+      win.localStorage.removeItem('scope-theme');
+      win.Theme.set('dark');
+    }
+  });
+
+  test('Theme: the phone\'s own bar colour follows the theme, and the header stays dark in both', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      win.Theme.set('light');
+      assertEqual(doc.querySelector('meta[name="theme-color"]').getAttribute('content'), win.Theme.COLORS.light, 'light: the dark header colour');
+      assertEqual(win.getComputedStyle(doc.querySelector('.topbar')).backgroundColor, 'rgb(16, 22, 20)', 'the header strip is dark in light mode (iPhone status text is white)');
+      win.Theme.set('dark');
+      assertEqual(doc.querySelector('meta[name="theme-color"]').getAttribute('content'), win.Theme.COLORS.dark, 'dark: the app background colour');
+      const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
+      const bg = (css.match(/--bg:\s*(#[0-9a-fA-F]{6})/) || [])[1];
+      assertEqual(win.Theme.COLORS.dark.toLowerCase(), bg.toLowerCase(), 'the dark colour is the real background');
+    } finally {
+      win.Theme.set('dark');
+    }
+  });
+
+  test('Theme: the More sheet offers Auto, Light and Dark and the buttons work', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      win.Theme.set('dark');
+      const picker = doc.getElementById('theme-picker');
+      assert(picker, 'the picker is in the More sheet');
+      assertEqual(Array.from(picker.querySelectorAll('button')).map((b) => b.textContent).join(','), 'Auto,Light,Dark', 'three choices');
+      picker.querySelector('[data-mode="light"]').click();
+      assertEqual(win.Theme.get(), 'light', 'tapping Light chooses it');
+      assertEqual(picker.querySelector('.active').textContent, 'Light', 'and lights the button');
+      assertEqual(picker.querySelector('[data-mode="light"]').getAttribute('aria-checked'), 'true', 'for a screen reader too');
+      // The sheet is closed, so measure what the stylesheet asks for rather than what is on screen.
+      assertEqual(win.getComputedStyle(picker.querySelector('button')).minHeight, '44px', 'big enough to tap');
+    } finally {
+      win.Theme.set('dark');
+    }
+  });
+
+  test('Theme: a blocked localStorage cannot break the screen', async () => {
+    const win = frame.contentWindow;
+    const realSet = win.Storage.prototype.setItem;
+    const realGet = win.Storage.prototype.getItem;
+    win.Storage.prototype.setItem = () => { throw new Error('blocked'); };
+    win.Storage.prototype.getItem = () => { throw new Error('blocked'); };
+    try {
+      assertEqual(win.Theme.get(), 'dark', 'reads fall back to dark');
+      win.Theme.set('light'); // must not throw
+    } finally {
+      win.Storage.prototype.setItem = realSet;
+      win.Storage.prototype.getItem = realGet;
+      win.Theme.set('dark');
+    }
+  });
+
+  test('Theme: registered in the page head and the offline shell', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    const head = idx.slice(0, idx.indexOf('</head>'));
+    assert(head.includes('theme.js') && head.indexOf('theme.js') < head.indexOf('styles.css'), 'loaded in <head> before the stylesheet, so a light choice never flashes dark');
+    assert(sw.includes("'./theme.js'"), 'in the offline shell');
+  });
+
+  test('Contrast: every main screen is readable in dark and in light (WCAG AA)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const A = window.ContrastAudit;
+    const today = new Date();
+    const at = (h, dayOffset) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + (dayOffset || 0), h, 0).getTime();
+    const mk = async (name, status, extra) => {
+      const j = await win.DB.addJob(Object.assign({ name, address: '1 Contrast St, Camden NSW 2570', clientPhone: '0412 000 321', clientEmail: 'c@example.com', jobType: 'termite' }, extra || {}));
+      if (status) await win.DB.updateJob(j.id, { status });
+      return j;
+    };
+    const made = [
+      await mk('Contrast New', null, { scheduledAt: at(9) }),
+      await mk('Contrast Late', null, { scheduledAt: at(8, -2) }),
+      await mk('Contrast Review', 'review', { scheduledAt: at(11) }),
+      await mk('Contrast Done', 'completed', { nextDueAt: Date.now() - 86400000 * 9 }),
+    ];
+    await win.DB.addCapture({ jobId: made[2].id, type: 'photo', zone: 'Roof Void', photoBlob: new Blob(['x']) });
+    const failures = [];
+    const wait2 = (ms) => new Promise((r) => setTimeout(r, ms));
+    const check = async (theme, screen) => {
+      await wait2(350);
+      const r = A.audit(doc);
+      assert(r.checked > 5, `${screen}: the audit actually read some text (${r.checked})`);
+      r.failures.forEach((f) => failures.push(`${theme}/${screen}: "${f.text}" ${f.ratio} < ${f.need} (${f.fg} on ${f.bg}) ${f.where}`));
+    };
+    const realConfirm = win.confirm;
+    win.confirm = () => true;
+    try {
+      for (const theme of ['dark', 'light']) {
+        win.Theme.set(theme);
+        win.TodayUI.setTab('today'); win.showJobListView(); await check(theme, 'today');
+        win.TodayUI.setTab('all'); win.showJobListView(); await check(theme, 'all jobs');
+        await win.showJobViewById(made[0].id); await check(theme, 'job (new)');
+        await win.showJobViewById(made[2].id); await check(theme, 'job (review)');
+        doc.getElementById('view-report-btn').click(); await wait2(600); await check(theme, 'report');
+        doc.querySelectorAll('#report-section-list .report-section-item')[1].click(); await wait2(500); await check(theme, 'report section');
+        win.hideAllAppViews();
+        await win.InvoiceUI.open(made[2].id); await check(theme, 'invoice');
+        win.showJobListView(); doc.getElementById('tab-diary').click(); await check(theme, 'diary');
+        doc.getElementById('tab-leads').click(); await check(theme, 'enquiries');
+        win.showJobListView(); doc.getElementById('tab-more').click(); await check(theme, 'more sheet');
+        doc.getElementById('open-clients-btn').click(); await check(theme, 'clients');
+        win.showJobListView(); doc.getElementById('tab-more').click(); await wait2(150); doc.getElementById('open-business-btn').click(); await check(theme, 'business');
+        win.showJobListView(); doc.getElementById('tab-more').click(); await wait2(150); doc.getElementById('open-archive-btn').click(); await check(theme, 'saved reports');
+        win.showJobListView(); await wait2(200); doc.getElementById('new-job-btn').click(); await check(theme, 'new job form');
+        doc.getElementById('job-form-cancel').click();
+      }
+    } finally {
+      win.confirm = realConfirm;
+      win.Theme.set('dark');
+      win.TodayUI.setTab('all');
+      win.showJobListView();
+      for (const j of made) await win.DB.deleteJob(j.id);
+    }
+    assertEqual(failures.length, 0, `text that is hard to read:\n  ${failures.slice(0, 12).join('\n  ')}`);
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

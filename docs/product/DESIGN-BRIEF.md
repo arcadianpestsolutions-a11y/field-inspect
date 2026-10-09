@@ -39,7 +39,7 @@ a consumer app. Reference point: cockpit instrument panel.
 
 * **Type:** system sans (San Francisco / Roboto / Segoe) for prose; the system
   monospace stack for *readouts*: times, dates, counts, IDs, money.
-* **Theme:** dark by design for outdoor glare-with-low-reflectance and battery.
+* **Theme:** Dark (default), Light, or Auto (follows the phone), chosen in More → Screen (`theme.js`). Light uses the same meanings in darker shades on paper-white; the header strip stays dark in both. Contrast is checked by `tests/contrast.js` against WCAG AA (4.5:1 normal text, 3:1 large) on every main screen in both themes.
   There is no light theme; this is deliberate, not an omission.
 * **Layout:** single column, full-width cards, bottom-reachable actions, safe-area
   insets respected (notch and home indicator).

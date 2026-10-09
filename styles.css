@@ -18,7 +18,7 @@
   --card: #161e1b;
   --border: #2a3a34;
   --text: #e6f1ea;          /* phosphor white */
-  --text-dim: #7f978c;
+  --text-dim: #93aba0;
 
   --accent: #3dff88;        /* radar phosphor green — nominal / primary */
   --accent-soft: #8dffbb;
@@ -28,7 +28,7 @@
   --accent-2: #ffb000;      /* instrument amber — caution / informational */
   --accent-2-ink: #2a1b00;
 
-  --danger: #ff4d4d;
+  --danger: #ff6666;
   --danger-ink: #330505;
   --warning: #ffb000;       /* same amber: caution is one idea, one colour */
   --success: #3dff88;
@@ -3103,3 +3103,82 @@ body.tabbar-typing .undo-bar { bottom: calc(16px + var(--safe-bottom)); }
 #view-invoice .invoice-totals span, #view-invoice [id^="invoice-"] { overflow-wrap: anywhere; }
 body.undo-open .toast { bottom: calc(196px + var(--safe-bottom)); }
 body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom)); }
+
+/* ---------- Light theme (theme.js) ---------- */
+/* Paper instead of panel: the same meanings (green fine, amber look, red wrong),
+   darkened so each reads against white. Glows are off: a halo helps on a dark
+   screen and only smudges on a light one. */
+:root { color-scheme: dark; }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f1f5f3;
+  --bg-elev: #ffffff;
+  --card: #ffffff;
+  --border: #c3d1ca;
+  --text: #0e1a14;
+  --text-dim: #455a50;
+
+  --accent: #0a7a3d;
+  --accent-soft: #138a49;
+  --accent-dim: #8cc9a5;
+  --accent-ink: #ffffff;
+
+  --accent-2: #8a5200;
+  --accent-2-ink: #ffffff;
+
+  --danger: #c0262d;
+  --danger-ink: #ffffff;
+  --warning: #8a5200;
+  --success: #0a7a3d;
+
+  --glow-accent: 0 0 0 transparent;
+  --glow-accent-2: 0 0 0 transparent;
+  --glow-danger: 0 0 0 transparent;
+}
+/* The header strip stays dark in both themes (see theme.js for why), so inside
+   it the dark palette applies. */
+:root[data-theme="light"] .topbar {
+  --bg: #080b0a;
+  --bg-elev: #101614;
+  --card: #161e1b;
+  --border: #2a3a34;
+  --text: #e6f1ea;
+  --text-dim: #9db3a8;
+  --accent: #3dff88;
+  --accent-soft: #8dffbb;
+  --accent-ink: #032012;
+  background: #101614;
+  border-bottom-color: #2a3a34;
+}
+
+/* Things that were written in dark-theme colours rather than variables. */
+:root[data-theme="light"] .icon-btn:active { background: rgba(0, 0, 0, 0.08); }
+:root[data-theme="light"] .topbar .icon-btn:active { background: rgba(255, 255, 255, 0.1); }
+:root[data-theme="light"] .btn-primary:active { box-shadow: none; }
+:root[data-theme="light"] .btn-outline { background: rgba(10, 122, 61, 0.06); }
+:root[data-theme="light"] .btn-outline:active { background: rgba(10, 122, 61, 0.16); }
+:root[data-theme="light"] .slot-travel-tight { color: #b3361c; }
+:root[data-theme="light"] .ios-install,
+:root[data-theme="light"] .ios-install-banner { background: #fff3cd; border-color: #e0c565; color: #4a3a05; }
+:root[data-theme="light"] .ios-install-text strong { color: #6b4e00; }
+:root[data-theme="light"] .ios-install-dismiss { color: #4a3a05; }
+:root[data-theme="light"] .identify-pest-confidence-medium,
+:root[data-theme="light"] .identify-pest-medium { color: #8a5200; }
+:root[data-theme="light"] .undo-bar { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); }
+:root[data-theme="light"] .tab-bar { box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.06); }
+:root[data-theme="light"] .tab-btn.active::before { box-shadow: none; }
+:root[data-theme="light"] .today-item, :root[data-theme="light"] .job-item, :root[data-theme="light"] .card { box-shadow: 0 1px 2px rgba(14, 26, 20, 0.06); }
+
+/* The More sheet's screen-brightness choice (theme.js). */
+.theme-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px; }
+.theme-label { color: var(--text-dim); font-size: 0.9rem; }
+.theme-picker { display: flex; gap: 4px; padding: 3px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.theme-choice { min-height: 44px; min-width: 64px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--text-dim); font-weight: 700; font-size: 0.9rem; }
+.theme-choice.active { background: var(--accent); color: var(--accent-ink); }
+/* Light theme, second pass (from measuring contrast on every main screen). */
+:root[data-theme="light"] { --accent: #08733a; --accent-soft: #11843f; }
+:root[data-theme="light"] .topbar { color: #e6f1ea; } /* colour is inherited as a value, so say it here */
+:root[data-theme="light"] .demo-banner { background: #ffb000; color: #2a1d05; }
+:root[data-theme="light"] .tab-btn.active { color: var(--accent); }
+/* A short phone held sideways must still be able to reach every row of More. */
+.more-sheet-panel { max-height: 92vh; max-height: 92dvh; overflow-y: auto; }

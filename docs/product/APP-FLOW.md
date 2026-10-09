@@ -124,3 +124,6 @@ Progress card first ("5 of 11 sections done", bar, and Continue: the next sectio
 
 ## 10. Undo after delete (v111)
 Deleting a job, a photo, or a selection of photos hides it everywhere at once and shows a bar: "<name> deleted  [Undo]" for ten seconds. Undo brings it back untouched. If the time runs out, the delete really happens (phone and cloud). Starting another delete finishes the first. Closing the app inside the ten seconds deletes nothing. Enquiries, clients, invoices and safety statements are not covered yet.
+
+## 11. Screen brightness (v113)
+More has a "Screen" choice: **Auto** (follows the phone's light/dark setting), **Light** or **Dark**. Dark is the default. The choice is remembered on the phone and applied before the first paint, so it never flashes the wrong colour. The header strip stays dark in both so the phone's own clock and battery stay readable.

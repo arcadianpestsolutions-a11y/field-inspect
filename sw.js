@@ -1,11 +1,12 @@
 // Keep this in sync with version.js's APP_VERSION — that's what drives the
 // login screen's build-color/label indicator, so a mismatched bump here
 // defeats the whole point of it.
-const CACHE_NAME = 'field-inspect-v112';
+const CACHE_NAME = 'field-inspect-v113';
 const APP_SHELL = [
   './',
   './index.html',
   './error-log.js',
+  './theme.js',
   './nav-history.js',
   './styles.css',
   './app.js',

@@ -43,18 +43,14 @@ and 390 px wide) in an emulated browser, plus a 2,400-step random-tapping run.
 4. ~~**No sense of progress.**~~ **Fixed in v110**: the report list opens with "5 of 11 sections done", a bar, and a button to the next section still needing work; Finalize stays in reach at the bottom of the screen.
 5. **The job card shows its creation date**, not the appointment, next to the
    address. It reads like the booking date and is not.
-6. **Dark-only theme is an untested assumption.** The design notes argue a white
-   screen is a mirror in the sun. In practice many phones are *easier* to read in
-   direct sunlight with a light, high-contrast theme, and dark helps battery. Only a
-   real phone, outdoors, can settle it; offering both is the safe answer.
+6. ~~**Dark-only theme is an untested assumption.**~~ **Built in v113**: More has a Screen choice, Auto / Light / Dark (Dark stays the default). Light is paper-white with darkened greens, ambers and reds; the header strip stays dark in both (an installed iPhone draws its clock in white over the top of the page). Which is better in real sun is still for a phone outdoors to settle.
 7. ~~**No undo.**~~ **Built in v111**: deleting a job or photos shows "... deleted  Undo" for ten seconds; nothing is really deleted until it closes.
 8. **Sync state is a small text line with a "Sync now" link** (shown when signed in;
    not visible in the demo, so not judged here). There is no progress indicator,
    pull-to-refresh, or skeleton/loading state, so on weak signal the app may look
    frozen rather than "working".
 9. **Status bar colour is navy**, not the app's near-black green (a one-line fix).
-10. **Accessibility not measured**: contrast ratios, screen-reader order and large-text
-    behaviour have not been checked.
+10. **Accessibility: contrast is now measured** (v113) by `tests/contrast.js` on every main screen in both themes, with zero failures required. Screen-reader order and large-text behaviour still have not been checked.
 
 ## Suggested order
 1. A real half-day outdoors with the app on a real phone (settles items 6 and the
