@@ -127,3 +127,14 @@ Deleting a job, a photo, or a selection of photos hides it everywhere at once an
 
 ## 11. Screen brightness (v113)
 More has a "Screen" choice: **Auto** (follows the phone's light/dark setting), **Light** or **Dark**. Dark is the default. The choice is remembered on the phone and applied before the first paint, so it never flashes the wrong colour. The header strip stays dark in both so the phone's own clock and battery stay readable.
+
+## 12. Sync and waiting states (v114)
+Signed in, the home screen shows one status line: a dot and a sentence.
+| Dot | Sentence (examples) |
+|---|---|
+| Green | All backed up, 4 min ago |
+| Pulsing green | Syncing. 2 photos to upload |
+| Amber | Synced 4 min ago. 3 photos still to upload |
+| Hollow | Offline. 3 photos saved on this phone and will upload when you are back online |
+| Red | Could not sync. Your work is safe on this phone and it will try again (with the reason underneath) |
+**Sync now** spins and is disabled while a sync runs. **Pull the home list down** (at the top) to sync; it does nothing when signed out or offline. In a job, the photo count line says "saved on this device . N not uploaded yet" (or "and backed up"), and each photo not yet uploaded carries an amber up-arrow marker. While the very first sync is still fetching and nothing is on the phone yet, the job list and Today show grey placeholder cards instead of "No jobs yet" or "Nothing is booked".

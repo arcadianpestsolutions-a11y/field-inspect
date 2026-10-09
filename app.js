@@ -415,6 +415,14 @@
 
   function updateSyncBarText() {
     if (!syncBar) return;
+    // One place decides what the bar says (sync-state.js): a coloured dot, one honest
+    // sentence, a count of photos still only on this phone, and a working "Sync now".
+    // The older wording below is only the fallback for a half-updated page.
+    if (window.SyncState && typeof window.SyncState.update === 'function') {
+      window.SyncState.update();
+      if (loggedInEmail) syncBar.title = 'Signed in as ' + loggedInEmail;
+      return;
+    }
     const status = window.Sync ? window.Sync.getStatus() : { state: 'idle' };
     let statusPart;
     if (!navigator.onLine) statusPart = 'Offline — saved locally';
@@ -990,8 +998,15 @@
 
     jobListEl.innerHTML = '';
     if (jobsCache.length === 0) {
-      jobEmptyEl.textContent = 'No jobs yet. Tap "+ New Job" to start your first inspection.';
-      show(jobEmptyEl);
+      // First sync still fetching and nothing here yet: the jobs are on their way, so
+      // show placeholders rather than telling someone with a full diary they have none.
+      if (window.SyncState && window.SyncState.isFirstSync()) {
+        jobListEl.appendChild(window.SyncState.skeletonCards(3));
+        hide(jobEmptyEl);
+      } else {
+        jobEmptyEl.textContent = 'No jobs yet. Tap "+ New Job" to start your first inspection.';
+        show(jobEmptyEl);
+      }
     } else if (filtered.length === 0) {
       jobEmptyEl.textContent = 'No jobs match your search or filter. ';
       // A leftover search or filter that hides every job looks exactly like lost
@@ -1080,6 +1095,12 @@
       jobListEl.appendChild(li);
     }
   }
+
+  // When a sync starts or finishes, an empty list may need to swap its
+  // placeholders for the jobs that just arrived (or the other way round).
+  document.addEventListener('scope-sync-state', () => {
+    if (!viewJobList.classList.contains('hidden') && jobsCache.length === 0) renderJobList();
+  });
 
   jobSearchInput.addEventListener('input', () => {
     jobSearchQuery = jobSearchInput.value;
@@ -1512,8 +1533,13 @@
       hide(galleryEmptyEl);
     }
 
+    // Signed in, the honest answer to "is it safe?" is how many have left the phone.
+    const signedIn = !!(window.Sync && window.Sync.currentUserId && window.Sync.currentUserId());
+    const notUploaded = (c) => (c.photoBlob && !c.photoPath) || (c.audioBlob && !c.audioPath);
+    const waiting = signedIn ? currentCaptures.filter(notUploaded).length : 0;
+    const safety = !signedIn ? 'saved on this device' : (waiting ? `saved on this device · ${waiting} not uploaded yet` : 'saved on this device and backed up');
     galleryCountEl.textContent = currentCaptures.length
-      ? `${visible.length === currentCaptures.length ? currentCaptures.length : visible.length + ' of ' + currentCaptures.length} capture${currentCaptures.length === 1 ? '' : 's'} · saved on this device`
+      ? `${visible.length === currentCaptures.length ? currentCaptures.length : visible.length + ' of ' + currentCaptures.length} capture${currentCaptures.length === 1 ? '' : 's'} · ${safety}`
       : '';
 
     if (currentCaptures.length > 0) show(gallerySelectToggle);
@@ -1531,6 +1557,14 @@
       mark.className = 'capture-tile-select-mark';
       mark.textContent = '✓';
       tile.appendChild(mark);
+      if (signedIn && notUploaded(capture)) {
+        const up = document.createElement('span');
+        up.className = 'capture-tile-pending';
+        up.textContent = '↑';
+        up.title = 'Not uploaded yet. Saved on this phone.';
+        up.setAttribute('aria-label', 'Not uploaded yet');
+        tile.appendChild(up);
+      }
 
       if (capture.photoBlob) {
         const url = trackUrl(URL.createObjectURL(capture.photoBlob));

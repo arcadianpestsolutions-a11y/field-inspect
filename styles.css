@@ -3182,3 +3182,56 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 :root[data-theme="light"] .tab-btn.active { color: var(--accent); }
 /* A short phone held sideways must still be able to reach every row of More. */
 .more-sheet-panel { max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
+
+/* ---------- Sync state, placeholders, pull to refresh (sync-state.js) ---------- */
+.sync-bar { justify-content: flex-start; }
+.sync-bar .sync-status-text { flex: 1; min-width: 0; }
+.sync-bar .sync-actions { margin-left: auto; }
+.sync-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); }
+.sync-dot-ok { background: var(--success); }
+.sync-dot-working { background: var(--accent); animation: sync-pulse 1s ease-in-out infinite; }
+.sync-dot-waiting { background: var(--warning); }
+.sync-dot-problem { background: var(--danger); }
+.sync-dot-offline { background: transparent; border: 2px solid var(--text-dim); }
+.sync-dot-idle { background: var(--text-dim); }
+@keyframes sync-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
+#sync-now-btn.is-working { opacity: 0.6; }
+#sync-now-btn.is-working::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: sync-spin 0.8s linear infinite;
+}
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .sync-dot-working, #sync-now-btn.is-working::before, .skeleton-line::after { animation: none; }
+}
+
+.skeleton-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; margin-bottom: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
+.skeleton-line { position: relative; display: block; height: 14px; border-radius: 7px; background: var(--border); overflow: hidden; }
+.skeleton-line.w90 { width: 90%; } .skeleton-line.w60 { width: 60%; height: 18px; } .skeleton-line.w40 { width: 40%; }
+.skeleton-line::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent); transform: translateX(-100%); animation: skeleton-shimmer 1.4s infinite; }
+@keyframes skeleton-shimmer { to { transform: translateX(100%); } }
+
+.ptr-hint { height: 0; overflow: hidden; text-align: center; color: var(--text-dim); font-size: 0.82rem; line-height: 56px; transition: height 0.15s ease; }
+
+/* A photo that has not left the phone yet. */
+.capture-tile-pending {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px;
+  background: var(--warning); color: var(--accent-2-ink, #2a1b00);
+  font-size: 0.78rem; font-weight: 800; line-height: 22px; text-align: center;
+}
+/* The sentence is the point of this bar, so it gets a full line (and may wrap to two)
+   instead of being cut to "Synced 4 min ago. ..." beside three links. */
+.sync-bar { flex-wrap: wrap; row-gap: 0; padding-top: 8px; padding-bottom: 2px; }
+.sync-bar .sync-dot { margin-top: 1px; }
+.sync-bar .sync-status-text { flex: 1 1 calc(100% - 28px); white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.35; }
+.sync-bar .sync-actions { flex: 1 1 100%; justify-content: flex-end; margin-left: 0; }
+:root[data-theme="light"] .sync-detail { background: #fff3d6; border-bottom-color: #e3c981; color: #5c3b00; }

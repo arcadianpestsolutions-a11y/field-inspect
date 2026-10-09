@@ -64,6 +64,9 @@ const hasKey = (k) => k !== undefined && k !== null && k !== '';
 // undo window closes, so closing the app mid-window loses nothing.
 const pendingDelete = (kind, id) => !!(window.UndoDelete && window.UndoDelete.hides(kind, id));
 
+// Tells the sync indicator that what is waiting to upload may have changed.
+const capturesChanged = () => { try { window.dispatchEvent(new Event('scope-captures-changed')); } catch (e) { /* not a browser page */ } };
+
 let dbPromise = null;
 
 function openDB() {
@@ -580,6 +583,7 @@ const DB = {
     };
     await reqToPromise(store.add(capture));
     if (window.Sync) window.Sync.pushCapture(capture);
+    capturesChanged();
     return capture;
   },
 
@@ -590,6 +594,7 @@ const DB = {
     const updated = { ...existing, ...changes, updatedAt: Date.now() };
     await reqToPromise(store.put(updated));
     if (window.Sync) window.Sync.pushCapture(updated);
+    capturesChanged();
     return updated;
   },
 
@@ -597,6 +602,7 @@ const DB = {
   async putCaptureRaw(capture) {
     const store = await tx('captures', 'readwrite');
     await reqToPromise(store.put(capture));
+    capturesChanged();
     return capture;
   },
 
@@ -610,6 +616,7 @@ const DB = {
     await reqToPromise(store.delete(id));
     await this.recordDeletion('captures', id);
     if (window.Sync) window.Sync.deleteCaptureRemote(id);
+    capturesChanged();
   },
 
   async getCaptures(jobId) {

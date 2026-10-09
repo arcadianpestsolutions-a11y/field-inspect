@@ -45,10 +45,7 @@ and 390 px wide) in an emulated browser, plus a 2,400-step random-tapping run.
    address. It reads like the booking date and is not.
 6. ~~**Dark-only theme is an untested assumption.**~~ **Built in v113**: More has a Screen choice, Auto / Light / Dark (Dark stays the default). Light is paper-white with darkened greens, ambers and reds; the header strip stays dark in both (an installed iPhone draws its clock in white over the top of the page). Which is better in real sun is still for a phone outdoors to settle.
 7. ~~**No undo.**~~ **Built in v111**: deleting a job or photos shows "... deleted  Undo" for ten seconds; nothing is really deleted until it closes.
-8. **Sync state is a small text line with a "Sync now" link** (shown when signed in;
-   not visible in the demo, so not judged here). There is no progress indicator,
-   pull-to-refresh, or skeleton/loading state, so on weak signal the app may look
-   frozen rather than "working".
+8. ~~**Sync state is a small text line.**~~ **Built in v114**: the bar on the home screen shows a coloured dot and one sentence ("All backed up, 4 min ago", "Synced 4 min ago. 3 photos still to upload", "Offline. 3 photos saved on this phone and will upload when you are back online", or a problem with its reason). "Sync now" spins and cannot be pressed twice. The gallery says how many photos have not left the phone and marks each one. A first sync shows placeholder cards instead of "No jobs yet". Pull the list down to sync. Not seen live with a real login yet.
 9. **Status bar colour is navy**, not the app's near-black green (a one-line fix).
 10. **Accessibility: contrast is now measured** (v113) by `tests/contrast.js` on every main screen in both themes, with zero failures required. Screen-reader order and large-text behaviour still have not been checked.
 

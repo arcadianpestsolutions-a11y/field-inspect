@@ -10163,6 +10163,255 @@
   });
 
 
+  // ---------- Sync state, placeholders, pull to refresh (sync-state.js) ----------
+
+  const NOW = new Date(2031, 2, 14, 15, 15).getTime();
+
+  test('Sync state: one honest sentence for each situation, and never "backed up" while something waits', () => {
+    const d = frame.contentWindow.SyncState.describe;
+    const synced = { state: 'synced', lastSyncedAt: NOW - 4 * 60000 };
+    let v = d({ online: true, status: synced, pending: 0, now: NOW });
+    assertEqual(v.level, 'ok', 'clean'); assertEqual(v.text, 'All backed up, 4 min ago', 'says when');
+    v = d({ online: true, status: synced, pending: 3, now: NOW });
+    assertEqual(v.level, 'waiting', 'photos still waiting');
+    assert(/3 photos still to upload/.test(v.text) && !/backed up/i.test(v.text), `never claims backed up: ${v.text}`);
+    v = d({ online: true, status: synced, pending: 1, now: NOW });
+    assert(/1 photo still to upload/.test(v.text), 'singular');
+    v = d({ online: true, status: { state: 'syncing', lastSyncedAt: null }, pending: 2, now: NOW });
+    assertEqual(v.level, 'working', 'syncing'); assert(/2 photos to upload/.test(v.text), v.text);
+    v = d({ online: false, status: synced, pending: 0, now: NOW });
+    assertEqual(v.level, 'offline', 'offline'); assert(/saved on this phone/.test(v.text), v.text);
+    v = d({ online: false, status: synced, pending: 5, now: NOW });
+    assert(/5 photos saved on this phone and will upload when you are back online/.test(v.text), 'offline with photos says they are safe and will go');
+    v = d({ online: true, status: { state: 'error', error: 'JWT expired' }, pending: 0, now: NOW });
+    assertEqual(v.level, 'problem', 'error'); assert(/safe on this phone/.test(v.text) && v.detail === 'JWT expired', 'safe, and the detail is carried');
+    v = d({ online: true, status: { state: 'partial', error: 'two photos refused' }, pending: 0, now: NOW });
+    assertEqual(v.level, 'problem', 'partial is a problem, not success'); assert(!/^All backed up/.test(v.text), 'and not worded as success');
+    v = d({ online: true, status: { state: 'idle' }, pending: 0, now: NOW });
+    assertEqual(v.level, 'idle', 'never synced'); assertEqual(v.text, 'Not synced yet', v.text);
+    v = d({ online: true, status: { state: 'idle' }, pending: 2, now: NOW });
+    assert(/2 photos on this phone only/.test(v.text), 'never synced with photos says they are only here');
+    assertEqual(d({ online: true, status: { state: 'syncing' }, pending: 0, now: NOW }).text, 'Syncing', 'plain syncing');
+    assertEqual(d().level, 'idle', 'no input at all is still a sentence');
+  });
+
+  test('Sync state: times read the way a person says them', () => {
+    const a = frame.contentWindow.SyncState.agoLabel;
+    assertEqual(a(NOW - 20000, NOW), 'just now', 'seconds');
+    assertEqual(a(NOW - 5 * 60000, NOW), '5 min ago', 'minutes');
+    assert(/^3:15\s?pm$/i.test(a(new Date(2031, 2, 14, 15, 15).getTime() - 3 * 3600000 + 3 * 3600000 - 70 * 60000 + 70 * 60000, new Date(2031, 2, 14, 16, 40).getTime())), 'earlier today is a clock time');
+    assert(/^yesterday /.test(a(new Date(2031, 2, 13, 15, 15).getTime(), NOW)), 'yesterday');
+    assert(/^\d+ \w{3}$/.test(a(new Date(2031, 2, 1, 9, 0).getTime(), NOW)), 'older is a date');
+    assertEqual(a(null, NOW), '', 'never');
+  });
+
+  test('Sync state: counts only what is still on the phone', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Pending Count Job' });
+    const before = await win.SyncState.countPending();
+    const photo = await win.DB.addCapture({ jobId: job.id, type: 'photo', zone: 'A', photoBlob: new Blob(['x']) });
+    const sent = await win.DB.addCapture({ jobId: job.id, type: 'photo', zone: 'B', photoBlob: new Blob(['y']) });
+    await win.DB.putCaptureRaw(Object.assign({}, sent, { photoPath: 'job/1.jpg' }));
+    const memo = await win.DB.addCapture({ jobId: job.id, type: 'memo', zone: 'C', audioBlob: new Blob(['z']) });
+    assertEqual((await win.SyncState.countPending()) - before, 2, 'the new photo and the voice note count; the uploaded photo does not');
+    await win.DB.putCaptureRaw(Object.assign({}, photo, { photoPath: 'job/2.jpg' }));
+    await win.DB.putCaptureRaw(Object.assign({}, memo, { audioPath: 'job/3.m4a' }));
+    assertEqual((await win.SyncState.countPending()) - before, 0, 'and it falls to zero as they upload');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Sync state: adding, uploading or deleting a photo tells the indicator', async () => {
+    const win = frame.contentWindow;
+    let events = 0;
+    const on = () => { events++; };
+    win.addEventListener('scope-captures-changed', on);
+    try {
+      const job = await win.DB.addJob({ name: 'Event Job' });
+      const c = await win.DB.addCapture({ jobId: job.id, type: 'photo', zone: 'A', photoBlob: new Blob(['x']) });
+      assertEqual(events, 1, 'added');
+      await win.DB.putCaptureRaw(Object.assign({}, c, { photoPath: 'p' }));
+      assertEqual(events, 2, 'uploaded');
+      await win.DB.deleteCapture(c.id);
+      assertEqual(events, 3, 'deleted');
+      await win.DB.deleteJob(job.id);
+    } finally {
+      win.removeEventListener('scope-captures-changed', on);
+    }
+  });
+
+  test('Sync state: the bar shows a coloured dot and the sentence, and Sync now shows it is working', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    try {
+      win.SyncState.setTestInput({ online: true, status: { state: 'synced', lastSyncedAt: Date.now() - 120000 }, pending: 0 });
+      assertEqual(doc.getElementById('sync-status-text').textContent, 'All backed up, 2 min ago', 'the sentence');
+      assert(doc.getElementById('sync-dot').classList.contains('sync-dot-ok'), 'a green dot');
+      assertEqual(doc.getElementById('sync-bar').getAttribute('data-sync-level'), 'ok', 'the level is on the bar for styling');
+      assert(!doc.getElementById('sync-now-btn').disabled, 'Sync now can be pressed');
+      win.SyncState.setTestInput({ online: true, status: { state: 'syncing', lastSyncedAt: Date.now() }, pending: 4 });
+      const btn = doc.getElementById('sync-now-btn');
+      assertEqual(btn.textContent, 'Syncing…', 'the button says so');
+      assert(btn.disabled && btn.classList.contains('is-working'), 'and cannot be pressed twice');
+      assert(doc.getElementById('sync-dot').classList.contains('sync-dot-working'), 'the dot pulses');
+      win.SyncState.setTestInput({ online: true, status: { state: 'error', error: 'JWT expired' }, pending: 0 });
+      assert(doc.getElementById('sync-dot').classList.contains('sync-dot-problem'), 'a red dot for a problem');
+      assertEqual(doc.getElementById('sync-detail').textContent, 'JWT expired', 'the reason is shown');
+      assert(!doc.getElementById('sync-detail').classList.contains('hidden'), 'visibly');
+      win.SyncState.setTestInput({ online: false, status: { state: 'synced', lastSyncedAt: Date.now() }, pending: 2 });
+      assert(doc.getElementById('sync-dot').classList.contains('sync-dot-offline'), 'a hollow dot offline');
+      assert(/2 photos saved on this phone/.test(doc.getElementById('sync-status-text').textContent), 'and what is waiting');
+      assertEqual(doc.getElementById('sync-detail').classList.contains('hidden'), true, 'no detail when there is none');
+    } finally {
+      win.SyncState.setTestInput(null);
+    }
+  });
+
+  test('Sync state: while the first sync is still fetching, the job list shows placeholders, not "No jobs yet"', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realGetJobs = win.DB.getJobs;
+    win.DB.getJobs = async () => [];
+    win.localStorage.setItem('scope-home-tab', 'all');
+    try {
+      win.SyncState.setTestInput({ online: true, status: { state: 'syncing', lastSyncedAt: null }, pending: 0 });
+      win.showJobListView();
+      await waitFor(() => doc.querySelectorAll('#job-list .skeleton-card').length === 3, 'three placeholder cards');
+      assert(doc.getElementById('job-empty').classList.contains('hidden'), 'and no "No jobs yet"');
+      win.SyncState.setTestInput({ online: true, status: { state: 'synced', lastSyncedAt: Date.now() }, pending: 0 });
+      await waitFor(() => doc.querySelectorAll('#job-list .skeleton-card').length === 0, 'placeholders go when the sync ends');
+      assert(!doc.getElementById('job-empty').classList.contains('hidden'), 'and a truly empty list says so');
+    } finally {
+      win.DB.getJobs = realGetJobs;
+      win.SyncState.setTestInput(null);
+      win.showJobListView();
+    }
+  });
+
+  test('Sync state: Today shows placeholders on a first sync, and "nothing booked" once it is done', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.localStorage.setItem('scope-home-tab', 'today');
+    try {
+      win.showJobListView();
+      await wait(700);
+      win.SyncState.setTestInput({ online: true, status: { state: 'syncing', lastSyncedAt: null }, pending: 0 });
+      await win.TodayUI.render([]);
+      // A render started by the state change itself may be mid-flight; the latest call wins once it ends.
+      await waitFor(() => doc.querySelectorAll('#today-panel .skeleton-card').length >= 1, 'placeholders');
+      assert(!/Nothing is booked/.test(doc.getElementById('today-panel').textContent), 'not "nothing is booked" while it is still fetching');
+      win.SyncState.setTestInput({ online: true, status: { state: 'idle' }, pending: 0 });
+      await win.TodayUI.render([]);
+      await waitFor(() => /Nothing is booked/.test(doc.getElementById('today-panel').textContent), 'the real empty day, once the sync is not running');
+    } finally {
+      win.SyncState.setTestInput(null);
+      win.localStorage.setItem('scope-home-tab', 'all');
+      win.showJobListView();
+    }
+  });
+
+  test('Sync state: the gallery says how many photos have not left the phone, and marks them', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Gallery Upload Job' });
+    await win.DB.addCapture({ jobId: job.id, type: 'photo', zone: 'A', photoBlob: new Blob(['x']) });
+    const sent = await win.DB.addCapture({ jobId: job.id, type: 'photo', zone: 'B', photoBlob: new Blob(['y']) });
+    await win.DB.putCaptureRaw(Object.assign({}, sent, { photoPath: 'job/b.jpg' }));
+    try {
+      await win.showJobViewById(job.id);
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 2, 'two photos');
+      assert(/saved on this device$/.test(doc.getElementById('gallery-count').textContent), `signed out it says only what is true: ${doc.getElementById('gallery-count').textContent}`);
+      assertEqual(doc.querySelectorAll('.capture-tile-pending').length, 0, 'and marks nothing');
+      win.Sync = { currentUserId: () => 'user-1', getStatus: () => ({ state: 'idle' }), onStatusChange: () => {}, pushCapture: () => {}, pushJob: () => {}, deleteJobRemote: () => {}, deleteCaptureRemote: () => {}, pullAll: async () => ({ ok: true }) };
+      await win.showJobViewById(job.id);
+      await waitFor(() => /1 not uploaded yet/.test(doc.getElementById('gallery-count').textContent), 'signed in it counts what is waiting');
+      assertEqual(doc.querySelectorAll('.capture-tile-pending').length, 1, 'one tile carries the marker');
+      await win.DB.putCaptureRaw(Object.assign({}, await win.DB.getCaptures(job.id).then((l) => l.find((c) => c.zone === 'A')), { photoPath: 'job/a.jpg' }));
+      await win.showJobViewById(job.id);
+      await waitFor(() => /backed up$/.test(doc.getElementById('gallery-count').textContent), 'all uploaded says backed up');
+    } finally {
+      delete win.Sync;
+      win.showJobListView();
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
+  test('Sync state: pulling the list down starts a sync, a short pull does not, and signed out does nothing', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.localStorage.setItem('scope-home-tab', 'all');
+    win.showJobListView();
+    await wait(400);
+    const content = doc.querySelector('#view-joblist .content');
+    const touch = (type, y) => {
+      const t = new win.Touch({ identifier: 1, target: content, clientX: 50, clientY: y });
+      content.dispatchEvent(new win.TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [t], changedTouches: [t] }));
+    };
+    let pulls = 0;
+    win.Sync = { currentUserId: () => 'user-1', getStatus: () => ({ state: 'idle' }), onStatusChange: () => {}, pullAll: async () => { pulls++; return { ok: true }; } };
+    try {
+      content.scrollTop = 0;
+      touch('touchstart', 100); touch('touchmove', 140); touch('touchend', 140);
+      await wait(100);
+      assertEqual(pulls, 0, 'a short pull does nothing');
+      touch('touchstart', 100); touch('touchmove', 260); touch('touchend', 260);
+      await waitFor(() => pulls === 1, 'a long pull syncs');
+      delete win.Sync;
+      touch('touchstart', 100); touch('touchmove', 300); touch('touchend', 300);
+      await wait(150);
+      assertEqual(pulls, 1, 'signed out (nothing to sync) it does not pretend');
+      assertEqual(doc.getElementById('ptr-hint').textContent, '', 'and shows no hint');
+    } finally {
+      delete win.Sync;
+    }
+  });
+
+  test('Sync state: registered, and the old bar text is only a fallback', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.indexOf('sync-state.js') > idx.indexOf('today-ui.js') && idx.indexOf('sync-state.js') < idx.indexOf('src="app.js"'), 'loaded before app.js');
+    assert(sw.includes("'./sync-state.js'"), 'in the offline shell');
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(/window\.SyncState\.update\(\);\s*\n\s*if \(loggedInEmail\)/.test(app), 'the bar delegates to SyncState');
+  });
+
+
+  test('Contrast: the sync bar is readable in every state, in both themes', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const A = window.ContrastAudit;
+    const bar = doc.getElementById('sync-bar');
+    const wasHidden = bar.classList.contains('hidden');
+    bar.classList.remove('hidden');
+    const failures = [];
+    const states = [
+      { online: true, status: { state: 'synced', lastSyncedAt: Date.now() - 60000 }, pending: 0 },
+      { online: true, status: { state: 'synced', lastSyncedAt: Date.now() - 60000 }, pending: 3 },
+      { online: true, status: { state: 'syncing', lastSyncedAt: null }, pending: 2 },
+      { online: false, status: { state: 'idle' }, pending: 4 },
+      { online: true, status: { state: 'error', error: 'Your login has expired. Log out and back in.' }, pending: 0 },
+    ];
+    try {
+      win.showJobListView();
+      for (const theme of ['dark', 'light']) {
+        win.Theme.set(theme);
+        for (const s of states) {
+          win.SyncState.setTestInput(s);
+          await new Promise((r) => setTimeout(r, 120));
+          const r = A.audit(doc, { root: bar });
+          const d = A.audit(doc, { root: doc.getElementById('sync-detail') });
+          assert(r.checked > 3, 'the audit read the bar');
+          r.failures.concat(d.failures).forEach((f) => failures.push(`${theme}/${s.status.state}${s.online ? '' : '/offline'}: "${f.text}" ${f.ratio} < ${f.need} ${f.where}`));
+        }
+      }
+    } finally {
+      win.SyncState.setTestInput(null);
+      win.Theme.set('dark');
+      if (wasHidden) bar.classList.add('hidden');
+    }
+    assertEqual(failures.length, 0, `text that is hard to read:\n  ${failures.slice(0, 8).join('\n  ')}`);
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

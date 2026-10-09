@@ -214,6 +214,9 @@
 
     if (model.items.length) {
       model.items.forEach((item) => frag.appendChild(jobCard(item, model.next === item)));
+    } else if (window.SyncState && window.SyncState.isFirstSync() && !model.overdue.length) {
+      // The first sync is still fetching: the day is on its way, not empty.
+      frag.appendChild(window.SyncState.skeletonCards(2));
     } else {
       const empty = el('div', { class: 'today-empty card' }, [
         el('p', { text: 'Nothing is booked for today.' }),
@@ -293,6 +296,12 @@
       if (again) { again = false; const next = pendingJobs; pendingJobs = undefined; render(next); }
     }
   }
+
+  // A sync starting or finishing can change what belongs here (placeholders -> jobs).
+  document.addEventListener('scope-sync-state', () => {
+    const panel = document.getElementById('today-panel');
+    if (panel && panel.offsetParent !== null) render();
+  });
 
   // While the screen is open, keep "next up" and "past its time" current.
   setInterval(() => {

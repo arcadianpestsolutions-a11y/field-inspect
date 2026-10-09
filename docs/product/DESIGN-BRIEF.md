@@ -56,7 +56,7 @@ a consumer app. Reference point: cockpit instrument panel.
 | Pre-flight list | States exactly what blocks finalising, one line each, tap to jump |
 | Field types | text, choice cards, product table, signature pad, sketch, photo slots |
 | Gallery | Grid by zone; long-press multi-select; pinch-zoom/pan/swipe on detail |
-| Sync indicator | Plain sentence; "your work is safe on this device" when offline |
+| Sync indicator | A coloured dot (green backed up, pulsing green syncing, amber photos waiting, hollow offline, red problem) and one sentence that never says "backed up" while anything waits; photos only on the phone are counted; "Sync now" spins while working |
 
 ## 5. Content and tone
 * Say what happened, what was saved, what to do next. Example:
