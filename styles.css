@@ -3084,7 +3084,7 @@ body.tabbar-typing .fab { bottom: calc(18px + var(--safe-bottom)); }
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
 }
 .undo-bar.hidden { display: none; }
-body.has-tabbar .undo-bar { bottom: calc(70px + var(--safe-bottom)); }
+body.has-tabbar .undo-bar { bottom: calc(134px + var(--safe-bottom)); } /* above the + New Job button */
 body.tabbar-typing .undo-bar { bottom: calc(16px + var(--safe-bottom)); }
 .undo-text { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 0.92rem; }
 .undo-btn {
@@ -3101,3 +3101,5 @@ body.tabbar-typing .undo-bar { bottom: calc(16px + var(--safe-bottom)); }
 
 /* Money on the invoice screen wraps rather than stretching the page. */
 #view-invoice .invoice-totals span, #view-invoice [id^="invoice-"] { overflow-wrap: anywhere; }
+body.undo-open .toast { bottom: calc(196px + var(--safe-bottom)); }
+body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom)); }

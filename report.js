@@ -646,6 +646,9 @@
   // ---------- Public entry point ----------
   window.ReportUI = {
     async openReview(jobId, documentType) {
+      // No job, no report. A report built without an id could be opened and typed
+      // into, and then fail at Save with an error about a key path.
+      if (!jobId) { toast('That job is no longer here.'); return; }
       currentJobId = jobId;
       currentReport = await loadOrCreateReport(jobId, documentType);
       const job = await DB.getJob(jobId);

@@ -5,7 +5,7 @@
 //           jobs, in order, with where to be next and how long the drive is.
 //           This turns the job list into exactly that. Pure logic: no DOM, no
 //           database, injectable clock, so it is tested directly.
-// EXPOSES   window.Today = { build, timeLabel, durationLabel, startOfDay, addDays }
+// EXPOSES   window.Today = { build, dateLine, timeLabel, durationLabel, startOfDay, addDays }
 // DEPENDS   window.Availability.travelMinutesBetween (optional: without it the
 //           travel figures are simply left out, never guessed).
 // TESTS     tests/run-tests.js - "Today" group.
@@ -51,6 +51,19 @@
     const h = Math.floor(m / 60);
     const r = m % 60;
     return r ? `${h}h ${r}m` : `${h}h`;
+  }
+
+  // The one date a person means when they glance at a job: when it is booked for,
+  // or, when it is not booked yet, when it was added. The job screen and list used
+  // to print the day the record was created next to the address, which reads like
+  // the appointment and is not.
+  function dateLine(job) {
+    if (isBooked(job)) {
+      const day = new Date(job.scheduledAt).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+      return `Booked ${day}, ${timeLabel(job.scheduledAt)}`;
+    }
+    const added = new Date(job.createdAt || Date.now()).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `Added ${added}`;
   }
 
   function travelBetween(a, b, config) {
@@ -148,5 +161,5 @@
     };
   }
 
-  window.Today = { build, timeLabel, durationLabel, startOfDay, addDays, LATE_AFTER_MINS, OVERDUE_DAYS };
+  window.Today = { build, dateLine, timeLabel, durationLabel, startOfDay, addDays, LATE_AFTER_MINS, OVERDUE_DAYS };
 })();

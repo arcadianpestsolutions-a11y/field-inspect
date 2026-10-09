@@ -277,6 +277,16 @@
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  // "Booked Tue, 13 Oct, 8am" or "Added 9 Oct 2026". Never just the creation date on
+  // its own, which looks like the appointment (see Today.dateLine).
+  // Guarded on the function itself, not just the module: a stale cached today.js
+  // paired with this app.js has Today but not dateLine, and the whole list must
+  // still draw.
+  const whenLine = (job) => (window.Today && typeof window.Today.dateLine === 'function'
+    ? window.Today.dateLine(job)
+    : fmtDate(job.createdAt));
+  const addressAndWhen = (job) => (job.address ? `${job.address} · ${whenLine(job)}` : whenLine(job));
+
   function fmtTimer(ms) {
     const s = Math.floor(ms / 1000);
     const m = Math.floor(s / 60);
@@ -476,7 +486,7 @@
     const job = await DB.getJob(jobId);
     if (!job) { showJobListView(); return; }
     jobTitleEl.textContent = job.name;
-    jobSubtitleEl.textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
+    jobSubtitleEl.textContent = addressAndWhen(job);
     await renderAssignedToButton(job);
     renderJobPermissions(job);
     renderCommsRow(job);
@@ -486,7 +496,7 @@
         canEdit: canEditJob(job),
         onSaved: (saved) => {
           jobTitleEl.textContent = saved.name;
-          jobSubtitleEl.textContent = saved.address ? `${saved.address} · ${fmtDate(saved.createdAt)}` : fmtDate(saved.createdAt);
+          jobSubtitleEl.textContent = addressAndWhen(saved);
           renderCommsRow(saved);
           toast('Details saved');
         },
@@ -661,8 +671,10 @@
   }
 
   assignedToBtn.addEventListener('click', async () => {
-    if (!currentJobId) return;
-    const job = await DB.getJob(currentJobId);
+    // The job this tap was for; the question below can outlast the screen.
+    const jobId = currentJobId;
+    if (!jobId) return;
+    const job = await DB.getJob(jobId);
     if (!job) return;
     const allJobs = await DB.getJobs();
     const technicians = Array.from(new Set(allJobs.map((j) => j.assignedTo).filter(Boolean))).sort();
@@ -681,9 +693,9 @@
     const email = (Number.isInteger(index) && index >= 1 && index <= technicians.length)
       ? technicians[index - 1]
       : answer;
-    await DB.updateJob(currentJobId, { assignedTo: email });
+    await DB.updateJob(jobId, { assignedTo: email });
     toast(`Assigned to ${window.technicianDisplayName ? window.technicianDisplayName(email) : email}`);
-    await renderAssignedToButton(await DB.getJob(currentJobId));
+    if (currentJobId === jobId) await renderAssignedToButton(await DB.getJob(jobId));
   });
 
   // Shows the rebooking prompt on a completed job once its property is due
@@ -768,15 +780,19 @@
 
   if (planBtn) {
     planBtn.addEventListener('click', async () => {
-      if (!currentJobId) return;
-      const job = await DB.getJob(currentJobId);
+      // The job this tap was for. The questions below can sit open for a while, and
+      // the person may leave the job meanwhile; every write uses this id, and the
+      // screen is only redrawn if they are still on that job.
+      const jobId = currentJobId;
+      if (!jobId) return;
+      const job = await DB.getJob(jobId);
       if (!job) return;
 
       if (job.recurrenceMonths) {
         if (!await askConfirm(
           'This property will stop coming back on its own. Visits already raised stay where they are.',
           { title: 'Stop the recurring plan?', okLabel: 'Stop plan', danger: true })) return;
-        await DB.updateJob(currentJobId, { recurrenceMonths: null });
+        await DB.updateJob(jobId, { recurrenceMonths: null });
         toast('Plan stopped');
       } else {
         const answer = await askPrompt(
@@ -791,14 +807,14 @@
           ? picked
           : (picked >= 1 && picked <= PLAN_INTERVALS.length ? PLAN_INTERVALS[picked - 1] : null);
         if (!months) { toast('Enter 3, 6 or 12 months.'); return; }
-        await DB.updateJob(currentJobId, { recurrenceMonths: months });
+        await DB.updateJob(jobId, { recurrenceMonths: months });
         toast(`Every ${months} months from now on`);
         // A job already finished gets its next visit straight away; one still
         // in progress raises it when it completes.
-        const updated = await DB.getJob(currentJobId);
-        if (updated.status === 'completed') await DB.ensureNextOccurrence(updated);
+        const updated = await DB.getJob(jobId);
+        if (updated && updated.status === 'completed') await DB.ensureNextOccurrence(updated);
       }
-      await showJobView(currentJobId);
+      if (currentJobId === jobId) await showJobView(jobId);
     });
   }
 
@@ -1017,7 +1033,11 @@
       li.querySelector('.job-item-name').textContent = job.name || job.address || 'Unnamed job';
       li.querySelector('.status-badge').textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
       li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment' : '🐜 Termite';
-      li.querySelector('.job-item-date').textContent = job.address ? `${job.address} · ${fmtDate(job.createdAt)}` : fmtDate(job.createdAt);
+      // A booked job already says when, in the badge on the right, so only the
+      // address goes here. An unbooked one says when it was added, which is the
+      // only date it has.
+      const booked = typeof job.scheduledAt === 'number' && job.scheduledAt > 0;
+      li.querySelector('.job-item-date').textContent = booked ? (job.address || '') : addressAndWhen(job);
 
       if (showTechnicianTags) {
         const tag = document.createElement('span');

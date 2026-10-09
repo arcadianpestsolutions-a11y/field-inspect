@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 461 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 469 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -51,6 +51,11 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 21 | Start Inspection could act on the **wrong job**, or none: the camera permission prompt can take seconds, and after Back (or opening another job) the code read the job from "whichever is open now" | Remembers the job the tap was for; if the person has left it, lets the camera go and does nothing |
 | 22 | Deleting a job (or photos) was instant and final, here and in the cloud, with no in-app restore | A ten-second **Undo**: the item vanishes from every screen at once but nothing is deleted until the time is up, so closing the app mid-window loses nothing (`undo-delete.js`) |
 | 23 | Absurd invoice amounts (quantity 1e300 x price 1e300) made totals thousands of pixels wide and stretched the screen sideways | Quantity capped at 100,000 and unit price at $1,000,000, in the input and again in the arithmetic; money text wraps |
+| 24 | Job screen and list printed the day the record was **created** next to the address, which reads like the appointment | "Booked Sun, 11 Oct, 8am" when booked, "Added 9 Oct 2026" when not (`Today.dateLine`); the list shows just the address for a booked job because its badge already says when |
+| 25 | The browser/status-bar colour was navy; the app is near-black green | `theme-color` and the manifest colours now match the app background (a test keeps them equal) |
+| 26 | Plan and Reassign wrote to "whichever job is open when the question closes"; leaving the job meanwhile threw errors or pulled you back into it | Each remembers the job the tap was for; the screen is redrawn only if you are still on it |
+| 27 | Asking the database for a job, report or update with no id threw an IndexedDB error | Answers "nothing"; opening or saving a report with no job id is refused in plain words |
+| 28 | The Undo bar sat on top of Finalize, Save and "+ New enquiry" for its ten seconds | It only shows on the job list and the job, steps aside on other screens (the delete keeps waiting), and sits above the "+ New Job" button |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
 

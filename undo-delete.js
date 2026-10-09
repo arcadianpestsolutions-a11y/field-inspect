@@ -27,6 +27,27 @@
   const hidden = { job: new Set(), capture: new Set() };
   let current = null; // { kind, ids, commit, refresh, timer }
   let bar = null;
+  let barWanted = false;
+  // Where the bar may show. Elsewhere it would sit on top of a screen's own bottom
+  // buttons (Finalize, Save, + New enquiry) for ten seconds, so it waits out of
+  // sight and comes back if you return to one of these.
+  const BAR_VIEWS = ['view-job', 'view-joblist'];
+  const onBarView = () => {
+    const shown = Array.from(document.querySelectorAll('.view')).filter((v) => !v.classList.contains('hidden'));
+    return shown.length === 1 && BAR_VIEWS.includes(shown[0].id);
+  };
+  function applyBar() {
+    const visible = barWanted && onBarView();
+    if (bar) bar.classList.toggle('hidden', !visible);
+    if (document.body) document.body.classList.toggle('undo-open', visible); // lets toasts clear it
+  }
+  let watching = false;
+  function watchViews() {
+    if (watching) return;
+    watching = true;
+    const obs = new MutationObserver(applyBar);
+    document.querySelectorAll('.view').forEach((v) => obs.observe(v, { attributes: true, attributeFilter: ['class'] }));
+  }
 
   // Real use gets ten seconds: long enough for gloves. The test build commits at
   // once so the existing delete tests, which look for the end result, still pass;
@@ -67,11 +88,15 @@
     bar.querySelector('#undo-text').textContent = message;
     const btn = bar.querySelector('#undo-btn');
     btn.onclick = onUndo;
-    bar.classList.remove('hidden');
+    barWanted = true;
+    watchViews();
+    applyBar();
   }
 
   function hideBar() {
+    barWanted = false;
     if (bar) bar.classList.add('hidden');
+    if (document.body) document.body.classList.remove('undo-open');
   }
 
   function release(entry) {

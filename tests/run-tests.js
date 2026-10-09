@@ -9885,6 +9885,142 @@
   });
 
 
+  // ---------- Which date a job shows, and the status-bar colour ----------
+
+  test('Job dates: a booked job says when it is booked, an unbooked one says when it was added', () => {
+    const T = frame.contentWindow.Today;
+    const booked = T.dateLine({ scheduledAt: new Date(2031, 2, 14, 8, 0).getTime(), createdAt: new Date(2030, 0, 2).getTime() });
+    assert(/^Booked /.test(booked) && /14/.test(booked) && /Mar/.test(booked) && /8am$/.test(booked), `a booked job: ${booked}`);
+    assert(!/2030|Jan/.test(booked), 'and it does not mention the day the record was created');
+    const added = T.dateLine({ createdAt: new Date(2031, 2, 14, 9, 30).getTime() });
+    assertEqual(added, 'Added 14 Mar 2031', 'an unbooked job');
+    assertEqual(T.dateLine({ scheduledAt: 0, createdAt: new Date(2031, 2, 14).getTime() }), 'Added 14 Mar 2031', 'a zero time means not booked');
+  });
+
+  test('Job dates: the list shows the address only for a booked job, and "Added" for an unbooked one', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const d = new Date(); d.setDate(d.getDate() + 3); d.setHours(10, 0, 0, 0);
+    const booked = await win.DB.addJob({ name: 'Dated Booked Job', address: '7 Booked Rd', scheduledAt: d.getTime() });
+    const unbooked = await win.DB.addJob({ name: 'Dated Unbooked Job', address: '8 Unbooked Rd' });
+    win.localStorage.setItem('scope-home-tab', 'all');
+    win.showJobListView();
+    await waitFor(() => Array.from(doc.querySelectorAll('.job-item-name')).some((e) => e.textContent === 'Dated Unbooked Job'), 'both jobs are listed');
+    const metaOf = (name) => Array.from(doc.querySelectorAll('.job-item')).find((li) => li.querySelector('.job-item-name').textContent === name).querySelector('.job-item-date').textContent;
+    assertEqual(metaOf('Dated Booked Job'), '7 Booked Rd', 'booked: just the address, the badge carries the time');
+    assert(/^8 Unbooked Rd · Added \d+ \w{3} \d{4}$/.test(metaOf('Dated Unbooked Job')), `unbooked: ${metaOf('Dated Unbooked Job')}`);
+    await win.showJobViewById(booked.id);
+    await wait(300);
+    assert(/^7 Booked Rd · Booked /.test(doc.getElementById('job-subtitle').textContent), `the job screen says booked: ${doc.getElementById('job-subtitle').textContent}`);
+    win.showJobListView();
+    await win.DB.deleteJob(booked.id);
+    await win.DB.deleteJob(unbooked.id);
+  });
+
+  test('Status bar: the browser colour matches the app background', async () => {
+    const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
+    const bg = (css.match(/--bg:\s*(#[0-9a-fA-F]{6})/) || [])[1];
+    assert(bg, 'the app background colour is defined');
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const meta = (idx.match(/<meta name="theme-color" content="(#[0-9a-fA-F]{6})"/) || [])[1];
+    const manifest = await (await fetch('../manifest.json', { cache: 'reload' })).json();
+    assertEqual(meta.toLowerCase(), bg.toLowerCase(), 'the theme-color meta tag');
+    assertEqual(String(manifest.theme_color).toLowerCase(), bg.toLowerCase(), 'the installed-app theme colour');
+    assertEqual(String(manifest.background_color).toLowerCase(), bg.toLowerCase(), 'and its launch background');
+  });
+
+
+  test('Job dates: an out-of-date cached today.js cannot stop the job list drawing', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Mixed Build Job', address: '9 Mixed Rd' });
+    const real = win.Today.dateLine;
+    delete win.Today.dateLine; // what a stale cached file looks like: the module, without the new function
+    try {
+      win.localStorage.setItem('scope-home-tab', 'all');
+      win.showJobListView();
+      await waitFor(() => Array.from(doc.querySelectorAll('.job-item-name')).some((e) => e.textContent === 'Mixed Build Job'), 'the list still draws');
+    } finally {
+      win.Today.dateLine = real;
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
+
+  // ---------- Found by random testing: lost job ids, and the Undo bar's place ----------
+
+  test('DB: asking for a job, report or update with no id answers "nothing", it does not throw', async () => {
+    const DBx = frame.contentWindow.DB;
+    for (const bad of [undefined, null, '']) {
+      assertEqual(await DBx.getJob(bad), undefined, `getJob(${String(bad)})`);
+      assertEqual(await DBx.getReport(bad), undefined, `getReport(${String(bad)})`);
+      assertEqual(await DBx.updateJob(bad, { name: 'x' }), null, `updateJob(${String(bad)})`);
+    }
+  });
+
+  test('Plan and reassign: leaving the job while the question is open writes to the right job and does not drag you back', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Left During Plan Question', jobType: 'termite' });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('plan-btn') && doc.getElementById('plan-btn').offsetParent !== null, 'the plan button is showing');
+    const realPrompt = win.prompt;
+    const errors = [];
+    const onError = (e) => errors.push(e.message || String(e.reason));
+    win.addEventListener('error', onError);
+    win.addEventListener('unhandledrejection', onError);
+    win.prompt = () => { win.showJobListView(); return '12'; }; // they pressed Back while it was open
+    try {
+      doc.getElementById('plan-btn').click();
+      await waitFor(async () => (await win.DB.getJob(job.id)).recurrenceMonths === 12, 'the plan went onto the job the tap was for');
+      await wait(300);
+      assert(!doc.getElementById('view-joblist').classList.contains('hidden'), 'they are still on the list, not pulled back into the job');
+      assertEqual(errors.length, 0, `nothing blew up: ${errors.join(' | ')}`);
+    } finally {
+      win.prompt = realPrompt;
+      win.removeEventListener('error', onError);
+      win.removeEventListener('unhandledrejection', onError);
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
+  test('Undo bar: shown on the job list and the job, kept out of the way on other screens, and back when you return', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await withUndoDelay(win, 60000, async () => {
+      const job = await win.DB.addJob({ name: 'Bar Place Job' });
+      win.showJobListView();
+      await wait(200);
+      await win.UndoDelete.start({ kind: 'job', ids: [job.id], message: 'Bar Place Job deleted', commit: () => win.DB.deleteJob(job.id), refresh: async () => {} });
+      await waitFor(() => !doc.getElementById('undo-bar').classList.contains('hidden'), 'visible on the list');
+      doc.getElementById('open-scheduler-btn').click();
+      await waitFor(() => !doc.getElementById('view-scheduler').classList.contains('hidden'), 'the diary opens');
+      await waitFor(() => doc.getElementById('undo-bar').classList.contains('hidden'), 'the bar steps aside on the diary');
+      assertEqual(win.UndoDelete.pending().ids[0], job.id, 'but the delete is still waiting, and can still be undone');
+      win.showJobListView();
+      await waitFor(() => !doc.getElementById('undo-bar').classList.contains('hidden'), 'and it is back on the list');
+      await win.UndoDelete.undo();
+      await win.DB.deleteJob(job.id);
+    });
+  });
+
+
+  test('Report: asking to open a report for no job says so, and a report without a job id is refused', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(200);
+    for (const bad of [undefined, null, '']) {
+      await win.ReportUI.openReview(bad);
+      assert(doc.getElementById('view-report').classList.contains('hidden'), `no report screen for ${String(bad)}`);
+      assert(/no longer here/i.test(doc.getElementById('toast').textContent), 'it says why');
+      let err = null;
+      try { await win.DB.saveReport({ jobId: bad, sections: {} }); } catch (e) { err = e; }
+      assert(err && /job id/i.test(err.message), `saving a report against ${String(bad)} is refused in plain words`);
+    }
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

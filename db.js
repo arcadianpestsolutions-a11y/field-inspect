@@ -485,12 +485,14 @@ const DB = {
   },
 
   async getJob(id) {
+    if (!hasKey(id)) return undefined; // an undefined key makes IndexedDB throw; there is simply no such job
     const store = await tx('jobs', 'readonly');
     const job = await reqToPromise(store.get(id));
     return pendingDelete('job', id) ? undefined : job;
   },
 
   async updateJob(id, changes) {
+    if (!hasKey(id)) return null;
     const store = await tx('jobs', 'readwrite');
     const existing = await reqToPromise(store.get(id));
     if (!existing) return null;
@@ -625,6 +627,7 @@ const DB = {
 
   // ---------- Reports ----------
   async getReport(jobId) {
+    if (!hasKey(jobId)) return undefined;
     const store = await tx('reports', 'readonly');
     return reqToPromise(store.get(jobId));
   },
@@ -655,6 +658,7 @@ const DB = {
   },
 
   async saveReport(report) {
+    if (!hasKey(report && report.jobId)) throw new Error('A report needs a job id to be saved against.');
     await this.assertJobAlive(report && report.jobId);
     const store = await tx('reports', 'readwrite');
     const toSave = { ...report, updatedAt: Date.now() };
