@@ -164,7 +164,7 @@
   // Call and Text hand the phone number to the phone's own apps by assigning
   // location.href = 'tel:' / 'sms:', which cannot be intercepted from here and
   // which takes the page with it on anything that is not a phone.
-  const FORBIDDEN_ID = new Set(['logout-btn', 'report-export-btn', 'export-data-btn', 'lead-call-btn', 'lead-text-btn']);
+  const FORBIDDEN_ID = new Set(['logout-btn', 'report-export-btn', 'export-data-btn', 'restore-btn', 'lead-call-btn', 'lead-text-btn']);
   const FORBIDDEN_TEXT = /reset demo|log ?out|sign ?out|export/i;
 
   const SELECTOR = [

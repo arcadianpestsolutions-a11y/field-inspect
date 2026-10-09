@@ -106,7 +106,7 @@ Priority: **M** must, **S** should, **C** could.
 | P3 | Roles: admin, technician | M | Built |
 | P4 | JSON export from the Archive screen; reminder when the last backup is over 7 days old | M | Built |
 | P5 | Full-project backup (database + photos) | M | Script and runbook built; the owner must run it |
-| P6 | In-app restore | S | **Not built** |
+| P6 | In-app restore from the Export file (adds and updates, never deletes; deliberate deletes stay deleted) | S | Built (v116) |
 | P7 | Signup/invite of further users or businesses | S | **Not built** |
 | P8 | 2FA | C | **Not built** |
 | P9 | Error log, uploaded to `client_errors`, readable copy for support | S | Built |

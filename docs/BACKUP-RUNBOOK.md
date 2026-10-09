@@ -146,6 +146,17 @@ What it does by itself:
 
 ## Getting it back
 
+### The quick way: the Export file, inside the app
+For the file made by **Export All Data** (jobs, reports, invoices, clients, enquiries,
+safety statements; not photos): More > Saved reports > **Restore from a backup file**.
+The app shows what it will add or update before it changes anything, never deletes,
+never replaces a newer copy, and leaves anything you deleted on purpose deleted. When
+you are signed in, the next sync sends restored records back to the cloud. This is the
+right tool for a lost or reset phone, or records that went missing. It does not bring
+back photos; for those, and for a whole-project recovery, use the steps below.
+
+### The whole project: database and photos
+
 **Do not wait until there is an emergency to find out whether this works.** A backup
 nobody has restored is a hope, not a backup. Have a professional do a practice restore
 into a spare free Supabase project once, and keep the notes.

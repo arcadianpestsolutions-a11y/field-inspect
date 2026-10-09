@@ -138,3 +138,11 @@ Signed in, the home screen shows one status line: a dot and a sentence.
 | Hollow | Offline. 3 photos saved on this phone and will upload when you are back online |
 | Red | Could not sync. Your work is safe on this phone and it will try again (with the reason underneath) |
 **Sync now** spins and is disabled while a sync runs. **Pull the home list down** (at the top) to sync; it does nothing when signed out or offline. In a job, the photo count line says "saved on this device . N not uploaded yet" (or "and backed up"), and each photo not yet uploaded carries an amber up-arrow marker. While the very first sync is still fetching and nothing is on the phone yet, the job list and Today show grey placeholder cards instead of "No jobs yet" or "Nothing is booked".
+
+## 13. Restore from a backup file (v116)
+More > Saved reports > **Restore from a backup file**, under Export All Data (shown to whoever can export). Choose the `.json` file Export made. The app reads it and shows what it would do before changing anything, for example "It will add 3 jobs that are not on this phone." Then **Restore** or **Cancel**.
+- It adds records missing from the phone and updates any that are older here than in the file. It never deletes and never replaces a newer copy.
+- Anything deleted on purpose after the backup was made stays deleted.
+- Records keep their original timestamps; when signed in, a sync then sends the restored ones to the cloud.
+- Photos are not in the file and are not touched. Running it twice changes nothing the second time.
+- A file that is not a Scope backup, or is from a newer version of the app, is refused before anything is written.

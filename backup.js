@@ -19,8 +19,8 @@
 // choosing, that is NOT a backup and is not recorded as one.
 //
 // WHAT IS IN IT. Jobs, reports, invoices, clients, enquiries and safety
-// statements. NOT photographs. And there is, today, no way to restore from the
-// file inside the app; it is a copy a person can be handed back, not a button.
+// statements. NOT photographs. restore.js reads the file back (Archive screen,
+// "Restore from a backup file"): it adds and updates, never deletes.
 (() => {
   'use strict';
 

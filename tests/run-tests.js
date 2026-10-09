@@ -10539,6 +10539,162 @@
   });
 
 
+  // ---------- Restore from a backup file (restore.js) ----------
+
+  test('Restore: only a real Scope backup is accepted, and a newer format is refused', () => {
+    const R = frame.contentWindow.Restore;
+    assert(!R.parse('').ok, 'empty');
+    assert(/not a Scope backup/.test(R.parse('not json at all').reason), 'garbage says so');
+    assert(!R.parse('[1,2,3]').ok, 'a list is not a backup');
+    assert(!R.parse('{"hello":"there"}').ok, 'an object with no jobs is not a backup');
+    assert(/newer version/.test(R.parse('{"format":3,"jobs":[]}').reason), 'a future format is refused, not guessed at');
+    assertEqual(R.parse('{"jobs":[]}').data.format, 1, 'an old file with no format is format 1');
+    assert(R.parse('{"format":2,"jobs":[],"clients":[]}').ok, 'today\'s format is fine');
+  });
+
+  test('Restore: the plan adds what is missing, takes the newer copy, and leaves deliberate deletes deleted', () => {
+    const R = frame.contentWindow.Restore;
+    const local = {
+      jobs: [{ id: 'j-here', name: 'Here', updatedAt: 100 }, { id: 'j-newer-here', name: 'Mine', updatedAt: 900 }],
+      reports: [], invoices: [], clients: [], leads: [], swms: [],
+      deleted: new Set(['jobs:j-deleted', 'leads:l-deleted']),
+    };
+    const data = {
+      jobs: [
+        { id: 'j-here', name: 'Here', updatedAt: 100 },              // same
+        { id: 'j-newer-here', name: 'Old copy', updatedAt: 500 },    // older than mine
+        { id: 'j-lost', name: 'Lost', updatedAt: 300 },              // missing here
+        { id: 'j-older-here', name: 'x', updatedAt: 1 },             // missing here too
+        { id: 'j-deleted', name: 'Deleted on purpose', updatedAt: 999 },
+        { name: 'No id' },                                            // damaged
+      ],
+      reports: [
+        { jobId: 'j-lost', sections: {}, updatedAt: 1 },             // its job is being added
+        { jobId: 'j-deleted', sections: {}, updatedAt: 1 },          // its job was deleted
+        { jobId: 'j-nowhere', sections: {}, updatedAt: 1 },          // no such job
+      ],
+      invoices: [{ id: 'inv-1', jobId: 'j-here', updatedAt: 2 }],
+      leads: [{ id: 'l-deleted', updatedAt: 5 }, { id: 'l-new', updatedAt: 5 }],
+    };
+    const p = R.plan(data, local);
+    assertEqual(p.kinds.jobs.add, 2, 'two lost jobs come back');
+    assertEqual(p.kinds.jobs.same, 2, 'the same copy and the older copy are left as they are');
+    assertEqual(p.kinds.jobs.update, 0, 'nothing here is replaced by an older copy');
+    assertEqual(p.kinds.jobs.deleted, 1, 'the deliberately deleted job stays deleted');
+    assertEqual(p.kinds.jobs.invalid, 1, 'the damaged entry is skipped');
+    assertEqual(p.kinds.reports.add, 1, 'a report whose job is coming back comes back too');
+    assertEqual(p.kinds.reports.orphan, 2, 'reports for deleted or missing jobs are left out');
+    assertEqual(p.kinds.invoices.add, 1, 'an invoice for a job on the phone is added');
+    assertEqual(p.kinds.leads.deleted, 1, 'a deleted enquiry stays deleted');
+    assertEqual(p.kinds.leads.add, 1, 'a lost enquiry comes back');
+    const writtenJobs = p.writes.filter((w) => w.kind === 'jobs').map((w) => w.record.id).sort();
+    assertEqual(writtenJobs.join(','), 'j-lost,j-older-here', 'exactly those two jobs are written');
+    const newer = R.plan({ jobs: [{ id: 'j-here', name: 'Edited later', updatedAt: 200 }] }, local);
+    assertEqual(newer.kinds.jobs.update, 1, 'a backup copy newer than the phone does update it');
+  });
+
+  test('Restore: the summary says what will happen in plain words, and that nothing is deleted', () => {
+    const R = frame.contentWindow.Restore;
+    const local = { jobs: [], reports: [], invoices: [], clients: [], leads: [], swms: [], deleted: new Set(['jobs:gone']) };
+    const p = R.plan({ jobs: [{ id: 'a', updatedAt: 1 }, { id: 'b', updatedAt: 1 }, { id: 'gone', updatedAt: 1 }], clients: [{ id: 'c', updatedAt: 1 }] }, local);
+    const text = R.describe(p, { exportedAt: '2031-03-14T01:00:00.000Z', appVersion: 'v105' }).join(' ');
+    assert(/This backup is from 14 March 2031 \(Scope v105\)/.test(text), `says when: ${text}`);
+    assert(/add 1 client and 2 jobs/.test(text), `says what is added: ${text}`);
+    assert(/1 item was deleted after this backup was made and will stay deleted/.test(text), 'says what stays deleted');
+    assert(/Nothing on this phone will be deleted/.test(text), 'and promises nothing is deleted');
+    assert(/Photos are not in backup files/.test(text), 'and is honest about photos');
+    const none = R.describe(R.plan({ jobs: [] }, local), {}).join(' ');
+    assert(/Nothing would change/.test(none), 'an empty or already-present backup says nothing would change');
+  });
+
+  test('Restore: a real round trip brings lost records back exactly, keeps newer edits, and keeps deletes', async () => {
+    const win = frame.contentWindow;
+    const realConfirm = win.confirm;
+    win.confirm = () => true;
+    const lost = await win.DB.addJob({ name: 'Restore Lost Job', address: '1 Lost Rd' });
+    await win.DB.saveReport({ jobId: lost.id, sections: { a: { note: 'kept' } } });
+    const edited = await win.DB.addJob({ name: 'Restore Edited Job' });
+    const doomed = await win.DB.addJob({ name: 'Restore Deleted Job' });
+    const lead = await win.DB.addLead({ name: 'Restore Lost Lead' });
+    try {
+      const backup = await win.DB.exportAllData();
+      const lostBefore = await win.DB.getJob(lost.id);
+      // What a wiped or broken phone looks like: records gone with no tombstone.
+      await win.DB.deleteJobLocalOnly(lost.id);
+      const store = await new Promise((res) => { const r = win.indexedDB.open('field-inspect-db-test'); r.onsuccess = () => res(r.result); });
+      await new Promise((res) => { const t = store.transaction('leads', 'readwrite'); t.objectStore('leads').delete(lead.id); t.oncomplete = res; });
+      store.close();
+      // Work done after the backup: an edit, and a deliberate delete.
+      await new Promise((r) => setTimeout(r, 5));
+      await win.DB.updateJob(edited.id, { name: 'Restore Edited Job (newer)' });
+      await win.DB.deleteJob(doomed.id);
+
+      const file = new win.File([JSON.stringify(backup)], 'backup.json', { type: 'application/json' });
+      const result = await win.Restore.restoreFile(file);
+      assert(result.ok && result.written >= 3, `it restored: ${JSON.stringify(result.plan && result.plan.totals)}`);
+      const back = await win.DB.getJob(lost.id);
+      assertEqual(back.name, 'Restore Lost Job', 'the lost job is back');
+      assertEqual(back.updatedAt, lostBefore.updatedAt, 'with its own timestamp, so it cannot look newer than the cloud');
+      assertEqual(((await win.DB.getReport(lost.id)).sections.a || {}).note, 'kept', 'and its report');
+      assert(await win.DB.getLead(lead.id), 'the lost enquiry is back');
+      assertEqual((await win.DB.getJob(edited.id)).name, 'Restore Edited Job (newer)', 'the newer edit on the phone is kept');
+      assertEqual(await win.DB.getJob(doomed.id), undefined, 'the job deleted on purpose stays deleted');
+      const again = await win.Restore.restoreFile(new win.File([JSON.stringify(backup)], 'backup.json'));
+      assertEqual(again.written, 0, 'running it twice changes nothing the second time');
+    } finally {
+      win.confirm = realConfirm;
+      for (const id of [lost.id, edited.id]) { if (await win.DB.getJob(id)) await win.DB.deleteJob(id); }
+      if (await win.DB.getLead(lead.id)) await win.DB.deleteLead(lead.id);
+    }
+  });
+
+  test('Restore: saying no to the question changes nothing', async () => {
+    const win = frame.contentWindow;
+    const realConfirm = win.confirm;
+    win.confirm = () => false;
+    try {
+      const data = { format: 2, exportedAt: new Date().toISOString(), jobs: [{ id: 'restore-declined', name: 'Declined', createdAt: 1, updatedAt: 1, status: 'new' }] };
+      const r = await win.Restore.restoreFile(new win.File([JSON.stringify(data)], 'b.json'));
+      assert(r.cancelled, 'it was cancelled');
+      assertEqual(await win.DB.getJob('restore-declined'), undefined, 'and nothing was written');
+      assert(/Nothing was changed/.test(frame.contentDocument.getElementById('toast').textContent), 'it says so');
+    } finally {
+      win.confirm = realConfirm;
+    }
+  });
+
+  test('Restore: a bad file is refused before anything is touched', async () => {
+    const win = frame.contentWindow;
+    const before = (await win.DB.getJobs()).length;
+    const r = await win.Restore.restoreFile(new win.File(['{"some":"thing else"}'], 'x.json'));
+    assert(!r.ok && /not a Scope backup/.test(r.reason), 'refused with a reason');
+    assertEqual((await win.DB.getJobs()).length, before, 'nothing changed');
+  });
+
+  test('Restore: the button sits beside Export on the Archive screen, and hides with it', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const btn = doc.getElementById('restore-btn');
+    const input = doc.getElementById('restore-file');
+    assert(btn && input, 'the button and its file picker exist');
+    assertEqual(input.accept, '.json,application/json', 'the picker asks for the backup file type');
+    assert(btn.compareDocumentPosition(doc.getElementById('export-data-btn')) & win.Node.DOCUMENT_POSITION_PRECEDING, 'it comes after Export');
+    doc.getElementById('export-data-btn').classList.add('hidden');
+    await wait(50);
+    assert(btn.classList.contains('hidden'), 'hidden for whoever cannot export');
+    doc.getElementById('export-data-btn').classList.remove('hidden');
+    await wait(50);
+    assert(!btn.classList.contains('hidden'), 'and shown again');
+  });
+
+  test('Restore: registered in the page and the offline shell', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.indexOf('restore.js') > idx.indexOf('backup.js') && idx.indexOf('restore.js') < idx.indexOf('src="app.js"'), 'after backup.js, before app.js');
+    assert(sw.includes("'./restore.js'"), 'in the offline shell');
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler
