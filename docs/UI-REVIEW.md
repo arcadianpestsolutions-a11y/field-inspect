@@ -47,8 +47,7 @@ and 390 px wide) in an emulated browser, plus a 2,400-step random-tapping run.
    screen is a mirror in the sun. In practice many phones are *easier* to read in
    direct sunlight with a light, high-contrast theme, and dark helps battery. Only a
    real phone, outdoors, can settle it; offering both is the safe answer.
-7. **No undo.** Deleting a job asks first, but there is no "Undo" afterwards (Gmail,
-   Things). Combined with no in-app restore, a wrong "yes" is permanent.
+7. ~~**No undo.**~~ **Built in v111**: deleting a job or photos shows "... deleted  Undo" for ten seconds; nothing is really deleted until it closes.
 8. **Sync state is a small text line with a "Sync now" link** (shown when signed in;
    not visible in the demo, so not judged here). There is no progress indicator,
    pull-to-refresh, or skeleton/loading state, so on weak signal the app may look

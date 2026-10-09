@@ -58,6 +58,12 @@ const DB_VERSION = 9;
 // A missing id must mean "no job", never "all of them".
 const hasKey = (k) => k !== undefined && k !== null && k !== '';
 
+// Something the technician has just deleted but can still undo (see undo-delete.js).
+// It is hidden from the three reads below, which every screen goes through, so the
+// job or photo is gone everywhere at once; nothing is actually deleted until the
+// undo window closes, so closing the app mid-window loses nothing.
+const pendingDelete = (kind, id) => !!(window.UndoDelete && window.UndoDelete.hides(kind, id));
+
 let dbPromise = null;
 
 function openDB() {
@@ -435,7 +441,7 @@ const DB = {
 
   async getJobs() {
     const store = await tx('jobs', 'readonly');
-    const jobs = await reqToPromise(store.getAll());
+    const jobs = (await reqToPromise(store.getAll())).filter((j) => !pendingDelete('job', j.id));
     return jobs.sort((a, b) => b.createdAt - a.createdAt);
   },
 
@@ -480,7 +486,8 @@ const DB = {
 
   async getJob(id) {
     const store = await tx('jobs', 'readonly');
-    return reqToPromise(store.get(id));
+    const job = await reqToPromise(store.get(id));
+    return pendingDelete('job', id) ? undefined : job;
   },
 
   async updateJob(id, changes) {
@@ -607,7 +614,7 @@ const DB = {
     if (!hasKey(jobId)) return []; // see hasKey: undefined would return every photo
     const store = await tx('captures', 'readonly');
     const idx = store.index('jobId');
-    const all = await reqToPromise(idx.getAll(jobId));
+    const all = (await reqToPromise(idx.getAll(jobId))).filter((c) => !pendingDelete('capture', c.id));
     return all.sort((a, b) => a.createdAt - b.createdAt);
   },
 

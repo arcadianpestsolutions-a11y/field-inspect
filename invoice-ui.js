@@ -104,11 +104,12 @@
       const qty = document.createElement('input');
       qty.type = 'number';
       qty.min = '0';
+      qty.max = String(I.MAX_QUANTITY);
       qty.step = '0.01';
       qty.value = line.quantity;
       qty.addEventListener('input', () => {
         const n = Number(qty.value);
-        line.quantity = Number.isFinite(n) ? n : 0;
+        line.quantity = Number.isFinite(n) ? Math.min(I.MAX_QUANTITY, Math.max(0, n)) : 0;
         renderTotals();
       });
       qtyWrap.appendChild(qty);

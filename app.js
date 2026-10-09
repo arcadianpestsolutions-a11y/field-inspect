@@ -1402,10 +1402,19 @@
     // delete then ran with no id. See hasKey in db.js for what that cost.
     const jobId = currentJobId;
     if (!jobId) return;
-    if (!await askConfirm('Delete this job and all its photos and voice memos? This cannot be undone.',
+    if (!await askConfirm('Delete this job and all its photos and voice memos?',
       { title: 'Delete job', okLabel: 'Delete', danger: true })) return;
-    await DB.deleteJob(jobId);
-    toast('Job deleted');
+    const doomed = await DB.getJob(jobId);
+    const label = (doomed && (doomed.name || doomed.address)) || 'Job';
+    // Held back for a few seconds with an Undo (undo-delete.js): nothing is really
+    // deleted, here or in the cloud, until that window closes.
+    window.UndoDelete.start({
+      kind: 'job',
+      ids: [jobId],
+      message: `${label} deleted`,
+      commit: () => DB.deleteJob(jobId),
+      refresh: async () => { if (!currentJobId) await renderJobList(); },
+    });
     showJobListView();
   });
 
@@ -1625,14 +1634,18 @@
   selectionDeleteBtn.addEventListener('click', async () => {
     const n = selectedCaptureIds.size;
     if (!n) return;
-    if (!await askConfirm(`Delete ${n} selected capture${n === 1 ? '' : 's'}? This cannot be undone.`,
+    if (!await askConfirm(`Delete ${n} selected capture${n === 1 ? '' : 's'}?`,
       { title: 'Delete captures', okLabel: 'Delete', danger: true })) return;
-    for (const id of selectedCaptureIds) {
-      await DB.deleteCapture(id);
-    }
-    toast(`${n} capture${n === 1 ? '' : 's'} deleted`);
+    const ids = Array.from(selectedCaptureIds);
+    const jobAtDelete = currentJobId;
     exitSelectMode();
-    await renderGallery();
+    await window.UndoDelete.start({
+      kind: 'capture',
+      ids,
+      message: `${n} capture${n === 1 ? '' : 's'} deleted`,
+      commit: async () => { for (const id of ids) await DB.deleteCapture(id); },
+      refresh: async () => { if (currentJobId && currentJobId === jobAtDelete) await renderGallery(); },
+    });
   });
 
   function populateZoneSuggestions() {
@@ -2622,11 +2635,16 @@
     const captureId = currentDetailCaptureId; // read once, before the question
     if (!captureId) return;
     if (!await askConfirm('Delete this capture?', { title: 'Delete capture', okLabel: 'Delete', danger: true })) return;
-    await DB.deleteCapture(captureId);
     hide(detailModal);
     currentDetailCaptureId = null;
-    toast('Deleted');
-    await renderGallery();
+    const jobAtDelete = currentJobId;
+    await window.UndoDelete.start({
+      kind: 'capture',
+      ids: [captureId],
+      message: 'Capture deleted',
+      commit: () => DB.deleteCapture(captureId),
+      refresh: async () => { if (currentJobId && currentJobId === jobAtDelete) await renderGallery(); },
+    });
   });
 
   // ---------- Init ----------

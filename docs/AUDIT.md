@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 452 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 461 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -49,8 +49,12 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 19 | No length limits or phone/email keyboards on several fields | `maxlength`, `inputmode`, `autocapitalize` |
 | 20 | Titles cut to ~12 characters by wide capitals; dangling separators; floating button over content | CSS fixes |
 | 21 | Start Inspection could act on the **wrong job**, or none: the camera permission prompt can take seconds, and after Back (or opening another job) the code read the job from "whichever is open now" | Remembers the job the tap was for; if the person has left it, lets the camera go and does nothing |
+| 22 | Deleting a job (or photos) was instant and final, here and in the cloud, with no in-app restore | A ten-second **Undo**: the item vanishes from every screen at once but nothing is deleted until the time is up, so closing the app mid-window loses nothing (`undo-delete.js`) |
+| 23 | Absurd invoice amounts (quantity 1e300 x price 1e300) made totals thousands of pixels wide and stretched the screen sideways | Quantity capped at 100,000 and unit price at $1,000,000, in the input and again in the arithmetic; money text wraps |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
+
+Seen once in random testing and **not reproduced** in later runs (recorded so they are not forgotten): (a) the invoice screen measured 22,982 px wide in one run, probably the absurd-amounts bug above; (b) two screens (job and report section) visible at once after tapping Discard and Back in the same instant. If either returns on a real phone, start from the chaos tool's `lastActions` for that finding.
 and no console error in ~2,400 random steps after the fixes.
 
 ## Known debt (stated plainly, not hidden)

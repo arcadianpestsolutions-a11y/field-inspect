@@ -370,6 +370,10 @@
         DB.getJobs(), DB.getAllReports(), DB.getAllInvoices(), DB.getAllCaptures(),
       ]);
       const ids = new Set();
+      // A job waiting out its Undo window is hidden from getJobs but not yet deleted,
+      // so its report and photos are not orphans.
+      const held = window.UndoDelete && window.UndoDelete.pending();
+      if (held && held.kind === 'job') held.ids.forEach((id) => ids.add(id));
       for (const j of jobs) {
         if (ids.has(j.id)) finding('integrity', 'duplicate job id ' + j.id);
         ids.add(j.id);

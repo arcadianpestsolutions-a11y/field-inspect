@@ -9712,6 +9712,179 @@
   });
 
 
+  // ---------- Undo for deletes (undo-delete.js) ----------
+
+  const withUndoDelay = async (win, ms, fn) => {
+    const before = win.UndoDelete.delayMs;
+    win.UndoDelete.delayMs = ms;
+    try { await fn(); } finally { await win.UndoDelete.flush(); win.UndoDelete.delayMs = before; }
+  };
+
+  test('Undo: a deleted job vanishes from every read at once, and Undo brings it fully back', async () => {
+    const win = frame.contentWindow;
+    await withUndoDelay(win, 60000, async () => {
+      const job = await win.DB.addJob({ name: 'Undo Me', address: '3 Undo St' });
+      await win.DB.addCapture({ jobId: job.id, type: 'photo', zone: 'Roof', photoBlob: new Blob(['x']) });
+      await win.UndoDelete.start({ kind: 'job', ids: [job.id], message: 'Undo Me deleted', commit: () => win.DB.deleteJob(job.id), refresh: async () => {} });
+      assertEqual(await win.DB.getJob(job.id), undefined, 'getJob no longer finds it');
+      assert(!(await win.DB.getJobs()).some((j) => j.id === job.id), 'the list no longer shows it');
+      assertEqual(win.UndoDelete.pending().ids[0], job.id, 'it is waiting to be deleted');
+      assert(await win.UndoDelete.undo(), 'Undo had something to undo');
+      assertEqual((await win.DB.getJob(job.id)).name, 'Undo Me', 'the job is back');
+      assertEqual((await win.DB.getCaptures(job.id)).length, 1, 'with its photo, untouched');
+      assertEqual(win.UndoDelete.pending(), null, 'nothing is pending any more');
+      await win.DB.deleteJob(job.id);
+    });
+  });
+
+  test('Undo: nothing is really deleted until the time is up, then it is', async () => {
+    const win = frame.contentWindow;
+    await withUndoDelay(win, 400, async () => {
+      const job = await win.DB.addJob({ name: 'Delete After Wait' });
+      let deleted = 0;
+      await win.UndoDelete.start({ kind: 'job', ids: [job.id], message: 'x', commit: async () => { deleted++; await win.DB.deleteJob(job.id); }, refresh: async () => {} });
+      await wait(150);
+      assertEqual(deleted, 0, 'still waiting inside the window');
+      await waitFor(() => deleted === 1, 'deleted once the window closes');
+      await wait(100);
+      assertEqual(await win.DB.getJob(job.id), undefined, 'and it is really gone');
+      assert(!win.UndoDelete.hides('job', job.id), 'no longer held hidden');
+      assertEqual(await win.UndoDelete.undo(), false, 'there is nothing left to undo');
+    });
+  });
+
+  test('Undo: starting a second delete finishes the first at once', async () => {
+    const win = frame.contentWindow;
+    await withUndoDelay(win, 60000, async () => {
+      const a = await win.DB.addJob({ name: 'First Doomed' });
+      const b = await win.DB.addJob({ name: 'Second Doomed' });
+      await win.UndoDelete.start({ kind: 'job', ids: [a.id], message: 'a', commit: () => win.DB.deleteJob(a.id), refresh: async () => {} });
+      await win.UndoDelete.start({ kind: 'job', ids: [b.id], message: 'b', commit: () => win.DB.deleteJob(b.id), refresh: async () => {} });
+      assertEqual(await win.DB.getJob(a.id), undefined, 'the first is really deleted');
+      assertEqual(win.UndoDelete.pending().ids[0], b.id, 'only the second can still be undone');
+      await win.UndoDelete.undo();
+      assertEqual((await win.DB.getJob(b.id)).name, 'Second Doomed', 'and undoing brings back the second');
+      await win.DB.deleteJob(b.id);
+    });
+  });
+
+  test('Undo: if the delete itself fails the item comes back and the person is told', async () => {
+    const win = frame.contentWindow;
+    await withUndoDelay(win, 50, async () => {
+      const job = await win.DB.addJob({ name: 'Cannot Delete' });
+      await win.UndoDelete.start({ kind: 'job', ids: [job.id], message: 'x', commit: async () => { throw new Error('disk said no'); }, refresh: async () => {} });
+      await waitFor(() => !win.UndoDelete.hides('job', job.id), 'released after the failure');
+      assertEqual((await win.DB.getJob(job.id)).name, 'Cannot Delete', 'the job is still there, not invisible');
+      assert(/Could not delete/.test(frame.contentDocument.getElementById('toast').textContent), 'and it says so');
+      await win.DB.deleteJob(job.id);
+    });
+  });
+
+  test('Undo: deleting a job from its screen shows an Undo bar, and Undo restores it to the list', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realConfirm = win.confirm;
+    win.confirm = () => true; // the suite's Dialog stand-in asks this
+    await withUndoDelay(win, 60000, async () => {
+      const job = await win.DB.addJob({ name: 'Screen Undo Job', address: '4 Screen St' });
+      await win.showJobViewById(job.id);
+      await wait(300);
+      doc.getElementById('delete-job-btn').click();
+      await waitFor(() => !doc.getElementById('undo-bar').classList.contains('hidden'), 'the Undo bar appears');
+      assertEqual(doc.getElementById('undo-text').textContent, 'Screen Undo Job deleted', 'it names what was deleted');
+      assert(!doc.getElementById('view-joblist').classList.contains('hidden'), 'and you are back on the list');
+      await wait(300);
+      assert(!Array.from(doc.querySelectorAll('.job-item-name')).some((e) => e.textContent === 'Screen Undo Job'), 'the job is not on the list');
+      doc.getElementById('undo-btn').click();
+      await waitFor(() => doc.getElementById('undo-bar').classList.contains('hidden'), 'the bar goes');
+      await waitFor(() => Array.from(doc.querySelectorAll('.job-item-name')).some((e) => e.textContent === 'Screen Undo Job'), 'the job is back on the list');
+      win.confirm = realConfirm;
+      await win.DB.deleteJob(job.id);
+    });
+  });
+
+  test('Undo: deleted photos disappear at once and Undo puts them back', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realConfirm = win.confirm;
+    win.confirm = () => true;
+    await withUndoDelay(win, 60000, async () => {
+      const job = await win.DB.addJob({ name: 'Photo Undo Job' });
+      for (const z of ['Roof', 'Subfloor']) await win.DB.addCapture({ jobId: job.id, type: 'photo', zone: z, photoBlob: new Blob(['x']) });
+      await win.showJobViewById(job.id);
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 2, 'two photos show');
+      doc.getElementById('gallery-select-toggle').click();
+      await wait(100);
+      doc.querySelectorAll('.capture-tile')[0].click();
+      await wait(80);
+      doc.getElementById('selection-delete-btn').click();
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 1, 'one photo is hidden at once');
+      assertEqual((await win.DB.getCaptures(job.id)).length, 1, 'every read agrees');
+      assertEqual(doc.getElementById('undo-text').textContent, '1 capture deleted', 'the bar says what happened');
+      doc.getElementById('undo-btn').click();
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 2, 'Undo brings the photo back');
+      win.confirm = realConfirm;
+      await win.DB.deleteJob(job.id);
+    });
+  });
+
+  test('Undo: the test build commits at once, real use gets ten seconds, and it is registered', async () => {
+    const win = frame.contentWindow;
+    assertEqual(win.UndoDelete.delayMs, 0, 'the suite deletes immediately so older tests see the end result');
+    const src = await (await fetch('../undo-delete.js', { cache: 'reload' })).text();
+    assert(/window\.IS_TEST \? 0 : 10000/.test(src), 'real use gets ten seconds');
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.indexOf('undo-delete.js') > 0 && idx.indexOf('undo-delete.js') < idx.indexOf('src="db.js"'), 'loaded before db.js');
+    assert(sw.includes("'./undo-delete.js'"), 'in the offline shell');
+    const db = await (await fetch('../db.js', { cache: 'reload' })).text();
+    assert((db.match(/pendingDelete\('(job|capture)'/g) || []).length === 3, 'getJob, getJobs and getCaptures all honour a pending delete');
+  });
+
+
+  // ---------- Absurd amounts on an invoice ----------
+
+  test('Invoice: amounts are capped, so one slip cannot produce a million-dollar-per-unit line', () => {
+    const I = frame.contentWindow.Invoicing;
+    assertEqual(I.centsFromInput('99999999999999999999'), I.MAX_UNIT_CENTS, 'a huge price is held at the cap');
+    assertEqual(I.centsFromInput('-99999999999999999999'), -I.MAX_UNIT_CENTS, 'and so is a huge negative one');
+    assertEqual(I.centsFromInput('180.50'), 18050, 'a normal price is untouched');
+    assertEqual(I.centsFromInput('abc'), 0, 'junk is zero');
+    assertEqual(I.lineSubtotalCents({ quantity: 1e300, unitAmountCents: 1e300 }), I.MAX_QUANTITY * I.MAX_UNIT_CENTS, 'a hostile line is held at the biggest it can be');
+    assertEqual(I.lineSubtotalCents({ quantity: 2, unitAmountCents: 9050 }), 18100, 'an ordinary line is exact');
+    const totals = I.computeTotals({ gstRegistered: true, lineItems: [{ quantity: 1e300, unitAmountCents: 1e300 }, { quantity: 1e300, unitAmountCents: 1e300 }] });
+    assert(Number.isSafeInteger(totals.totalCents), 'totals stay whole numbers a computer can add exactly');
+    assert(I.formatMoney(totals.totalCents).length < 30, `and print short enough to read: ${I.formatMoney(totals.totalCents)}`);
+  });
+
+  test('Invoice screen: typing absurd numbers does not stretch the page sideways', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Absurd Invoice Job', jobType: 'termite' });
+    await win.DB.updateJob(job.id, { status: 'review' });
+    await win.InvoiceUI.open(job.id);
+    await waitFor(() => !doc.getElementById('view-invoice').classList.contains('hidden'), 'the invoice opens');
+    await wait(300);
+    const view = doc.getElementById('view-invoice');
+    const set = (el, v) => {
+      const proto = el.tagName === 'TEXTAREA' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+      el.dispatchEvent(new win.Event('input', { bubbles: true }));
+    };
+    const qty = Array.from(view.querySelectorAll('input[type=number]')).find((e) => e.offsetParent);
+    const price = Array.from(view.querySelectorAll('input[placeholder="0.00"]')).find((e) => e.offsetParent);
+    assert(qty && price, 'the first line has a quantity and a price');
+    assertEqual(qty.max, String(win.Invoicing.MAX_QUANTITY), 'the quantity box states its own limit');
+    set(qty, '1e300');
+    set(price, '1e300');
+    await wait(200);
+    assert(doc.getElementById('invoice-total').textContent.length < 30, `the total reads as money: ${doc.getElementById('invoice-total').textContent.slice(0, 40)}`);
+    assert(doc.documentElement.scrollWidth <= win.innerWidth + 2, `the page is not wider than the screen: ${doc.documentElement.scrollWidth} vs ${win.innerWidth}`);
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

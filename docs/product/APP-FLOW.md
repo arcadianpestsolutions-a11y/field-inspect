@@ -121,3 +121,6 @@ old header icons are hidden; the bar presses them, so each screen opens exactly 
 
 ## 9. The report screen (v110)
 Progress card first ("5 of 11 sections done", bar, and Continue: the next section that still needs work), then the section list, audit trail, pre-flight check, and a Finalize button that stays at the bottom of the screen while the list scrolls.
+
+## 10. Undo after delete (v111)
+Deleting a job, a photo, or a selection of photos hides it everywhere at once and shows a bar: "<name> deleted  [Undo]" for ten seconds. Undo brings it back untouched. If the time runs out, the delete really happens (phone and cloud). Starting another delete finishes the first. Closing the app inside the ten seconds deletes nothing. Enquiries, clients, invoices and safety statements are not covered yet.

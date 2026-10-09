@@ -14,10 +14,18 @@
 
   const GST_RATE = 0.10; // Australia, 10%
 
+  // Upper bounds on what one invoice line may hold. Nothing a pest-control business
+  // bills comes near them, and without a cap a slip of the thumb (or pasted junk)
+  // produced totals thousands of pixels wide that stretched the screen sideways and
+  // could not be read, let alone sent to Xero.
+  const MAX_QUANTITY = 100000;
+  const MAX_UNIT_CENTS = 100000000; // $1,000,000.00 per unit
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
   function centsFromInput(value) {
     const n = Number(String(value == null ? '' : value).replace(/[^0-9.\-]/g, ''));
     if (!Number.isFinite(n)) return 0;
-    return Math.round(n * 100);
+    return clamp(Math.round(n * 100), -MAX_UNIT_CENTS, MAX_UNIT_CENTS);
   }
 
   function formatMoney(cents) {
@@ -34,7 +42,9 @@
     const qty = Number(line.quantity);
     const unit = Number(line.unitAmountCents);
     if (!Number.isFinite(qty) || !Number.isFinite(unit)) return 0;
-    return Math.round(qty * unit);
+    // Clamped here as well as at the input: invoices also arrive from sync and from
+    // older versions, and the arithmetic must be safe whatever it is handed.
+    return Math.round(clamp(qty, -MAX_QUANTITY, MAX_QUANTITY) * clamp(unit, -MAX_UNIT_CENTS, MAX_UNIT_CENTS));
   }
 
   function lineGstCents(line, gstRegistered) {
@@ -162,6 +172,8 @@
 
   window.Invoicing = {
     GST_RATE,
+    MAX_QUANTITY,
+    MAX_UNIT_CENTS,
     centsFromInput,
     formatMoney,
     lineSubtotalCents,
