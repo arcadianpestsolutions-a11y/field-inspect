@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v116 · **499 tests passing** (as of 8 Oct 2026)
+**Current build:** v117 · **513 tests passing** (as of 10 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
@@ -34,7 +34,7 @@ plain-English orientation; those are the detail.
 | | |
 |---|---|
 | Front end | Vanilla JS, **zero build step**, plain `<script src>` tags |
-| Offline | IndexedDB (`field-inspect-db`), DB_VERSION **9** |
+| Offline | IndexedDB (`field-inspect-db`), DB_VERSION **10** |
 | Shell | Service worker, cache-first, versioned by `CACHE_NAME` in `sw.js` |
 | Back end | Supabase — Postgres, Auth, Storage, Edge Functions (Deno) |
 | Hosting | GitHub Pages |
@@ -105,7 +105,7 @@ and `report.js` open with a table of contents.
 
 ### Tests and tools
 
-`tests/run-tests.html` (499 tests), `tests/chaos.js` + `chaos-scenarios.js`
+`tests/run-tests.html` (513 tests), `tests/chaos.js` + `chaos-scenarios.js`
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
 

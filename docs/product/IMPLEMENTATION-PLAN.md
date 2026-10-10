@@ -50,7 +50,7 @@ Exit: published accuracy per category; no category presented as reliable that is
 |---|---|---|
 | 3.1 | Automate the weekly backup (Windows Task Scheduler running the script; password prompt design needed) | M |
 | 3.2 | In-app restore from the JSON export, with a dry-run summary ("this will add 12 jobs, change 3") | L |
-| 3.3 | Conflict visibility: when a newer remote copy overwrites a local edit, keep the loser in the audit trail | M |
+| 3.3 | Conflict visibility: when a newer remote copy overwrites a local edit, keep the loser in the audit trail. **Done in v117, further than planned**: edits are merged field by field, so only a change to the same field on both devices can lose; that loser is listed under "Changes that clashed" | M |
 | 3.4 | Photo upload queue visibility ("14 photos waiting") | S |
 | 3.5 | Decide and implement Supabase Pro or off-site photo copy | S |
 Exit: a tested, documented restore; no silent overwrites.

@@ -41,7 +41,11 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // has to leave something behind. onupgradeneeded below is written so each
 // store is created only if missing, which means an existing device upgrades
 // in place without losing any job data.
-const DB_VERSION = 9;
+// v10 adds `syncBase`: for each synced record, the last version this phone and the
+// cloud agreed on. It is what lets sync tell "I changed this field" from "they
+// did" and merge two people's offline edits instead of keeping only the later one
+// (see sync-merge.js). Local only; never synced.
+const DB_VERSION = 10;
 
 // Whether a value can be used to look something up BY KEY.
 //
@@ -128,6 +132,9 @@ function openDB() {
         const store = db.createObjectStore('sectionDrafts', { keyPath: 'id' });
         store.createIndex('jobId', 'jobId', { unique: false });
       }
+      if (!db.objectStoreNames.contains('syncBase')) {
+        db.createObjectStore('syncBase', { keyPath: 'key' });
+      }
       if (!db.objectStoreNames.contains('deletions')) {
         // What was deleted, so the next sync can say so out loud. Keyed
         // "table:id" because a job and its report share an id.
@@ -135,7 +142,26 @@ function openDB() {
         store.createIndex('syncedAt', 'syncedAt', { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    // Another tab still has the older database open, so the upgrade has to wait.
+    // Say so, rather than sitting on a blank screen.
+    req.onblocked = () => {
+      console.warn('[db] waiting for another Scope tab to close before updating');
+      setTimeout(() => {
+        if (window.appToast) window.appToast('Scope was updated. Close any other Scope tabs or windows to finish.');
+      }, 500);
+    };
+    req.onsuccess = () => {
+      const db = req.result;
+      // A newer version opened in another tab and needs to upgrade the database.
+      // This copy steps aside and reloads into the new version, instead of
+      // holding the upgrade up (and then failing on the next write).
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+        if (!window.IS_TEST) { try { window.location.reload(); } catch (e) { /* nothing more to do */ } }
+      };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
   return dbPromise;
@@ -324,6 +350,23 @@ const DB = {
     const store = await tx('deletions', 'readonly');
     return reqToPromise(store.get(`${table}:${recordId}`)) || null;
   },
+  // ---------- Sync bases (see DB_VERSION 10 above) ----------
+  // Stored without photo bytes: the base is only ever compared, and a copy of
+  // every photo would double the space the app takes on the phone.
+  async getSyncBase(table, recordId) {
+    if (!hasKey(recordId)) return null;
+    const store = await tx('syncBase', 'readonly');
+    const row = await reqToPromise(store.get(`${table}:${recordId}`));
+    return row ? row.record : null;
+  },
+  async setSyncBase(table, recordId, record) {
+    if (!hasKey(recordId) || !record) return;
+    const clean = JSON.parse(JSON.stringify(record, (k, v) => (
+      (typeof Blob !== 'undefined' && v instanceof Blob) ? undefined : v)));
+    const store = await tx('syncBase', 'readwrite');
+    await reqToPromise(store.put({ key: `${table}:${recordId}`, record: clean, at: Date.now() }));
+  },
+
   async isDeleted(table, recordId) {
     const store = await tx('deletions', 'readonly');
     return !!(await reqToPromise(store.get(`${table}:${recordId}`)));

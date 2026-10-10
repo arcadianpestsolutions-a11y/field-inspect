@@ -6,7 +6,7 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 | Layer | Choice | Constraint |
 |---|---|---|
 | Front end | Vanilla JS (IIFEs, `window.X` globals), HTML, one CSS file | **No build step.** No npm, bundler or TypeScript in the front end |
-| Local data | IndexedDB `field-inspect-db`, DB_VERSION 9 | Never rename the DB or the `/field-inspect/` Pages path |
+| Local data | IndexedDB `field-inspect-db`, DB_VERSION 10 | Never rename the DB or the `/field-inspect/` Pages path |
 | Offline | Service worker, cache-first app shell, versioned `CACHE_NAME` | Must equal `APP_VERSION`; precache uses `cache: 'reload'` |
 | Hosting | GitHub Pages (static) | Cannot set response headers (affects CSP) |
 | Back end | Supabase: Postgres 17, Auth, Storage (`inspection-media`, private), Edge Functions (Deno) | Free plan today |
@@ -17,7 +17,7 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 | ID | Requirement |
 |---|---|
 | A1 | Every write goes to IndexedDB first; sync is background, resumable, and failure never blocks the user |
-| A2 | Sync: last-write-wins on `updatedAt`; deletes are tombstones; reads paged below 1000 rows (PostgREST cap); a failed page throws |
+| A2 | Sync: three-way merge per field against the last agreed copy (`syncBase`), same-field clashes go to the later `updatedAt` and are listed for the user; captures last-write-wins; deletes are tombstones; reads paged below 1000 rows (PostgREST cap); a failed page throws |
 | A3 | Multi-tenancy by the database: `org_id` defaults to `my_org_id()`; RLS on every table; null fails closed |
 | A4 | `service_role` bypasses RLS, so each Edge Function filters by org itself, and its table grants are the minimum it uses (migration 033) |
 | A5 | Every new table needs an explicit GRANT and a named, idempotent policy (drop before create) |
@@ -56,7 +56,7 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 | Privacy | Client data only to the business, the client, and listed processors; opt-out honoured within one send cycle |
 
 ## 5. Testing requirements
-* Browser suite `tests/run-tests.html`: 499 tests, no framework, about 70 s, own
+* Browser suite `tests/run-tests.html`: 513 tests, no framework, about 70 s, own
   IndexedDB. **Two clean back-to-back runs before any release.**
 * Use `waitFor(predicate)`, never fixed waits. Tests must not depend on today's date.
 * New behaviour needs a test that fails when the fix is reverted.

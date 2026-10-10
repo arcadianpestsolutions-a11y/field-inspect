@@ -47,12 +47,12 @@ talks to one Supabase project.
 |---|---|---|
 | Boot | `error-log.js`, `version.js`, `supabase-config.js` | Error capture, build id, publishable key |
 | Safety/UI primitives | `html-safe.js`, `dialog.js`, `ios-install.js` | Escaping; in-app confirm/prompt (native ones do not render in iOS home-screen apps) |
-| Data | `db.js` | IndexedDB wrapper (`DB_VERSION` 9). Stores: jobs, captures, reports, swms, leads, clients, invoices, sectionDrafts, deletions |
+| Data | `db.js` | IndexedDB wrapper (`DB_VERSION` 10). Stores: jobs, captures, reports, swms, leads, clients, invoices, sectionDrafts, deletions, syncBase (last copy both sides agreed on, for merging) |
 | Schemas (pure data) | `report-schema.js`, `pest-treatment-schema.js`, `termite-management-schemas.js`, `swms-schema.js`, `photo-checklists.js`, `pest-products.js`, `form-render.js` | What each document contains; generic renderer |
 | Pure logic | `invoicing.js`, `availability.js`, `routing.js`, `reporting.js`, `assets.js`, `clients.js`, `pipeline.js` | Maths and rules with no DOM; best covered by tests |
 | Device | `camera.js`, `qr-scan.js`, `geo.js`, `media.js` | Capture, scan, location, photo upload |
-| Cloud | `sync.js`, `org.js`, `xero.js`, `ai.js`, `email.js`, `comms.js` | Everything that leaves the device |
-| Feature UI | `today.js` (pure: builds today's plan), `today-ui.js` (the Today screen), `restore.js` (reads an Export file back: add and update only), `undo-delete.js` (holds a delete back for ten seconds with an Undo bar), `job-layout.js` (orders the cards on the job screen: next step, client, settings), `sync-state.js` (backed-up / waiting / offline indicator, photo upload count, placeholders, pull to sync), `theme.js` (dark/light/auto, loaded in the head), `tabbar.js` (bottom tab bar: Today, Jobs, Diary, Enquiries, More; shown only on top-level screens), `job-details.js` (job card: Call, Directions, Edit), `reminders-ui.js`, `reminder-nudge.js`, `backup.js`, `report.js`, `invoice-ui.js`, `swms-ui.js`, `business-ui.js`, `assets-ui.js`, `leads-ui.js`, `clients-ui.js`, `client-link.js`, `scheduler.js`, `schedule-agent.js`, `calendar-feed.js` | Screens |
+| Cloud | `sync-merge.js` (pure: three-way merge of two edited copies), `sync.js`, `org.js`, `xero.js`, `ai.js`, `email.js`, `comms.js` | Everything that leaves the device |
+| Feature UI | `today.js` (pure: builds today's plan), `today-ui.js` (the Today screen), `restore.js` (reads an Export file back: add and update only), `sync-conflicts.js` (lists edits that clashed with another device, on the Saved reports screen), `undo-delete.js` (holds a delete back for ten seconds with an Undo bar), `job-layout.js` (orders the cards on the job screen: next step, client, settings), `sync-state.js` (backed-up / waiting / offline indicator, photo upload count, placeholders, pull to sync), `theme.js` (dark/light/auto, loaded in the head), `tabbar.js` (bottom tab bar: Today, Jobs, Diary, Enquiries, More; shown only on top-level screens), `job-details.js` (job card: Call, Directions, Edit), `reminders-ui.js`, `reminder-nudge.js`, `backup.js`, `report.js`, `invoice-ui.js`, `swms-ui.js`, `business-ui.js`, `assets-ui.js`, `leads-ui.js`, `clients-ui.js`, `client-link.js`, `scheduler.js`, `schedule-agent.js`, `calendar-feed.js` | Screens |
 | Shell | `demo.js`, `app.js`, `nav-history.js` | Boot, routing, phone Back button |
 | Test only | `tests/chaos.js`, `tests/chaos-scenarios.js` | Random tapper; refuses to run unless in demo mode |
 
@@ -64,7 +64,16 @@ talks to one Supabase project.
 `comms.js`, `sync.js` etc. do nothing in demo/test mode.
 
 ## Sync model (`sync.js`)
-Last-write-wins on `updatedAt`. Deletes are tombstones (`deletions` table / store)
+Three-way merge (v117, `sync-merge.js`). For each record the phone keeps a
+"base": the last copy it and the cloud agreed on (`syncBase` store). On pull,
+if only one side changed since the base, that side is taken whole; if both
+changed, fields are merged one by one: a field changed on one side only takes
+that change, lists of items with ids (photos in a report) merge by id, the
+audit trail is the union of both, and a field changed on both sides goes to the
+later save, with the other value recorded in `SyncConflicts` for a person to
+see. The merged copy is written locally and pushed. With no base yet (first
+sync after the upgrade) the later `updatedAt` wins, as before. Captures keep
+later-wins. Deletes are tombstones (`deletions` table / store)
 so a delete on one device is not undone by another. Reads are paged (PostgREST
 caps at 1000 rows); a failed page throws rather than pretending a table was
 fully read. Photos/files go to the private Storage bucket `inspection-media`.

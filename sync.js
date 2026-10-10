@@ -148,6 +148,77 @@
 
   window.SyncPaging = { fetchAllRows, PAGE_ROWS, MAX_PAGES, TABLE_KEYS };
 
+  // ---------- Reconciling a table, record by record (sync-merge.js) ----------
+  // Replaces "whichever whole record was saved last wins". For every record on
+  // both sides it asks SyncMerge what changed since the version both last agreed
+  // on (the base): one side changed -> take it; both changed -> merge field by
+  // field, and report any field both changed differently as a clash. A record
+  // this device has never seen in agreement before falls back to the old rule.
+  // Captures (photos) keep the old rule: their content is bytes, not fields.
+  let syncConflicts = [];
+  async function reconcileTable({ table, remoteRows, localRows, remoteId, localId, toLocal, putRaw, push, dead, label }) {
+    const merge = window.SyncMerge;
+    const remoteById = new Map(remoteRows.map((r) => [remoteId(r), r]));
+    const localById = new Map(localRows.map((l) => [localId(l), l]));
+    for (const [id, r] of remoteById) {
+      if (dead && dead.has(id)) continue;
+      const local = localById.get(id);
+      const remoteLocal = toLocal(r, local);
+      if (!local) {
+        await putRaw(remoteLocal);
+        await DB.setSyncBase(table, id, remoteLocal).catch(() => {});
+        continue;
+      }
+      if (!merge) {
+        // A half-updated page without sync-merge.js: the old rule, exactly.
+        if ((r.updated_at || 0) > (local.updatedAt || 0)) await putRaw(remoteLocal);
+        else if ((local.updatedAt || 0) > (r.updated_at || 0) && !(await DB.isDeleted(table, id))) await push(local);
+        continue;
+      }
+      const base = await DB.getSyncBase(table, id).catch(() => null);
+      const d = merge.reconcile({ local, remote: remoteLocal, base });
+      if (d.action === 'pull') {
+        await putRaw(remoteLocal);
+        await DB.setSyncBase(table, id, remoteLocal).catch(() => {});
+      } else if (d.action === 'push') {
+        if (await DB.isDeleted(table, id)) continue;
+        // Only this phone changed it, but the cloud's copy may carry a later stamp
+        // (saved there without changing anything that matters). Send it stamped
+        // later than the cloud's, so a device still on "later wins" takes it too.
+        const rt = Number(r.updated_at) || 0;
+        if ((Number(local.updatedAt) || 0) <= rt) {
+          const restamped = { ...local, updatedAt: rt + 1 };
+          await putRaw(restamped);
+          await push(restamped);
+        } else {
+          await push(local);
+        }
+      } else if (d.action === 'merge') {
+        await putRaw(d.merged);
+        await push(d.merged);
+        const name = label ? label(d.merged) : '';
+        d.conflicts.forEach((c) => syncConflicts.push({ table, id, label: name, at: Date.now(), ...c }));
+      } else if (!base || !merge.sameValue(base, remoteLocal)) {
+        // Both sides agree: this is the new base.
+        await DB.setSyncBase(table, id, remoteLocal).catch(() => {});
+      }
+    }
+    // Records only this device has: new here, or deleted there (the tombstone says which).
+    for (const [id, l] of localById) {
+      if (remoteById.has(id)) continue;
+      if (await DB.isDeleted(table, id)) continue;
+      await push(l);
+    }
+  }
+
+  // Exposed so the merge can be tested with a fake table, no cloud needed.
+  window.SyncReconcile = {
+    reconcileTable,
+    conflicts: () => syncConflicts.slice(),
+    reset: () => { syncConflicts = []; },
+  };
+
+
   // Test and demo modes never touch the cloud. Syncing from a browser that
   // holds a real session would pull production records into the sandbox and
   // push every fixture back up to the live database.
@@ -1057,8 +1128,15 @@
   // Generic last-write-wins reconcile for the id-keyed collections. Jobs and
   // reports predate this and keep their own bespoke passes; captures and
   // invoices share this one so they cannot drift apart.
-  async function syncCollection({ table, localAll, toLocal, putRaw, push }) {
+  async function syncCollection({ table, localAll, toLocal, putRaw, push, label }) {
     const remote = await fetchAllRows(supabaseClient, table);
+    // Everything but photos is merged field by field; photos keep "later wins".
+    if (table !== 'captures') {
+      return reconcileTable({
+        table, remoteRows: remote, localRows: localAll, remoteId: (r) => r.id, localId: (l) => l.id,
+        toLocal, putRaw, push, label,
+      });
+    }
     const remoteById = new Map(remote.map((r) => [r.id, r]));
     const localById = new Map(localAll.map((l) => [l.id, l]));
 
@@ -1142,50 +1220,32 @@
         fetchAllRows(supabaseClient, 'jobs'),
         DB.getJobs(),
       ]);
-      const remoteJobsById = new Map(remoteJobs.map((rj) => [rj.id, rj]));
-      const localJobsById = new Map(localJobs.map((lj) => [lj.id, lj]));
       // Anything the server still holds but a tombstone condemns is
       // re-deleted there and skipped here, so a stale device pushing its
       // old copy back cannot spread it to everyone else.
       const deadJobs = await enforceTombstones('jobs', remoteJobs);
+      syncConflicts = [];
 
-      for (const rj of remoteJobs) {
-        if (deadJobs.has(rj.id)) continue;
-        const local = localJobsById.get(rj.id);
-        if (!local || (rj.updated_at || 0) > (local.updatedAt || 0)) {
-          await DB.putJobRaw(remoteJobToLocal(rj));
-        }
-      }
-      for (const lj of localJobs) {
-        if (await DB.isDeleted('jobs', lj.id)) continue;
-        const remote = remoteJobsById.get(lj.id);
-        if (!remote || (lj.updatedAt || 0) > (remote.updated_at || 0)) {
-          await pushJob(lj);
-        }
-      }
+      await reconcileTable({
+        table: 'jobs', remoteRows: remoteJobs, localRows: localJobs,
+        remoteId: (r) => r.id, localId: (l) => l.id,
+        toLocal: (r) => remoteJobToLocal(r), putRaw: (rec) => DB.putJobRaw(rec), push: pushJob,
+        dead: deadJobs, label: (j) => j.name || j.address || 'A job',
+      });
 
       const [remoteReports, localReports] = await Promise.all([
         fetchAllRows(supabaseClient, 'reports'),
         DB.getAllReports(),
       ]);
-      const remoteReportsByJobId = new Map(remoteReports.map((rr) => [rr.job_id, rr]));
-      const localReportsByJobId = new Map(localReports.map((lr) => [lr.jobId, lr]));
       const deadReports = await enforceTombstones('reports', remoteReports);
+      const jobNames = new Map((await DB.getJobs()).map((j) => [j.id, j.name || j.address || 'A job']));
 
-      for (const rr of remoteReports) {
-        if (deadReports.has(rr.job_id)) continue;
-        const local = localReportsByJobId.get(rr.job_id);
-        if (!local || (rr.updated_at || 0) > (local.updatedAt || 0)) {
-          await DB.putReportRaw(remoteReportToLocal(rr, local));
-        }
-      }
-      for (const lr of localReports) {
-        if (await DB.isDeleted('reports', lr.jobId)) continue;
-        const remote = remoteReportsByJobId.get(lr.jobId);
-        if (!remote || (lr.updatedAt || 0) > (remote.updated_at || 0)) {
-          await pushReport(lr);
-        }
-      }
+      await reconcileTable({
+        table: 'reports', remoteRows: remoteReports, localRows: localReports,
+        remoteId: (r) => r.job_id, localId: (l) => l.jobId,
+        toLocal: (r, local) => remoteReportToLocal(r, local), putRaw: (rec) => DB.putReportRaw(rec), push: pushReport,
+        dead: deadReports, label: (rep) => `Report for ${jobNames.get(rep.jobId) || 'a job'}`,
+      });
 
       // Each collection is reconciled independently. Before, one failing
       // table threw straight out of fullSync, so a permission problem on
@@ -1207,6 +1267,7 @@
           toLocal: remoteInvoiceToLocal,
           putRaw: (rec) => DB.putInvoiceRaw(rec),
           push: pushInvoice,
+          label: (i) => `Invoice ${i.number || ''}`.trim(),
         },
         {
           table: 'swms',
@@ -1214,6 +1275,7 @@
           toLocal: remoteSwmsToLocal,
           putRaw: (rec) => DB.putSwmsRaw(rec),
           push: pushSwms,
+          label: (s) => s.title || s.siteAddress || 'A safety statement',
         },
         {
           // Pulled BEFORE jobs below would need them: a job carries a
@@ -1224,6 +1286,7 @@
           toLocal: remoteClientToLocal,
           putRaw: (rec) => DB.putClientRaw(rec),
           push: pushClient,
+          label: (c) => c.name || 'A client',
         },
         {
           table: 'leads',
@@ -1231,6 +1294,7 @@
           toLocal: remoteLeadToLocal,
           putRaw: (rec) => DB.putLeadRaw(rec),
           push: pushLead,
+          label: (l) => l.name || 'An enquiry',
         },
       ];
 
@@ -1246,6 +1310,9 @@
       // Records are cheap and now consistent; bytes are expensive, so they're
       // fetched last and failures here don't fail the sync.
       await pullMissingMedia();
+
+      // Edits that clashed with another device's: kept where a person can see them.
+      if (syncConflicts.length && window.SyncConflicts) window.SyncConflicts.record(syncConflicts);
 
       if (failed.length) {
         setStatus({ state: 'partial', lastSyncedAt: Date.now(), error: syncFailureText(failed) });

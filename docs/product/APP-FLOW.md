@@ -146,3 +146,10 @@ More > Saved reports > **Restore from a backup file**, under Export All Data (sh
 - Records keep their original timestamps; when signed in, a sync then sends the restored ones to the cloud.
 - Photos are not in the file and are not touched. Running it twice changes nothing the second time.
 - A file that is not a Scope backup, or is from a newer version of the app, is refused before anything is written.
+
+## 14. Two people editing the same thing offline (v117)
+Nothing to tap; it happens during sync.
+- If you changed the phone number and a colleague changed the notes on the same job while both of you were offline, both changes are kept once you both sync.
+- Photos added to the same report on two phones are all kept. The audit trail keeps every entry from both.
+- If you both changed the *same* field, the later save is kept. A message says how many changes clashed, and More > Saved reports shows a **Changes that clashed** card: which record, which field, the value kept and the value that lost, for example `Smith House: phone number. Kept "0400 111 111" (from this phone); the other change was "0400 222 222".` If the other one was right, open the record and put it back. **Clear this list** empties the card.
+- The first time a phone opens this version it upgrades its database. If Scope is open in another tab or window, a message asks you to close the others.

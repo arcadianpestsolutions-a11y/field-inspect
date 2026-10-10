@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,000 lines, 499 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,300 lines, 513 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -60,6 +60,8 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 30 | The sync bar said "Signed in as ... Synced 3:15 PM" and nothing about photos still only on the phone; "Sync now" gave no sign it was working; a first sync on a new phone showed "No jobs yet" | `sync-state.js`: one honest state (dot + sentence), a count of photos not uploaded, a spinning disabled "Sync now", placeholder cards during the first sync, pull-to-sync, an upload marker on each unsent photo |
 | 31 | Deleting an enquiry, client or safety statement was instant and final | The same ten-second Undo as jobs and photos, shown on that list; a client's jobs are only unlinked once the delete really happens |
 | 32 | The Export file could not be read back by anything | Archive screen: "Restore from a backup file" (`restore.js`). Shows what it will add or update first, never deletes, never replaces a newer copy, leaves deliberate deletes deleted, keeps original timestamps so a sync cannot be fooled |
+| 33 | Two people editing the same record offline: whichever device synced last replaced the whole record, so the other person's edit vanished without a word, even if they had changed a different field | `sync-merge.js`: each device remembers the last copy both sides agreed on (`syncBase` store, DB v10) and merges field by field against it. Different fields: both kept. Photo lists and the audit trail: combined. Same field changed on both: the later save wins and the other value is listed under More > Saved reports, "Changes that clashed" (`sync-conflicts.js`) |
+| 34 | On a narrow phone a long toast message wrapped into a ball half the screen wide | The toast sizes to its text, up to the screen width, with a rounded box instead of a pill |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
 
@@ -85,8 +87,11 @@ and no console error in ~2,400 random steps after the fixes.
    breaking release would affect the next deploy. Pin a version.
 7. **In-app restore exists (v116) but only for the Export file.** It adds and updates records and never deletes; photos are not in that file. A whole-project restore (database + photos) is still the manual procedure in `docs/BACKUP-RUNBOOK.md`. Free Supabase plan has no automatic backups.
 8. **No 2FA** for staff accounts; no self-service signup/invite flow.
-9. **Cross-device concurrency** is last-write-wins on `updatedAt`; two people
-   editing the same record offline will lose one edit (by design, documented).
+9. **Cross-device concurrency** is merged field by field since v117. When two
+   people change the *same* field before syncing, the later save still wins;
+   the other value is not lost silently but listed under "Changes that clashed"
+   for a person to put back by hand. Photos (captures) are still whole-record,
+   later-wins. Not yet tried with two real phones.
 10. Vendored libraries are not checksum-verified (see THIRD-PARTY-NOTICES.md).
 
 ## What to leave out when sending the code

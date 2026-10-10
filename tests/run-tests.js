@@ -2651,7 +2651,9 @@
     const doc = frame.contentDocument;
     assert(win.ScheduleAgent, 'the booking assistant should be loaded');
 
-    const day = dayThisMonth(10);
+    // A fixed day far ahead. "The 10th of this month" failed every 10th after
+    // 11am, because free slots in the past are rightly not offered.
+    const day = new Date(2031, 2, 10, 9, 0, 0, 0);
     const job = await win.DB.addJob({ name: 'Agent Slot Job', address: '1 Agent St' });
     await win.DB.updateJob(job.id, { scheduledAt: day.getTime(), scheduledDurationMins: 120 });
 
@@ -10692,6 +10694,214 @@
     const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
     assert(idx.indexOf('restore.js') > idx.indexOf('backup.js') && idx.indexOf('restore.js') < idx.indexOf('src="app.js"'), 'after backup.js, before app.js');
     assert(sw.includes("'./restore.js'"), 'in the offline shell');
+  });
+
+
+  // ---------- Sync merge: two people editing offline (sync-merge.js, sync-conflicts.js) ----------
+
+  const J = (o) => Object.assign({ id: 'm1', name: 'Smith House', clientPhone: '0400 000 001', notes: '', status: 'new', createdAt: 1, updatedAt: 100 }, o);
+
+  test('Sync merge: with no shared history, the later save still wins (the old rule)', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    assertEqual(R({ local: J({ updatedAt: 100 }), remote: J({ name: 'X', updatedAt: 200 }), base: null }).action, 'pull', 'remote later');
+    assertEqual(R({ local: J({ name: 'X', updatedAt: 300 }), remote: J({ updatedAt: 200 }), base: null }).action, 'push', 'local later');
+    assertEqual(R({ local: J({ updatedAt: 1 }), remote: J({ updatedAt: 999 }), base: null }).action, 'none', 'same content is not a change, whatever the times');
+    assertEqual(R({ local: null, remote: J(), base: null }).action, 'pull', 'missing here: take it');
+  });
+
+  test('Sync merge: a change on only one side is taken from that side', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    const base = J();
+    assertEqual(R({ local: J(), remote: J({ notes: 'gate code 1234', updatedAt: 150 }), base }).action, 'pull', 'only the other device changed it');
+    assertEqual(R({ local: J({ notes: 'mine', updatedAt: 90 }), remote: J({ updatedAt: 200 }), base }).action, 'push',
+      'only this phone changed it: pushed even though the cloud copy is stamped later');
+  });
+
+  test('Sync merge: two people changing DIFFERENT fields both keep their change', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    const base = J();
+    const d = R({
+      local: J({ clientPhone: '0400 999 999', updatedAt: 150 }),
+      remote: J({ notes: 'dog in yard', updatedAt: 160 }),
+      base,
+    });
+    assertEqual(d.action, 'merge', 'merged, not one winner');
+    assertEqual(d.merged.clientPhone, '0400 999 999', 'this phone\'s phone number fix is kept');
+    assertEqual(d.merged.notes, 'dog in yard', 'and the other device\'s note');
+    assertEqual(d.conflicts.length, 0, 'no clash: they touched different things');
+    assert(d.merged.updatedAt > 160, 'stamped later than both, so every device takes the merge');
+  });
+
+  test('Sync merge: the SAME field changed on both sides keeps the later one and reports the other', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    const base = J();
+    const d = R({ local: J({ name: 'Smith Residence', updatedAt: 300 }), remote: J({ name: 'Smyth House', updatedAt: 200 }), base });
+    assertEqual(d.merged.name, 'Smith Residence', 'this phone saved later, so its value is kept');
+    assertEqual(d.conflicts.length, 1, 'one clash');
+    const c = d.conflicts[0];
+    assertEqual(c.field, 'name', 'which field');
+    assertEqual(c.lost, 'Smyth House', 'the value that lost is kept for the record');
+    assertEqual(c.keptFrom, 'this phone', 'and where the kept value came from');
+    const same = R({ local: J({ name: 'Both Agree', updatedAt: 300 }), remote: J({ name: 'Both Agree', updatedAt: 200 }), base });
+    assertEqual(same.action, 'none', 'both made the same change: nothing to do');
+  });
+
+  test('Sync merge: report sections merge field by field, with the clash named by section and field', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    const rep = (s, t) => ({ jobId: 'j', documentType: 'timber_pest_inspection', sections: s, auditLog: [], updatedAt: t });
+    const base = rep({ findings: { notes: 'a', activeTermites: 'No' }, client: { name: 'Sam' } }, 100);
+    const d = R({
+      local: rep({ findings: { notes: 'subfloor damp', activeTermites: 'No' }, client: { name: 'Sam' } }, 200),
+      remote: rep({ findings: { notes: 'roof void dusty', activeTermites: 'No' }, client: { name: 'Samantha' } }, 250),
+      base,
+    });
+    assertEqual(d.action, 'merge', 'merged');
+    assertEqual(d.merged.sections.client.name, 'Samantha', 'a field only the other device changed comes in');
+    assertEqual(d.merged.sections.findings.notes, 'roof void dusty', 'the same field: the later save (the other device) wins');
+    assertEqual(d.conflicts.length, 1, 'one clash');
+    assertEqual(d.conflicts[0].field, 'sections.findings.notes', 'named by section and field');
+    assertEqual(frame.contentWindow.SyncConflicts.fieldLabel('sections.findings.notes'), 'Findings: notes', 'and readable');
+  });
+
+  test('Sync merge: photos added on both phones are all kept, and a deliberate removal is respected', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    const rep = (photos, t) => ({ jobId: 'j', sections: { s: { photos } }, updatedAt: t });
+    const p = (id) => ({ id, path: `p/${id}.jpg` });
+    const base = rep([p('a'), p('b')], 100);
+    const d = R({
+      local: rep([p('a'), p('b'), p('mine')], 200),          // added one
+      remote: rep([p('a'), p('theirs')], 210),               // removed b, added one
+      base,
+    });
+    const ids = d.merged.sections.s.photos.map((x) => x.id).sort().join(',');
+    assertEqual(ids, 'a,mine,theirs', 'both additions kept; b removed on the other device stays removed');
+    assertEqual(d.conflicts.length, 0, 'no clash over a list both sides only added to');
+  });
+
+  test('Sync merge: the audit trail keeps every entry from both devices, in time order', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    const rep = (log, t) => ({ jobId: 'j', sections: {}, auditLog: log, updatedAt: t });
+    const e = (at, what) => ({ at, event: 'field-changed', label: what });
+    const base = rep([e(1, 'start')], 100);
+    const d = R({ local: rep([e(1, 'start'), e(5, 'mine')], 200), remote: rep([e(1, 'start'), e(3, 'theirs')], 210), base });
+    assertEqual(d.merged.auditLog.map((x) => x.label).join(','), 'start,theirs,mine', 'a union, oldest first, nothing dropped');
+    assertEqual(d.conflicts.length, 0, 'the log is never a clash');
+  });
+
+  test('Sync merge: things only this phone holds are neither a change nor lost', () => {
+    const R = frame.contentWindow.SyncMerge.reconcile;
+    const base = J();
+    const local = J({ localOnlyNote: 'not synced', updatedAt: 100 });
+    assertEqual(R({ local, remote: J(), base }).action, 'none', 'a field the cloud never carries is not a change to push');
+    const d = R({ local: J({ name: 'Mine', localOnlyNote: 'keep me', updatedAt: 300 }), remote: J({ notes: 'theirs', updatedAt: 200 }), base });
+    assertEqual(d.merged.localOnlyNote, 'keep me', 'and survives a merge');
+    const blob = new frame.contentWindow.Blob(['x']);
+    assertEqual(R({ local: J({ photoBlob: blob }), remote: J(), base }).action, 'none', 'photo bytes on the phone are not a difference');
+  });
+
+  test('Sync merge: the base is stored per record, without photo bytes', async () => {
+    const win = frame.contentWindow;
+    await win.DB.setSyncBase('reports', 'base-test', { jobId: 'base-test', sections: { s: { photos: [{ id: 'a', blob: new win.Blob(['big']) }] } }, updatedAt: 5 });
+    const back = await win.DB.getSyncBase('reports', 'base-test');
+    assertEqual(back.updatedAt, 5, 'stored and read back');
+    assert(!('blob' in back.sections.s.photos[0]), 'without the photo bytes');
+    assertEqual(await win.DB.getSyncBase('reports', 'never-seen'), null, 'nothing stored means null');
+    assertEqual(await win.DB.getSyncBase('reports', undefined), null, 'no id means null');
+  });
+
+  test('Sync merge: two phones edit the same job offline; syncing keeps both people\'s work', async () => {
+    const win = frame.contentWindow;
+    const SR = win.SyncReconcile;
+    // The version both last agreed on.
+    const agreed = J({ id: 'merge-job', updatedAt: 1000 });
+    await win.DB.setSyncBase('jobs', 'merge-job', agreed);
+    // Phone A (this one) fixed the phone number; phone B (already synced) added a note.
+    const local = J({ id: 'merge-job', clientPhone: '0411 222 333', updatedAt: 2000 });
+    const remoteRow = { id: 'merge-job', updated_at: 2100 };
+    const remoteLocal = J({ id: 'merge-job', notes: 'side gate is locked', updatedAt: 2100 });
+    const written = [];
+    const pushed = [];
+    SR.reset();
+    await SR.reconcileTable({
+      table: 'jobs', remoteRows: [remoteRow], localRows: [local],
+      remoteId: (r) => r.id, localId: (l) => l.id, toLocal: () => remoteLocal,
+      putRaw: async (rec) => { written.push(rec); }, push: async (rec) => { pushed.push(rec); },
+      label: (j) => j.name,
+    });
+    assertEqual(written.length, 1, 'the merged record is saved on this phone');
+    assertEqual(written[0].clientPhone, '0411 222 333', 'with this phone\'s fix');
+    assertEqual(written[0].notes, 'side gate is locked', 'and the other phone\'s note');
+    assertEqual(pushed.length, 1, 'and sent to the cloud');
+    assertEqual(SR.conflicts().length, 0, 'no clash to report');
+  });
+
+  test('Sync merge: a real clash is recorded with the record\'s name, and new or local-only records behave as before', async () => {
+    const win = frame.contentWindow;
+    const SR = win.SyncReconcile;
+    await win.DB.setSyncBase('jobs', 'clash-job', J({ id: 'clash-job', updatedAt: 1000 }));
+    SR.reset();
+    const written = []; const pushed = [];
+    const deleted = await win.DB.addJob({ name: 'Tombstoned Here' });
+    await win.DB.deleteJob(deleted.id);
+    await SR.reconcileTable({
+      table: 'jobs',
+      remoteRows: [{ id: 'clash-job' }, { id: 'brand-new' }],
+      localRows: [J({ id: 'clash-job', clientPhone: '0400 111 111', updatedAt: 3000 }), J({ id: 'only-here', updatedAt: 5 }), J({ id: deleted.id })],
+      remoteId: (r) => r.id, localId: (l) => l.id,
+      toLocal: (r) => (r.id === 'clash-job' ? J({ id: 'clash-job', clientPhone: '0400 222 222', updatedAt: 2500 }) : J({ id: 'brand-new', name: 'From the cloud' })),
+      putRaw: async (rec) => { written.push(rec); }, push: async (rec) => { pushed.push(rec); },
+      label: (j) => j.name,
+    });
+    const clashes = SR.conflicts();
+    assertEqual(clashes.length, 1, 'one clash');
+    assertEqual(clashes[0].label, 'Smith House', 'named after the job');
+    assertEqual(clashes[0].lost, '0400 222 222', 'with the value that lost');
+    assert(written.some((w) => w.id === 'brand-new'), 'a record new in the cloud comes down');
+    assert(await win.DB.getSyncBase('jobs', 'brand-new'), 'and becomes the agreed version');
+    assert(pushed.some((p) => p.id === 'only-here'), 'a record only on this phone goes up');
+    assert(!pushed.some((p) => p.id === deleted.id), 'but not one deleted here on purpose');
+  });
+
+  test('Sync merge: the clash list says what was kept and what lost, in plain words, on Saved reports', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const C = win.SyncConflicts;
+    win.localStorage.removeItem(C.KEY);
+    try {
+      const text = C.describe({ label: 'Smith House', field: 'clientPhone', kept: '0400 111 111', lost: '0400 222 222', keptFrom: 'this phone' });
+      assertEqual(text, 'Smith House: phone number. Kept "0400 111 111" (from this phone); the other change was "0400 222 222".', text);
+      C.record([{ table: 'jobs', id: 'x', label: 'Smith House', field: 'clientPhone', kept: 'a', lost: 'b', keptFrom: 'this phone' }]);
+      assertEqual(C.list().length, 1, 'kept on the phone');
+      assert(/1 change clashed with another device/.test(doc.getElementById('toast').textContent), 'a one-line notice');
+      const card = doc.getElementById('sync-conflicts');
+      assert(card && !card.classList.contains('hidden'), 'the list shows on Saved reports');
+      assertEqual(card.querySelectorAll('li').length, 1, 'one entry');
+      doc.getElementById('sync-conflicts-clear').click();
+      assert(card.classList.contains('hidden'), 'cleared, it goes away');
+      assertEqual(C.list().length, 0, 'and is empty');
+    } finally {
+      win.localStorage.removeItem(C.KEY);
+    }
+  });
+
+  test('Sync merge: registered, and the phone database has the new store', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.indexOf('sync-merge.js') > 0 && idx.indexOf('sync-merge.js') < idx.indexOf('src="sync.js"'), 'merge rules load before sync');
+    assert(idx.indexOf('sync-conflicts.js') > 0 && idx.indexOf('sync-conflicts.js') < idx.indexOf('src="app.js"'), 'the clash list before app.js');
+    assert(sw.includes("'./sync-merge.js'") && sw.includes("'./sync-conflicts.js'"), 'both in the offline shell');
+    const db = await new Promise((res) => { const r = frame.contentWindow.indexedDB.open('field-inspect-db-test'); r.onsuccess = () => res(r.result); });
+    const has = db.objectStoreNames.contains('syncBase');
+    db.close();
+    assert(has, 'the syncBase store exists');
+  });
+
+
+  test('DB: an upgrade is never left hanging by an older tab', async () => {
+    const src = await (await fetch('../db.js', { cache: 'reload' })).text();
+    assert(/db\.onversionchange = \(\) => \{\s*\n\s*db\.close\(\);/.test(src), 'an old copy closes its connection when a newer version needs the database');
+    assert(/req\.onblocked = \(\) => \{/.test(src), 'and a blocked upgrade tells the person what to do');
+    assert(/const DB_VERSION = 10;/.test(src), 'version 10 is the one with the merge bases');
   });
 
 

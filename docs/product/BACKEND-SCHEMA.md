@@ -9,7 +9,8 @@ a reader's map. If it disagrees with the SQL, the SQL wins.
   `organisations` (uuid), `user_roles` (auth uid) and `client_access` (token).
 * Timestamps from the app are **epoch milliseconds in `bigint`** (`created_at`,
   `updated_at`). A few server-side tables use `timestamptz`.
-* `updated_at` drives last-write-wins sync.
+* `updated_at` orders saves; sync merges field by field and uses it only to
+  pick a winner when the same field was changed on two devices (section 6).
 * Almost every table carries `org_id uuid references organisations(id)`. Tables
   created before multi-tenancy got it added in migration 022; `org_id` defaults
   to `public.my_org_id()` so the app cannot choose it.
@@ -130,9 +131,11 @@ Bucket `inspection-media` (private). Paths: `<job_id>/...` for photos and audio,
 clients get 5-minute signed URLs from `client-portal`. **Not included in any
 database backup**; see `../BACKUP-RUNBOOK.md`.
 
-## 4. Local store (IndexedDB `field-inspect-db`, version 9)
+## 4. Local store (IndexedDB `field-inspect-db`, version 10)
 `jobs`, `captures`, `reports` (key `jobId`), `swms`, `leads`, `clients`,
-`invoices`, `sectionDrafts`, `deletions`. Mirrors the server shape in camelCase.
+`invoices`, `sectionDrafts`, `deletions`, `syncBase` (key `"table:id"`, the last
+copy this phone and the cloud agreed on, photos stripped; local only, never
+synced). Mirrors the server shape in camelCase.
 Separate databases exist for demo and test.
 
 ## 5. Access control
@@ -163,7 +166,12 @@ at the end of migration 033, or query `information_schema.role_table_grants`.)
    columns the server does not have.
 2. Pull pages through each table; a failed page throws so a half-read table is
    never treated as complete.
-3. Conflicts: higher `updated_at` wins.
+3. Conflicts (v117): three-way merge against the local `syncBase` copy. Only
+   one side changed: take it. Both changed: merge per field; lists with ids
+   merge by id; `auditLog` is the union; the same field changed on both sides
+   goes to the higher `updated_at` and the other value is listed on the phone
+   under "Changes that clashed". No base yet: higher `updated_at` wins.
+   Captures: higher `updated_at` wins.
 4. Deleting writes a `deletions` row and removes the record; other devices apply
    tombstones on pull.
 5. Photos/audio upload to Storage separately and the capture row stores the path.
