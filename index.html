@@ -93,7 +93,7 @@
 
     <div id="job-form" class="card job-form hidden">
       <div id="job-type-picker" class="job-type-picker" role="radiogroup" aria-label="Job type">
-        <button type="button" class="job-type-chip active" data-job-type="termite" data-doc-type="timber_pest_inspection">🐜 Termite Inspection</button>
+        <button type="button" class="job-type-chip active" data-job-type="termite" data-doc-type="timber_pest_inspection">🐜 Timber Pest Inspection</button>
         <button type="button" class="job-type-chip" data-job-type="termite" data-doc-type="termite_monitoring">📍 Monitoring Station Visit</button>
         <button type="button" class="job-type-chip" data-job-type="pest_treatment" data-doc-type="general_pest">🧪 General Pest Treatment</button>
       </div>
@@ -244,6 +244,9 @@
            middle — and a house is wider than it is tall anyway. -->
       <span class="inspection-prompt-sub"><strong>Turn the phone sideways.</strong> This becomes the report cover, and fills in most of the property details for you.</span>
     </div>
+    <!-- Guided walk (photo-walk.js): one step at a time after the front photo. -->
+    <div id="inspection-walk" class="inspection-walk hidden" aria-live="polite"></div>
+    <div id="inspection-flash" class="inspection-flash" aria-hidden="true"></div>
     <div class="camera-zone-pill" id="inspection-zone-pill"></div>
     <div id="inspection-checklist-row" class="inspection-checklist-row hidden"></div>
     <input id="inspection-zone-input" list="zone-suggestions" type="text" placeholder="Zone / area you're in now…" autocomplete="off" />
@@ -295,7 +298,7 @@
   <header class="topbar">
     <button id="report-back-btn" class="icon-btn" aria-label="Back">←</button>
     <div class="topbar-title">
-      <h1 id="report-title">Termite Inspection Report</h1>
+      <h1 id="report-title">Timber Pest Inspection Report</h1>
       <span id="report-subtitle" class="subtitle"></span>
     </div>
     <button id="report-export-btn" class="icon-btn" aria-label="Export PDF" title="Export PDF">⤓</button>
@@ -831,6 +834,7 @@
 <script src="report-schema.js"></script>
 <script src="pest-treatment-schema.js"></script>
 <script src="photo-checklists.js"></script>
+<script src="photo-walk.js"></script>
 <script src="pest-products.js"></script>
 <script src="termite-management-schemas.js"></script>
 <script src="swms-schema.js"></script>

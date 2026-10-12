@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,300 lines, 513 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈10,450 lines, 518 tests, all
 passing), 11 Edge Function folders, 33 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 

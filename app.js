@@ -118,6 +118,8 @@
   const inspectionZonePill = document.getElementById('inspection-zone-pill');
   const inspectionZoneInput = document.getElementById('inspection-zone-input');
   const inspectionChecklistRow = document.getElementById('inspection-checklist-row');
+  const inspectionWalkEl = document.getElementById('inspection-walk');
+  const inspectionFlashEl = document.getElementById('inspection-flash');
   const inspectionStillBtn = document.getElementById('inspection-still-btn');
   const inspectionFinishBtn = document.getElementById('inspection-finish-btn');
 
@@ -183,12 +185,22 @@
   // where the technician left off instead of forgetting progress.
   let inspectionChecklistItems = [];
   let inspectionChecklistDone = new Set();
+  // The step-by-step walk (photo-walk.js) for a checklist that has one; null
+  // for the rest, which keep the chips alone.
+  let photoWalk = null;
+
+  function endPhotoWalk() {
+    if (photoWalk) photoWalk.destroy();
+    photoWalk = null;
+    if (inspectionWalkEl) inspectionWalkEl.classList.add('hidden');
+  }
 
   function renderInspectionChecklist() {
-    if (!inspectionChecklistItems.length) { hide(inspectionChecklistRow); return; }
+    const chips = inspectionChecklistItems.filter((item) => !item.hidden);
+    if (!chips.length) { hide(inspectionChecklistRow); return; }
     const currentZone = inspectionZoneInput.value.trim();
     inspectionChecklistRow.innerHTML = '';
-    for (const item of inspectionChecklistItems) {
+    for (const item of chips) {
       const chip = document.createElement('button');
       chip.type = 'button';
       const done = inspectionChecklistDone.has(item.label);
@@ -1915,6 +1927,7 @@
     frontPhotoPending = on;
     inspectionPrompt.classList.toggle('hidden', !on);
     if (inspectionZoneInput) inspectionZoneInput.classList.toggle('hidden', on);
+    if (photoWalk) photoWalk.setVisible(!on);
     if (inspectionStillBtn) {
       inspectionStillBtn.classList.toggle('prompting', on);
       inspectionStillBtn.setAttribute('aria-label', on ? 'Take the front-of-property photo' : 'Take photo');
@@ -2016,6 +2029,7 @@
       inspectionZonePill.textContent = 'Untagged';
       show(inspectionModal);
       inspectionActiveJobId = startJobId;
+      endPhotoWalk();
       // Open on the one instruction that matters, not on an idle camera.
       // Skipped if this job already has its front shot — a second visit
       // should not ask for the cover photo again.
@@ -2037,8 +2051,36 @@
       inspectionChecklistItems = (window.PhotoChecklists ? window.PhotoChecklists.forJob(jobForChecklist, jobCategoryForChecklist, documentTypeForChecklist) : [])
         .filter((item) => item.id !== 'frontElevation');
       renderInspectionChecklist();
+      if (inspectionWalkEl && window.PhotoWalk && window.PhotoWalk.isGuided(inspectionChecklistItems)) {
+        photoWalk = window.PhotoWalk.mount({
+          container: inspectionWalkEl,
+          jobId: startJobId,
+          items: inspectionChecklistItems,
+          done: () => inspectionChecklistDone,
+          visible: !frontPhotoPending,
+          setZone: (label) => {
+            inspectionZoneInput.value = label;
+            inspectionZoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+          },
+          saveNotes: async (list) => {
+            if (!(window.ReportUI && window.ReportUI.recordInteriorObstructions)) return false;
+            try {
+              const saved = await window.ReportUI.recordInteriorObstructions(startJobId, list);
+              if (!saved) { toast('This report is finalized, so the inside notes were not changed.'); return false; }
+              toast(list.length ? 'Inside notes added to the report.' : 'Saved: nothing blocked the view inside.');
+              return true;
+            } catch (err) {
+              if (window.ErrorLog) window.ErrorLog.note(err, 'photo walk: inside notes');
+              toast(DB.describeSaveFailure(err, 'The inside notes'));
+              return false;
+            }
+          },
+        });
+        photoWalk.start();
+      }
     } catch (err) {
       console.error('[inspection] camera preview failed to start:', err);
+      endPhotoWalk();
       inspectionVideo.srcObject = null;
       hide(inspectionModal);
       releaseStream();
@@ -2060,7 +2102,13 @@
     await DB.updateJob(jobIdForStart, { status: 'in_progress', inspectionStartedAt });
     const job = await DB.getJob(jobIdForStart);
     renderInspectionControls(job);
-    toast('Photograph each area, tagging the zone as you go — tap Generate Form when you\'re done.');
+    if (photoWalk) {
+      toast(frontPhotoPending
+        ? 'Front photo first, then follow the steps on screen.'
+        : 'Carry on from the step on screen. Tap Generate Form when you\'re done.');
+    } else {
+      toast('Photograph each area, tagging the zone as you go — tap Generate Form when you\'re done.');
+    }
 
     // Both are best-effort, fire-and-forget: neither should delay the
     // camera preview opening, and both only fill an empty field (never
@@ -2080,7 +2128,20 @@
   inspectionZoneInput.addEventListener('input', () => {
     inspectionZonePill.textContent = inspectionZoneInput.value.trim() || 'Untagged';
     renderInspectionChecklist();
+    if (photoWalk) photoWalk.zoneChanged(inspectionZoneInput.value.trim());
   });
+
+  // The shutter answers at once: a white flash over the preview and a short
+  // buzz where the phone has one. The save behind it takes a moment longer,
+  // and without this a tap could feel like it missed.
+  function shutterFeedback() {
+    if (inspectionFlashEl) {
+      inspectionFlashEl.classList.remove('flash');
+      void inspectionFlashEl.offsetWidth; // restart the animation
+      inspectionFlashEl.classList.add('flash');
+    }
+    try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) { /* not supported */ }
+  }
 
   inspectionStillBtn.addEventListener('click', async () => {
     if (!inspectionStream || !inspectionVideo.videoWidth) return;
@@ -2088,6 +2149,7 @@
     canvas.width = inspectionVideo.videoWidth;
     canvas.height = inspectionVideo.videoHeight;
     canvas.getContext('2d').drawImage(inspectionVideo, 0, 0, canvas.width, canvas.height);
+    shutterFeedback();
     const jobIdAtCapture = currentJobId;
     // Claim the front-photo slot synchronously. Everything below is async,
     // and a technician who taps twice in quick succession was otherwise
@@ -2122,6 +2184,7 @@
           inspectionChecklistDone.add(zoneAtCapture);
           renderInspectionChecklist();
         }
+        if (photoWalk) photoWalk.photoSaved();
         toast('Photo saved');
         return;
       }
@@ -2152,7 +2215,12 @@
         await window.ReportUI.attachCoverPhoto(jobIdAtCapture, blob)
           .catch((err) => console.warn('[inspection] could not set the cover photo:', err.message || err));
       }
-      toast('Front photo saved — now work through the property.');
+      if (photoWalk) {
+        const nextName = photoWalk.frontSaved();
+        toast('Front photo saved. Next: ' + nextName + '.');
+      } else {
+        toast('Front photo saved — now work through the property.');
+      }
       // Reading it is best-effort and must not hold up the walkthrough.
       draftPropertyFromFrontPhoto(jobIdAtCapture, blob);
     }, 'image/jpeg', 0.88);
@@ -2203,6 +2271,7 @@
       }
       inspectionVideo.srcObject = null;
       inspectionActiveJobId = null;
+      endPhotoWalk();
       hide(inspectionModal);
 
       setStage('updating the job');

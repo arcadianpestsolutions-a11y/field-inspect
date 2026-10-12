@@ -3841,6 +3841,151 @@
     assertEqual(items.length, 0, 'sending a technician out with a checklist for a document with no photo field is pure busywork');
   });
 
+  // ---------- Guided photo walk (photo-walk.js, v118) ----------
+  test('Photo walk: the timber pest inspection is walked outside, then subfloor, then roof void, each shot explained', () => {
+    const win = frame.contentWindow;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection');
+    assert(win.PhotoWalk.isGuided(items), 'the inspection checklist is a guided walk');
+    assert(!win.PhotoWalk.isGuided(win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'termite_certificate')),
+      'a certificate keeps its short chip list');
+    assert(!win.PhotoWalk.isGuided(win.PhotoChecklists.forJob({ jobType: 'pest_treatment' }, null, null)),
+      'and so does a general pest job');
+    const order = ['outside', 'subfloor', 'roof', 'inside'];
+    const visible = items.filter((i) => !i.hidden && i.id !== 'frontElevation');
+    const ranks = visible.map((i) => order.indexOf(i.area));
+    assert(ranks.every((r) => r >= 0), 'every step belongs to a known area');
+    assert(ranks.every((r, k) => k === 0 || r >= ranks[k - 1]), 'outside first, then subfloor, then roof void, never back again');
+    assert(visible.every((i) => i.hint && i.hint.length > 10), 'every photo step says what to capture');
+    for (const id of ['airCon', 'hotWater', 'waterTanks', 'subfloorEntry', 'roofVoidEntry']) {
+      assert(visible.some((i) => i.id === id), id + ' is asked for');
+    }
+    assert(!visible.some((i) => i.area === 'inside'), 'nothing inside is a photo step');
+    const legacy = items.find((i) => i.label === 'Kitchen / Bathroom');
+    assert(legacy && legacy.hidden && legacy.schemaField === 'conducivePhotos',
+      'photos already taken as Kitchen / Bathroom still file into the report, though it is no longer asked for');
+  });
+
+  test('Photo walk: No to the subfloor drops its photos, and a re-opened camera lands on the first step not dealt with', () => {
+    const win = frame.contentWindow;
+    const PW = win.PhotoWalk;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection')
+      .filter((i) => i.id !== 'frontElevation');
+    const fresh = { skipped: [], answers: {}, notesSaved: false, notes: null };
+    const all = PW.buildSteps(items, fresh);
+    assertEqual(all[0].kind, 'photo', 'the walk opens on a photo step');
+    assertEqual(all[0].item.id, 'meterBox', 'starting at the meter box');
+    assertEqual(all[all.length - 1].kind, 'done', 'and ends by saying it is done');
+    assert(all.some((s) => s.kind === 'question' && s.area === 'subfloor'), 'it asks whether there is a subfloor');
+    assertEqual(all.filter((s) => s.kind === 'notes').length, 1, 'the inside is one notes step');
+
+    const slab = { ...fresh, answers: { subfloor: 'no' } };
+    const noSub = PW.buildSteps(items, slab);
+    assert(!noSub.some((s) => s.kind === 'photo' && s.area === 'subfloor'), 'a slab home is not asked for subfloor photos');
+    assert(noSub.some((s) => s.kind === 'question' && s.area === 'subfloor'), 'but the question stays, so the answer can be changed');
+
+    const outsideIds = items.filter((i) => i.area === 'outside' && !i.hidden).map((i) => i.id);
+    const done = new Set(['Meter Box']);
+    const skipped = outsideIds.filter((id) => id !== 'meterBox');
+    const at = PW.firstOpenIndex(noSub, done, { ...slab, skipped });
+    assertEqual(noSub[at].kind, 'question', 'with the outside done or skipped and the subfloor answered...');
+    assertEqual(noSub[at].area, 'roof', '...it resumes at the roof void question');
+  });
+
+  test('Photo walk: the inside ticks are exactly options of the report\'s Interior Obstructions field', () => {
+    const win = frame.contentWindow;
+    const access = win.REPORT_SCHEMA.find((s) => s.id === 'access');
+    const field = access.fields.find((f) => f.id === 'interiorObstructions');
+    for (const n of win.PhotoWalk.INSIDE_NOTES) {
+      assert(field.options.includes(n.value), `"${n.value}" is one of the report's own options`);
+    }
+  });
+
+  test('Photo walk: inside notes go into Areas We Were Unable to Inspect, logged; none takes The Interior back out', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Inside Notes Job', jobType: 'termite' });
+    const ok = await win.ReportUI.recordInteriorObstructions(job.id, ['Furniture', 'Items/belongings stored in cupboards', 'Piano']);
+    assert(ok, 'saved');
+    let report = await win.DB.getReport(job.id);
+    const a = report.sections.access;
+    assertEqual(a.hinderedObstructions, 'Yes', 'obstructions are marked as present');
+    assertEqual(a.hinderedAreas.join(','), 'The Interior', 'the interior is a hindered area');
+    assertEqual(a.interiorObstructions.join(','), 'Furniture,Items/belongings stored in cupboards,Piano', 'with what was ticked, and anything typed');
+    assert(report.auditLog.some((e) => e.event === 'field-changed' && e.fieldId === 'interiorObstructions'),
+      'the change is in the audit trail like any edit');
+
+    report.sections.access.hinderedAreas = ['The Interior', 'Roof Void'];
+    await win.DB.saveReport(report);
+    await win.ReportUI.recordInteriorObstructions(job.id, []);
+    report = await win.DB.getReport(job.id);
+    assertEqual(report.sections.access.hinderedAreas.join(','), 'Roof Void', 'nothing inside takes only The Interior out');
+    assertEqual(report.sections.access.interiorObstructions.length, 0, 'and clears the list');
+
+    report.finalizedAt = Date.now();
+    await win.DB.saveReport(report);
+    const refused = await win.ReportUI.recordInteriorObstructions(job.id, ['Furniture']);
+    assertEqual(refused, false, 'a finalized report is not amended from the camera screen');
+    report = await win.DB.getReport(job.id);
+    assertEqual(report.sections.access.interiorObstructions.length, 0, 'and is left as it was');
+  });
+
+  test('Inspection: after the front photo the walk says so and shows the next step; a photo turns Skip into Next', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Walk Run Job', jobType: 'termite' });
+    await win.showJobViewById(job.id);
+    await wait(300);
+    function realishStream() {
+      const c = win.document.createElement('canvas');
+      c.width = 320; c.height = 240;
+      const ctx = c.getContext('2d');
+      let f = 0;
+      const t = win.setInterval(() => { ctx.fillStyle = `hsl(${f++ % 360},70%,45%)`; ctx.fillRect(0, 0, 320, 240); }, 50);
+      const s = c.captureStream(15);
+      s.__cleanup = () => win.clearInterval(t);
+      return s;
+    }
+    const origPerm = win.navigator.permissions.query;
+    const origGum = win.navigator.mediaDevices.getUserMedia;
+    let made = null;
+    try {
+      win.navigator.permissions.query = async () => ({ state: 'granted' });
+      win.navigator.mediaDevices.getUserMedia = async () => { made = realishStream(); return made; };
+      doc.getElementById('start-inspection-btn').click();
+      await waitFor(() => !doc.getElementById('inspection-modal').classList.contains('hidden'), 'walk step', 4000);
+      await wait(400);
+      const walk = doc.getElementById('inspection-walk');
+      assert(walk.classList.contains('hidden'), 'the walk waits until the front photo is taken');
+
+      doc.getElementById('inspection-still-btn').click();
+      await waitFor(() => !walk.classList.contains('hidden') && /Front photo saved/.test(walk.textContent), 'walk step', 4000);
+      assert(/Meter Box/.test(walk.textContent), 'and names the next shot');
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Meter Box', 'photos now go to that step');
+      const button = (re) => Array.from(walk.querySelectorAll('button')).find((b) => re.test(b.textContent));
+      assert(button(/skip/i), 'before a photo, the step can be skipped');
+
+      doc.getElementById('inspection-still-btn').click();
+      await waitFor(() => !!button(/Next/), 'walk step', 4000);
+      button(/Next/).click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'Next moves to the following step');
+      button(/skip/i).click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Weep Holes', 'and so does Skip');
+      button(/‹/).click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'Back goes back');
+
+      const shots = await win.DB.getCaptures(job.id);
+      assertEqual(shots.map((c) => c.zone).sort().join(','), 'Front Elevation,Meter Box', 'each photo kept its step');
+      assert(win.PhotoWalk.loadState(job.id).skipped.includes('slabEdge'), 'the skip is remembered on this phone');
+
+      doc.getElementById('inspection-finish-btn').click();
+      await waitFor(() => doc.getElementById('inspection-modal').classList.contains('hidden'), 'walk step', 6000);
+      assert(walk.classList.contains('hidden'), 'the walk closes with the camera');
+    } finally {
+      if (made && made.__cleanup) made.__cleanup();
+      win.navigator.permissions.query = origPerm;
+      win.navigator.mediaDevices.getUserMedia = origGum;
+    }
+  });
+
   test('Checklist: which document is active on the job is what decides the checklist, end to end', async () => {
     const win = frame.contentWindow;
     const job = await win.DB.addJob({ name: 'Certificate Checklist Job', jobType: 'termite' });

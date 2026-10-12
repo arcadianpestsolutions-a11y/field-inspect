@@ -20,16 +20,52 @@
 (() => {
   'use strict';
 
+  // The timber pest inspection, in the order a technician actually walks it:
+  // the outside first, then under the floor if there is one, then the roof
+  // void. `area` makes this a guided walk (photo-walk.js) rather than a row of
+  // chips to remember: one shot at a time, with `hint` saying what to capture.
+  //
+  // The inside gets no photo steps. What blocks the view indoors is the same
+  // furniture, fixtures and stored belongings on nearly every job, so it is a
+  // set of ticks written into the report (photo-walk.js INSIDE_NOTES), and a
+  // photo inside is only worth taking when there is damage or damp to show.
+  // `hidden` keeps the old Kitchen / Bathroom label filing photos already
+  // taken against it, without asking for it any more.
+  const CONDUCIVE = { schemaSection: 'conducive', schemaField: 'conducivePhotos' };
+  const ACCESS = { schemaSection: 'access', schemaField: 'accessPhotos' };
   const TERMITE_CHECKLIST = [
-    { id: 'frontElevation', label: 'Front Elevation' }, // handled by the existing front-photo prompt at Start Inspection
-    { id: 'meterBox', label: 'Meter Box', schemaSection: 'findings', schemaField: 'durableNoticePhotos' },
-    { id: 'subfloorEntry', label: 'Subfloor Entry', schemaSection: 'access', schemaField: 'accessPhotos' },
-    { id: 'roofVoidEntry', label: 'Roof Void Entry', schemaSection: 'access', schemaField: 'accessPhotos' },
-    { id: 'weepHoles', label: 'Weep Holes', schemaSection: 'conducive', schemaField: 'conducivePhotos' },
-    { id: 'antCapping', label: 'Ant Capping', schemaSection: 'conducive', schemaField: 'conducivePhotos' },
-    { id: 'slabEdge', label: 'Slab Edge', schemaSection: 'conducive', schemaField: 'conducivePhotos' },
-    { id: 'wetAreas', label: 'Kitchen / Bathroom', schemaSection: 'conducive', schemaField: 'conducivePhotos' },
-    { id: 'exteriorTimbers', label: 'External Timbers', schemaSection: 'conducive', schemaField: 'conducivePhotos' },
+    { id: 'frontElevation', label: 'Front Elevation', area: 'outside' }, // handled by the existing front-photo prompt at Start Inspection
+    { id: 'meterBox', label: 'Meter Box', area: 'outside', schemaSection: 'findings', schemaField: 'durableNoticePhotos',
+      hint: 'Open it and photograph the inside of the door. The termite durable notice is usually there.' },
+    { id: 'slabEdge', label: 'Slab Edge', area: 'outside', ...CONDUCIVE,
+      hint: 'Anywhere the slab edge is covered by soil, paving, render or garden beds.' },
+    { id: 'weepHoles', label: 'Weep Holes', area: 'outside', ...CONDUCIVE,
+      hint: 'Weep holes that are blocked, buried or bridged.' },
+    { id: 'airCon', label: 'Air Con Unit', area: 'outside', ...CONDUCIVE,
+      hint: 'The outdoor unit and where its drain drips. Water against a wall draws termites.' },
+    { id: 'hotWater', label: 'Hot Water System', area: 'outside', ...CONDUCIVE,
+      hint: 'The relief valve overflow, and where it drains to.' },
+    { id: 'waterTanks', label: 'Water Tanks / Downpipes', area: 'outside', ...CONDUCIVE,
+      hint: 'Tanks and their overflow, and any downpipe that drains against the house.' },
+    { id: 'gardenBeds', label: 'Garden Beds Against Walls', area: 'outside', ...CONDUCIVE,
+      hint: 'Garden beds, mulch or soil built up against the walls.' },
+    { id: 'exteriorTimbers', label: 'External Timbers', area: 'outside', ...CONDUCIVE,
+      hint: 'Fences, retaining walls, sleepers, decks, pergolas: any timber touching the ground.' },
+    { id: 'trees', label: 'Trees & Stumps', area: 'outside', schemaSection: 'conducive', schemaField: 'treePhotos',
+      hint: 'Trees close to the house, and any old stumps.' },
+    { id: 'outbuildings', label: 'Sheds & Stored Items', area: 'outside', ...CONDUCIVE,
+      hint: 'Sheds, cubbies, and timber or rubbish stored against the house.' },
+    { id: 'subfloorEntry', label: 'Subfloor Entry', area: 'subfloor', ...ACCESS,
+      hint: 'The way in, then the view across the subfloor from it.' },
+    { id: 'antCapping', label: 'Piers & Ant Capping', area: 'subfloor', ...CONDUCIVE,
+      hint: 'Piers and ant caps that are missing, damaged or bridged.' },
+    { id: 'subfloorConditions', label: 'Subfloor Damp / Ventilation', area: 'subfloor', ...CONDUCIVE,
+      hint: 'Damp soil, leaking pipes, poor airflow, timber debris on the ground.' },
+    { id: 'roofVoidEntry', label: 'Roof Void Entry', area: 'roof', ...ACCESS,
+      hint: 'The manhole, then the view across the roof void from it.' },
+    { id: 'roofTimbers', label: 'Roof Timbers', area: 'roof', ...ACCESS,
+      hint: 'Rafters, battens and trusses. Get close to any damage or mud leads.' },
+    { id: 'wetAreas', label: 'Kitchen / Bathroom', area: 'inside', hidden: true, ...CONDUCIVE },
   ];
 
   // A termite job's single report can represent any one of four document

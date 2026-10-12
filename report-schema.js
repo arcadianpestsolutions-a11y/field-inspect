@@ -1,4 +1,4 @@
-// Report schema — single source of truth for the digital Termite Inspection
+// Report schema — single source of truth for the digital Timber Pest Inspection
 // Report, modelled on an AS 3660.2-2017 report template.
 //
 // Each section has: id, number, title, icon, color, fields[]

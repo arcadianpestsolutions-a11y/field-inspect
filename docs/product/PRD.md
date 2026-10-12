@@ -53,7 +53,7 @@ Priority: **M** must, **S** should, **C** could.
 ### 4.2 Capture
 | ID | Requirement | P | Status |
 |---|---|---|---|
-| C1 | Photo capture by zone/room, with checklists per job type | M | Built |
+| C1 | Photo capture by zone/room, with checklists per job type; a guided step-by-step walk for the timber pest inspection (v118) | M | Built |
 | C2 | Voice notes attached to captures; feed the AI draft | S | Built |
 | C3 | Start/finish inspection with continuous capture and live preview | S | Built |
 | C4 | Annotate and zoom photos; bulk select, move, delete | S | Built |

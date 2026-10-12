@@ -953,6 +953,52 @@
       await DB.saveReport(report);
       if (currentJobId === jobId) currentReport = report;
     },
+    // The inside step of the photo walk (photo-walk.js): what blocked the view
+    // indoors, ticked by the technician, written into Areas We Were Unable to
+    // Inspect. Their own answer, not a suggestion, so it is set directly and
+    // logged like any edit. An empty list means nothing blocked the view
+    // inside, which takes "The Interior" back out of the hindered areas.
+    // Refuses (false) on a finalized report rather than amend it from the
+    // camera screen.
+    async recordInteriorObstructions(jobId, list) {
+      const report = await loadOrCreateReport(jobId);
+      if (report.finalizedAt) return false;
+      const schemaSection = (window.REPORT_SCHEMA || []).find((s) => s.id === 'access') || { fields: [] };
+      const fieldOf = (id) => (schemaSection.fields || []).find((f) => f.id === id) || { label: id, options: [] };
+      const access = { ...(report.sections.access || {}) };
+      const items = Array.from(new Set((list || []).map((s) => String(s).trim()).filter(Boolean)));
+      const areas = new Set(Array.isArray(access.hinderedAreas) ? access.hinderedAreas : []);
+      if (items.length) areas.add('The Interior'); else areas.delete('The Interior');
+      const order = fieldOf('hinderedAreas').options || [];
+      const rank = (v) => (order.indexOf(v) === -1 ? order.length : order.indexOf(v));
+      const next = {
+        hinderedAreas: Array.from(areas).sort((a, b) => rank(a) - rank(b)),
+        interiorObstructions: items,
+      };
+      if (items.length) next.hinderedObstructions = 'Yes';
+      let changed = false;
+      for (const [fieldId, to] of Object.entries(next)) {
+        const from = access[fieldId];
+        if (JSON.stringify(from === undefined ? null : from) === JSON.stringify(to)) continue;
+        appendAudit(report, {
+          event: 'field-changed',
+          sectionId: 'access',
+          sectionTitle: schemaSection.title || 'access',
+          fieldId,
+          label: fieldOf(fieldId).label,
+          from: summariseValue(from),
+          to: summariseValue(to),
+          via: 'photo walk',
+        });
+        access[fieldId] = to;
+        changed = true;
+      }
+      if (!changed) return true;
+      report.sections.access = access;
+      await DB.saveReport(report);
+      if (currentJobId === jobId) currentReport = report;
+      return true;
+    },
     // Generates a real PDF Blob for a job's report (for emailing — see
     // email.js) — jobId defaults to whichever report is currently open.
     async generatePdfBlob(jobId) {

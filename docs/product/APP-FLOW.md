@@ -39,7 +39,14 @@ Enquiry -> Lead (optional) -> Job created -> Booked in diary
    email, invalid) is shown as plain text and the job is still saved.
 
 ### 2.2 Inspect
-1. Open job -> Start Inspection. Camera opens with the zone/checklist for the job type.
+1. Open job -> Start Inspection. Camera opens on one instruction: photograph the front of the property (landscape; it becomes the report cover).
+   For a **timber pest inspection** (v118) the screen then says "Front photo saved. Next: Meter Box" and walks the property one step at a time, in walking order:
+   - **Outside:** meter box (durable notice), slab edge, weep holes, air con unit, hot water system, water tanks / downpipes, garden beds against walls, external timbers, trees and stumps, sheds and stored items.
+   - **Subfloor:** "Is there a subfloor to get under?" No skips it. Yes: entry, piers and ant capping, damp / ventilation.
+   - **Roof void:** "Is there a roof void you can get into?" Yes: entry, roof timbers.
+   - **Inside, no photos:** tick what blocked the view (furniture against walls, built-in fixtures, floor coverings, belongings against walls or in cupboards; all ticked to start), plus anything typed. Saved into Areas We Were Unable to Inspect. Photograph inside only for damage or damp.
+   - **Done:** says so and points at Generate Form.
+   Each step says what to capture. "Not here, skip" moves on; after a photo it becomes "Next". Back goes back, the chips along the bottom jump to any step, and a zone can still be typed by hand. Every photo flashes and buzzes. Where the walk is up to is remembered on that phone, per job. Other job types keep the chip checklist.
 2. Take photos by zone; add voice notes; annotate. Everything is stored locally;
    upload to private storage happens when online.
 3. Finish Inspection stamps start/end times. Status moves to Inspection In Progress.
