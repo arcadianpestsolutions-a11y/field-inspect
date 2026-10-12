@@ -42,8 +42,9 @@ Enquiry -> Lead (optional) -> Job created -> Booked in diary
 1. Open job -> Start Inspection. Camera opens on one instruction: photograph the front of the property (landscape; it becomes the report cover).
    For a **timber pest inspection** (v118) the screen then says "Front photo saved. Next: Meter Box" and walks the property one step at a time, in walking order:
    - **Outside:** meter box (durable notice), slab edge, weep holes, air con unit, hot water system, water tanks / downpipes, garden beds against walls, external timbers, trees and stumps, sheds and stored items.
-   - **Subfloor:** "Is there a subfloor to get under?" No skips it. Yes: entry, piers and ant capping, damp / ventilation.
-   - **Roof void:** "Is there a roof void you can get into?" Yes: entry, roof timbers.
+   - **Subfloor:** "Is there a subfloor?" **Yes, going under**: entry, piers and ant capping, damp / ventilation. **Yes, but I can't get in**: one photo of why. **No, it's a slab**: no subfloor photos.
+   - **Roof void:** "Is there a roof void?" **Yes, going in**: entry, roof timbers. **Yes, but I can't get in**: one photo of why. **No roof void**: nothing.
+   - The answers go into the report (v119): a slab sets Floor Type to Concrete Slab and Subfloor drainage to Not applicable; a subfloor turns a blank or slab Floor Type into Timber Floor (a type already chosen is left alone); "can't get in" sets Restricted Access to Yes and adds "Subfloor: could not be accessed at the time of inspection." (or the roof void line) to Restricted Access Details. Changing an answer takes back exactly the line it wrote, never anything typed. All logged in the audit trail; a finalized report is not changed.
    - **Inside, no photos:** tick what blocked the view (furniture against walls, built-in fixtures, floor coverings, belongings against walls or in cupboards; all ticked to start), plus anything typed. Saved into Areas We Were Unable to Inspect. Photograph inside only for damage or damp.
    - **Done:** says so and points at Generate Form.
    Each step says what to capture. "Not here, skip" moves on; after a photo it becomes "Next". Back goes back, the chips along the bottom jump to any step, and a zone can still be typed by hand. Every photo flashes and buzzes. Where the walk is up to is remembered on that phone, per job. Other job types keep the chip checklist.

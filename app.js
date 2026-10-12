@@ -2066,12 +2066,25 @@
             if (!(window.ReportUI && window.ReportUI.recordInteriorObstructions)) return false;
             try {
               const saved = await window.ReportUI.recordInteriorObstructions(startJobId, list);
-              if (!saved) { toast('This report is finalized, so the inside notes were not changed.'); return false; }
+              if (!saved) { toast('This report is finalized, so the inside notes were not changed.'); return true; }
               toast(list.length ? 'Inside notes added to the report.' : 'Saved: nothing blocked the view inside.');
               return true;
             } catch (err) {
               if (window.ErrorLog) window.ErrorLog.note(err, 'photo walk: inside notes');
               toast(DB.describeSaveFailure(err, 'The inside notes'));
+              return false;
+            }
+          },
+          saveAnswer: async (area, value) => {
+            if (!(window.ReportUI && window.ReportUI.recordAccessAnswer)) return true;
+            try {
+              const saved = await window.ReportUI.recordAccessAnswer(startJobId, area, value);
+              if (!saved) { toast('This report is finalized, so that answer was not written into it.'); return true; }
+              toast('Saved to the report.');
+              return true;
+            } catch (err) {
+              if (window.ErrorLog) window.ErrorLog.note(err, 'photo walk: ' + area + ' answer');
+              toast(DB.describeSaveFailure(err, 'That answer'));
               return false;
             }
           },

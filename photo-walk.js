@@ -7,31 +7,45 @@
 // step at a time, in the order the property is walked:
 //
 //   Outside      every photo step for the exterior
-//   Subfloor     "Is there a subfloor?" first; No skips its steps
-//   Roof void    the same question, then its steps
+//   Subfloor     "Is there a subfloor?" first: Yes, Yes but can't get in, or
+//                No (a slab). Only Yes walks its photo steps; can't get in
+//                asks for one photo of why
+//   Roof void    the same three answers, then its steps
 //   Inside       no photos: a few ticks for what blocked the view, written
 //                into the report's Areas We Were Unable to Inspect section
 //   Done         says so, and points at Generate Form
+//
+// The answers to the two questions are written into the report too (v119,
+// ReportUI.recordAccessAnswer): floor type, subfloor drainage, and a
+// restricted-access line for an area that could not be entered.
 //
 // Each step sets the zone for the photos taken on it, exactly as tapping its
 // chip does, so filing them into the report is unchanged. Nothing is ever
 // forced: Skip moves on, Back goes back, the chips still jump anywhere, and a
 // zone typed by hand still works for something off the list.
 //
-// Where the walk is up to (skips and the Yes/No answers) is kept on this phone
-// in localStorage, per job. It is about this visit on this device, so it has
-// no business being synced, and a re-opened camera picks up where it left off.
+// Where the walk is up to (skips and answers) is kept on this phone in
+// localStorage, per job. It is about this visit on this device, so it has no
+// business being synced, and a re-opened camera picks up where it left off.
 //
 // EXPOSES: window.PhotoWalk = { isGuided, buildSteps, firstOpenIndex,
-//   loadState, saveState, mount, AREAS, INSIDE_NOTES }
+//   loadState, saveState, mount, AREAS, INSIDE_NOTES, INSIDE_ZONE }
 
 (() => {
   'use strict';
 
   const AREAS = [
     { id: 'outside', title: 'Outside' },
-    { id: 'subfloor', title: 'Subfloor', ask: 'Is there a subfloor to get under?', no: 'No, slab' },
-    { id: 'roof', title: 'Roof void', ask: 'Is there a roof void you can get into?', no: 'No access' },
+    { id: 'subfloor', title: 'Subfloor', ask: 'Is there a subfloor?', answers: [
+      { value: 'yes', label: 'Yes, going under' },
+      { value: 'blocked', label: 'Yes, but I can’t get in' },
+      { value: 'no', label: 'No, it’s a slab' },
+    ] },
+    { id: 'roof', title: 'Roof void', ask: 'Is there a roof void?', answers: [
+      { value: 'yes', label: 'Yes, going in' },
+      { value: 'blocked', label: 'Yes, but I can’t get in' },
+      { value: 'no', label: 'No roof void' },
+    ] },
     { id: 'inside', title: 'Inside', notes: true },
   ];
 
@@ -73,8 +87,10 @@
   }
 
   // The ordered steps for this job as things stand. The front photo is left
-  // out (it has its own prompt) and so are hidden items; an area answered No
-  // keeps its question, so the answer can be changed, but loses its photos.
+  // out (it has its own prompt) and so are hidden items. An answered question
+  // stays in the list, so the answer can be changed: No drops the area's
+  // photos, and can't-get-in keeps only the steps that say what to show
+  // instead (`blockedHint`: why it could not be entered).
   function buildSteps(items, state) {
     const st = state || blankState();
     const steps = [];
@@ -82,9 +98,16 @@
       if (area.notes) { steps.push({ kind: 'notes', area: area.id, areaTitle: area.title }); continue; }
       const photos = items.filter((i) => i.area === area.id && !i.hidden && i.id !== 'frontElevation');
       if (!photos.length) continue;
-      if (area.ask) steps.push({ kind: 'question', area: area.id, areaTitle: area.title, ask: area.ask, no: area.no });
-      if (area.ask && st.answers[area.id] === 'no') continue;
-      for (const item of photos) steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item });
+      if (area.ask) steps.push({ kind: 'question', area: area.id, areaTitle: area.title, ask: area.ask, answers: area.answers });
+      const answer = area.ask ? st.answers[area.id] : null;
+      if (answer === 'no') continue;
+      for (const item of photos) {
+        if (answer === 'blocked') {
+          if (item.blockedHint) steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item, hint: item.blockedHint });
+        } else {
+          steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item, hint: item.hint });
+        }
+      }
     }
     steps.push({ kind: 'done', area: 'done', areaTitle: 'Done' });
     return steps;
@@ -120,8 +143,9 @@
   // container: the card element over the camera preview.
   // items: the job's checklist. done(): the set of zone labels with a photo.
   // setZone(label): sets the zone box as if typed. saveNotes(list): writes
-  // the inside ticks into the report, resolving true when it did.
-  function mount({ container, jobId, items, done, setZone, saveNotes, visible: startVisible }) {
+  // the inside ticks into the report, resolving true when it did;
+  // saveAnswer(area, value) does the same for a question's answer.
+  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, visible: startVisible }) {
     let state = loadState(jobId);
     let steps = buildSteps(items, state);
     let index = firstOpenIndex(steps, done(), state);
@@ -156,8 +180,18 @@
       }
     }
 
-    function answer(value) {
+    // Written into the report first; the walk only moves on once it is, so a
+    // failed save leaves the question up to answer again.
+    async function answer(value) {
+      if (saving) return;
       const step = steps[index];
+      saving = true;
+      let ok = true;
+      if (saveAnswer) {
+        try { ok = await saveAnswer(step.area, value); } catch (err) { ok = false; }
+      }
+      saving = false;
+      if (!ok) { render(); return; }
       state.answers[step.area] = value;
       persist();
       rebuild(step);
@@ -194,7 +228,7 @@
       if (step.kind === 'photo') {
         const got = doneSet.has(step.item.label);
         container.appendChild(el('div', 'walk-title', (got ? '✓ ' : '') + step.item.label));
-        if (step.item.hint) container.appendChild(el('div', 'walk-hint', step.item.hint));
+        if (step.hint) container.appendChild(el('div', 'walk-hint', step.hint));
         if (got) {
           container.appendChild(el('div', 'walk-got', 'Photo saved. Take another, or go on.'));
           actions.appendChild(btn('Next ›', 'walk-primary', next));
@@ -203,11 +237,17 @@
         }
       } else if (step.kind === 'question') {
         container.appendChild(el('div', 'walk-title', step.ask));
+        container.appendChild(el('div', 'walk-hint', 'Your answer goes into the report.'));
         const current = state.answers[step.area];
-        const no = btn(step.no, 'walk-secondary' + (current === 'no' ? ' chosen' : ''), () => answer('no'));
-        const yes = btn('Yes', 'walk-primary' + (current === 'yes' ? ' chosen' : ''), () => answer('yes'));
-        actions.appendChild(no);
-        actions.appendChild(yes);
+        const choices = el('div', 'walk-choices');
+        step.answers.forEach((a, k) => {
+          const b = btn((current === a.value ? '✓ ' : '') + a.label,
+            (k === 0 ? 'walk-primary' : 'walk-secondary') + (current === a.value ? ' chosen' : ''),
+            (e) => { e.currentTarget.disabled = true; answer(a.value); });
+          b.dataset.answer = a.value;
+          choices.appendChild(b);
+        });
+        container.appendChild(choices);
       } else if (step.kind === 'notes') {
         container.appendChild(el('div', 'walk-title', 'Inside: no photos needed'));
         container.appendChild(el('div', 'walk-hint',

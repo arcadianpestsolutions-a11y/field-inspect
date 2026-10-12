@@ -3891,6 +3891,68 @@
     assertEqual(noSub[at].area, 'roof', '...it resumes at the roof void question');
   });
 
+  test('Photo walk: can\'t get in keeps one photo step, of why', () => {
+    const win = frame.contentWindow;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection')
+      .filter((i) => i.id !== 'frontElevation');
+    const steps = win.PhotoWalk.buildSteps(items, { skipped: [], answers: { subfloor: 'blocked', roof: 'blocked' }, notesSaved: false, notes: null });
+    const sub = steps.filter((s) => s.kind === 'photo' && s.area === 'subfloor');
+    const roof = steps.filter((s) => s.kind === 'photo' && s.area === 'roof');
+    assertEqual(sub.map((s) => s.item.id).join(','), 'subfloorEntry', 'only the subfloor entry is asked for');
+    assertEqual(roof.map((s) => s.item.id).join(','), 'roofVoidEntry', 'and only the roof void entry');
+    assert(/why/i.test(sub[0].hint) && /why/i.test(roof[0].hint), 'each asking to show why it could not be entered');
+  });
+
+  test('Photo walk: subfloor and roof answers fill the report, and changing them takes back only what they wrote', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Access Answers Job', jobType: 'termite' });
+    const get = async () => (await win.DB.getReport(job.id)).sections;
+    const SUB = 'Subfloor: could not be accessed at the time of inspection.';
+    const ROOF = 'Roof void: could not be accessed at the time of inspection.';
+
+    assert(await win.ReportUI.recordAccessAnswer(job.id, 'subfloor', 'no'), 'saved');
+    let s = await get();
+    assertEqual(s.property.floorType, 'Concrete Slab', 'a slab sets the floor type');
+    assertEqual(s.conducive.subfloorDrainage, 'Not applicable', 'and subfloor drainage is not applicable');
+
+    await win.ReportUI.recordAccessAnswer(job.id, 'subfloor', 'yes');
+    s = await get();
+    assertEqual(s.property.floorType, 'Timber Floor', 'a subfloor changes a slab to a timber floor');
+    assert(!('subfloorDrainage' in s.conducive), 'and drainage goes back to its default, not a guess');
+
+    const report = await win.DB.getReport(job.id);
+    report.sections.property.floorType = 'Suspended Concrete';
+    report.sections.access = { ...(report.sections.access || {}), restrictedAccess: 'Yes', restrictedAccessDetails: 'Garage locked.' };
+    await win.DB.saveReport(report);
+
+    await win.ReportUI.recordAccessAnswer(job.id, 'subfloor', 'blocked');
+    await win.ReportUI.recordAccessAnswer(job.id, 'roof', 'blocked');
+    s = await get();
+    assertEqual(s.property.floorType, 'Suspended Concrete', 'a floor type the technician chose is left alone');
+    assertEqual(s.access.restrictedAccess, 'Yes', 'restricted access is recorded');
+    assertEqual(s.access.restrictedAccessDetails, ['Garage locked.', SUB, ROOF].join('\n'),
+      'one line for each area that could not be entered, after what was typed');
+
+    await win.ReportUI.recordAccessAnswer(job.id, 'subfloor', 'yes');
+    await win.ReportUI.recordAccessAnswer(job.id, 'roof', 'no');
+    s = await get();
+    assertEqual(s.access.restrictedAccessDetails, 'Garage locked.', 'changing the answers takes back only those lines');
+    assertEqual(s.access.restrictedAccess, 'Yes', 'and a restriction the technician recorded stays');
+
+    const job2 = await win.DB.addJob({ name: 'Access Answers Job 2', jobType: 'termite' });
+    await win.ReportUI.recordAccessAnswer(job2.id, 'roof', 'blocked');
+    await win.ReportUI.recordAccessAnswer(job2.id, 'roof', 'yes');
+    const a2 = (await win.DB.getReport(job2.id)).sections.access;
+    assert(!a2.restrictedAccessDetails && !('restrictedAccess' in a2), 'when the walk wrote the only restriction, changing the answer clears it');
+    const log = (await win.DB.getReport(job2.id)).auditLog.filter((e) => e.via === 'photo walk');
+    assert(log.some((e) => e.fieldId === 'restrictedAccess'), 'every change is in the audit trail');
+
+    const r2 = await win.DB.getReport(job2.id);
+    r2.finalizedAt = Date.now();
+    await win.DB.saveReport(r2);
+    assertEqual(await win.ReportUI.recordAccessAnswer(job2.id, 'roof', 'blocked'), false, 'a finalized report is not changed');
+  });
+
   test('Photo walk: the inside ticks are exactly options of the report\'s Interior Obstructions field', () => {
     const win = frame.contentWindow;
     const access = win.REPORT_SCHEMA.find((s) => s.id === 'access');
@@ -3971,6 +4033,19 @@
       assertEqual(doc.getElementById('inspection-zone-input').value, 'Weep Holes', 'and so does Skip');
       button(/‹/).click();
       assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'Back goes back');
+
+      // The subfloor question, reached by jumping to its first step and back.
+      const chip = Array.from(doc.querySelectorAll('.inspection-checklist-chip')).find((c) => /Subfloor Entry/.test(c.textContent));
+      chip.click();
+      button(/‹/).click();
+      assert(/Is there a subfloor\?/.test(walk.textContent), 'the subfloor question is asked');
+      assertEqual(walk.querySelectorAll('[data-answer]').length, 3, 'with three answers: going under, can\'t get in, slab');
+      walk.querySelector('[data-answer="no"]').click();
+      await waitFor(async () => {
+        const r = await win.DB.getReport(job.id);
+        return r && r.sections.property && r.sections.property.floorType === 'Concrete Slab';
+      }, 'the slab answer reaches the report', 3000);
+      await waitFor(() => /Is there a roof void\?/.test(walk.textContent), 'a slab goes straight on to the roof void', 3000);
 
       const shots = await win.DB.getCaptures(job.id);
       assertEqual(shots.map((c) => c.zone).sort().join(','), 'Front Elevation,Meter Box', 'each photo kept its step');

@@ -519,6 +519,45 @@
     return report.auditLog;
   }
 
+  // ---------- Answers given on the camera screen (photo-walk.js) ----------
+  // The technician's own answers, not suggestions, so they are written
+  // straight into the report and logged like any edit. `to: undefined` takes
+  // a field back to its schema default.
+  const WALK_RESTRICTED_LINES = {
+    subfloor: 'Subfloor: could not be accessed at the time of inspection.',
+    roof: 'Roof void: could not be accessed at the time of inspection.',
+  };
+
+  function walkFieldDef(sectionId, fieldId) {
+    const section = (window.REPORT_SCHEMA || []).find((s) => s.id === sectionId) || { fields: [] };
+    const field = (section.fields || []).find((f) => f.id === fieldId);
+    return { sectionTitle: section.title || sectionId, label: field ? field.label : fieldId, options: (field && field.options) || [] };
+  }
+
+  function applyWalkChanges(report, changes) {
+    let changed = false;
+    for (const { sectionId, fieldId, to } of changes) {
+      const section = { ...(report.sections[sectionId] || {}) };
+      const from = section[fieldId];
+      if (JSON.stringify(from === undefined ? null : from) === JSON.stringify(to === undefined ? null : to)) continue;
+      const def = walkFieldDef(sectionId, fieldId);
+      appendAudit(report, {
+        event: 'field-changed',
+        sectionId,
+        sectionTitle: def.sectionTitle,
+        fieldId,
+        label: def.label,
+        from: summariseValue(from),
+        to: summariseValue(to),
+        via: 'photo walk',
+      });
+      if (to === undefined) delete section[fieldId]; else section[fieldId] = to;
+      report.sections[sectionId] = section;
+      changed = true;
+    }
+    return changed;
+  }
+
   // ---------- Report load / prefill ----------
   async function loadOrCreateReport(jobId, wantedDocumentType) {
     let report = await DB.getReport(jobId);
@@ -963,40 +1002,77 @@
     async recordInteriorObstructions(jobId, list) {
       const report = await loadOrCreateReport(jobId);
       if (report.finalizedAt) return false;
-      const schemaSection = (window.REPORT_SCHEMA || []).find((s) => s.id === 'access') || { fields: [] };
-      const fieldOf = (id) => (schemaSection.fields || []).find((f) => f.id === id) || { label: id, options: [] };
-      const access = { ...(report.sections.access || {}) };
+      const access = report.sections.access || {};
       const items = Array.from(new Set((list || []).map((s) => String(s).trim()).filter(Boolean)));
       const areas = new Set(Array.isArray(access.hinderedAreas) ? access.hinderedAreas : []);
       if (items.length) areas.add('The Interior'); else areas.delete('The Interior');
-      const order = fieldOf('hinderedAreas').options || [];
+      const order = walkFieldDef('access', 'hinderedAreas').options || [];
       const rank = (v) => (order.indexOf(v) === -1 ? order.length : order.indexOf(v));
-      const next = {
-        hinderedAreas: Array.from(areas).sort((a, b) => rank(a) - rank(b)),
-        interiorObstructions: items,
-      };
-      if (items.length) next.hinderedObstructions = 'Yes';
-      let changed = false;
-      for (const [fieldId, to] of Object.entries(next)) {
-        const from = access[fieldId];
-        if (JSON.stringify(from === undefined ? null : from) === JSON.stringify(to)) continue;
-        appendAudit(report, {
-          event: 'field-changed',
-          sectionId: 'access',
-          sectionTitle: schemaSection.title || 'access',
-          fieldId,
-          label: fieldOf(fieldId).label,
-          from: summariseValue(from),
-          to: summariseValue(to),
-          via: 'photo walk',
-        });
-        access[fieldId] = to;
-        changed = true;
+      const changes = [
+        { sectionId: 'access', fieldId: 'hinderedAreas', to: Array.from(areas).sort((a, b) => rank(a) - rank(b)) },
+        { sectionId: 'access', fieldId: 'interiorObstructions', to: items },
+      ];
+      if (items.length) changes.push({ sectionId: 'access', fieldId: 'hinderedObstructions', to: 'Yes' });
+      if (applyWalkChanges(report, changes)) {
+        await DB.saveReport(report);
+        if (currentJobId === jobId) currentReport = report;
       }
-      if (!changed) return true;
-      report.sections.access = access;
-      await DB.saveReport(report);
-      if (currentJobId === jobId) currentReport = report;
+      return true;
+    },
+    // The subfloor and roof void questions of the photo walk. Each has three
+    // answers, because "no" meant two different things a report must keep
+    // apart: there is none (a slab, a flat roof), or there is one and it could
+    // not be entered, which is a limitation the client has to be told about.
+    //
+    //   subfloor yes      floor type Timber Floor (if it was blank or slab)
+    //   subfloor blocked  the same, plus a restricted-access line
+    //   subfloor no       floor type Concrete Slab, subfloor drainage N/A
+    //   roof blocked      a restricted-access line
+    //   roof yes / no     no restricted-access line
+    //
+    // The restricted-access lines are fixed sentences, so changing the answer
+    // takes back exactly the line this wrote and nothing a technician typed.
+    // Same rules as the inside notes: logged, refused on a finalized report.
+    async recordAccessAnswer(jobId, area, answer) {
+      if (!['subfloor', 'roof'].includes(area) || !['yes', 'blocked', 'no'].includes(answer)) return false;
+      const report = await loadOrCreateReport(jobId);
+      if (report.finalizedAt) return false;
+      const property = report.sections.property || {};
+      const conducive = report.sections.conducive || {};
+      const access = report.sections.access || {};
+      const changes = [];
+      if (area === 'subfloor') {
+        if (answer === 'no') {
+          changes.push({ sectionId: 'property', fieldId: 'floorType', to: 'Concrete Slab' });
+          changes.push({ sectionId: 'conducive', fieldId: 'subfloorDrainage', to: 'Not applicable' });
+        } else {
+          if (!property.floorType || property.floorType === 'Concrete Slab') {
+            changes.push({ sectionId: 'property', fieldId: 'floorType', to: 'Timber Floor' });
+          }
+          // Back to the schema default rather than a guess.
+          if (conducive.subfloorDrainage === 'Not applicable') {
+            changes.push({ sectionId: 'conducive', fieldId: 'subfloorDrainage', to: undefined });
+          }
+        }
+      }
+      const line = WALK_RESTRICTED_LINES[area];
+      const lines = String(access.restrictedAccessDetails || '').split('\n').filter((l) => l.trim() && l.trim() !== line);
+      if (answer === 'blocked') lines.push(line);
+      const details = lines.join('\n');
+      if (details !== String(access.restrictedAccessDetails || '')) {
+        changes.push({ sectionId: 'access', fieldId: 'restrictedAccessDetails', to: details || undefined });
+      }
+      if (answer === 'blocked') {
+        changes.push({ sectionId: 'access', fieldId: 'restrictedAccess', to: 'Yes' });
+      } else if (!details && access.restrictedAccess === 'Yes'
+        && String(access.restrictedAccessDetails || '').split('\n').some((l) => l.trim() === line)) {
+        // The only restriction recorded was the one this walk wrote.
+        changes.push({ sectionId: 'access', fieldId: 'restrictedAccess', to: undefined });
+      }
+      if (applyWalkChanges(report, changes)) {
+        await DB.saveReport(report);
+        if (currentJobId === jobId) currentReport = report;
+      }
       return true;
     },
     // Generates a real PDF Blob for a job's report (for emailing — see
