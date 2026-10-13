@@ -37,7 +37,7 @@
 //   URL: https://<project>.supabase.co/functions/v1/sms-inbound?k=<your token>
 //   Method: POST (any of POST, JSON or GET works).
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 import { normaliseAuMobile } from '../_shared/reminder-sms.js';
 import { decideInbound, parseInbound, sameSecret } from '../_shared/sms-inbound.js';
 

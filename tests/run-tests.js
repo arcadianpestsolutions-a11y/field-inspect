@@ -11184,6 +11184,50 @@
     assert(/const DB_VERSION = 12;/.test(src), 'version 12 is the one with the SOP library');
   });
 
+  // ---------- Test mode for client messages, pinned server library (v124) ----------
+  test('Test mode: when a list is set, only those numbers and addresses get messages', async () => {
+    const A = await import('../supabase/functions/_shared/allow-list.js');
+    assertEqual(A.parseNumberList(''), null, 'no list: normal running');
+    assertEqual(A.parseNumberList(undefined), null, 'not set: normal running');
+    assert(A.numberAllowed('0499 999 999', null), 'with no list, anyone');
+    const nums = A.parseNumberList('0400 111 222, +61 400 333 444; (02) 9999 9999');
+    assert(A.numberAllowed('+61400111222', nums), '0400 111 222 and +61400111222 are the same phone');
+    assert(A.numberAllowed('0400333444', nums), 'any way it is written');
+    assert(!A.numberAllowed('0499 999 999', nums), 'a real client’s mobile is refused');
+    assertEqual(nums.size, 2, 'a landline on the list is ignored: it cannot get a text');
+    const typo = A.parseNumberList('04001112');
+    assert(typo && typo.size === 0 && !A.numberAllowed('0400111222', typo), 'a list with nothing valid in it blocks everything, the safe way round');
+    const emails = A.parseEmailList('Me@Example.com, office@example.com');
+    assert(A.emailAllowed('me@example.com', emails), 'emails match whatever the capitals');
+    assert(!A.emailAllowed('client@gmail.com', emails), 'and a client’s address is refused');
+    assert(A.emailAllowed('client@gmail.com', A.parseEmailList('  ')), 'a blank list means no test mode');
+  });
+
+  test('Test mode: every automated send and every report email checks the list', async () => {
+    const send = await (await fetch('../supabase/functions/send-client-message/index.ts', { cache: 'reload' })).text();
+    assert(/if \(!numberAllowed\(composed\.to, SMS_ALLOWED\)\) return 'not-on-test-list';/.test(send), 'texts are refused in the pre-check');
+    assert(/if \(!emailAllowed\(to, EMAIL_ALLOWED\)\) return 'not-on-test-list';/.test(send), 'and emails');
+    assert((send.match(/reason: 'not-on-test-list'/g) || []).length >= 2, 'and checked again at the moment of sending, for both');
+    assert(/'not-on-test-list',\n\]\);/.test(send), 'and nobody is put on the call list for it');
+    const report = await (await fetch('../supabase/functions/send-report-email/index.ts', { cache: 'reload' })).text();
+    assert(/if \(!emailAllowed\(recipientEmail, EMAIL_ALLOWED\)\)/.test(report), 'a report or invoice emailed by hand obeys it too');
+    const comms = await (await fetch('../comms.js', { cache: 'reload' })).text();
+    assert(/'not-on-test-list':/.test(comms), 'and the app says why in plain words');
+  });
+
+  test('Server: every function pins the exact database library version', async () => {
+    const fns = ['analyze-inspection', 'calendar-feed', 'check-email-status', 'client-portal', 'schedule-agent',
+      'send-client-message', 'send-report-email', 'sms-inbound', 'xero'];
+    const versions = new Set();
+    for (const fn of fns) {
+      const src = await (await fetch(`../supabase/functions/${fn}/index.ts`, { cache: 'reload' })).text();
+      const m = /esm\.sh\/@supabase\/supabase-js@([0-9.]+)'/.exec(src);
+      assert(m && /^\d+\.\d+\.\d+$/.test(m[1]), `${fn} pins an exact version (a bare @2 takes whatever is newest at deploy)`);
+      versions.add(m[1]);
+    }
+    assertEqual(versions.size, 1, 'and they all pin the same one');
+  });
+
   // ---------- SOP library (v122, migration 036) ----------
   test('SOPs: draft, approve, revise, approve again; every version kept word for word', () => {
     const S = frame.contentWindow.SopRules;

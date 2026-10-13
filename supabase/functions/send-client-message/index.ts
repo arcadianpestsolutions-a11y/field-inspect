@@ -49,6 +49,11 @@
 //   CLICKSEND_USERNAME, CLICKSEND_API_KEY
 // Optional, for SMS:
 //   SMS_SENDER_ID      up to 11 characters, shown as the sender (ArcadianPst)
+// Optional, test mode (see _shared/allow-list.js): when set, ONLY these get messages.
+//   SMS_ALLOWED_NUMBERS      comma-separated mobiles
+//   EMAIL_ALLOWED_ADDRESSES  comma-separated email addresses
+// Optional, the portal page for the agreement link in sweeps (v120):
+//   PORTAL_URL
 //
 // WHO IS SENDING comes from the business's own record (the organisations row
 // you edit under Business in the app) — name, ABN, address, phone and email —
@@ -58,7 +63,7 @@
 //   BUSINESS_NAME, BUSINESS_SMS_NAME, BUSINESS_ABN, BUSINESS_PHONE,
 //   BUSINESS_ADDRESS, BUSINESS_REPLY_TO
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 // Shared with tests/run-tests.js, which dynamic-imports this same file in a
 // browser. The wording a client reads and the rule for what counts as a
 // textable number are covered by the suite rather than living only here,
@@ -71,6 +76,11 @@ import { loadBusiness } from '../_shared/business.js';
 import { dueReminderTiming, needsAPhoneCall as stillNotRebooked } from '../_shared/due-reminder.js';
 // Which jobs start with the inspection agreement (migration 034).
 import { needsAgreement } from '../_shared/agreement.js';
+// Test mode: the only numbers and addresses messages may go to, when set
+// (SMS_ALLOWED_NUMBERS, EMAIL_ALLOWED_ADDRESSES). See _shared/allow-list.js.
+import { emailAllowed, numberAllowed, parseEmailList, parseNumberList } from '../_shared/allow-list.js';
+const SMS_ALLOWED = parseNumberList(Deno.env.get('SMS_ALLOWED_NUMBERS'));
+const EMAIL_ALLOWED = parseEmailList(Deno.env.get('EMAIL_ALLOWED_ADDRESSES'));
 
 // Reasons a job was skipped that are NOT something for a person to act on.
 // The skipped list is a call list — a landline, a missing mobile, a typo in an
@@ -80,6 +90,8 @@ const NOT_WORTH_CHASING = new Set([
   'already-sent', 'too-early', 'not-an-annual-cycle', 'no-due-date',
   // Somebody who has asked us to stop is the opposite of a client to ring.
   'opted-out',
+  // Test mode is on and this client is not on the list: nothing to chase.
+  'not-on-test-list',
 ]);
 
 // Read as "string or empty", never with a non-null assertion. The assertion
@@ -373,10 +385,12 @@ function refuse(kind: string, job: JobRow, now: number, biz: Biz, optedOut: Set<
     // fixable, the other is a client who will always need a phone call.
     const composed = composeReminder({ businessName: biz.smsName, job });
     if (!composed.sendable) return composed.reason as string;
+    if (!numberAllowed(composed.to, SMS_ALLOWED)) return 'not-on-test-list';
   } else {
     const to = (job.client_email || '').trim();
     if (!to) return 'no-email-on-file';
     if (!EMAIL_PATTERN.test(to)) return 'email-not-valid';
+    if (!emailAllowed(to, EMAIL_ALLOWED)) return 'not-on-test-list';
   }
 
   const col = alreadySentColumn(kind);
@@ -490,6 +504,9 @@ async function sendSmsOne(kind: string, job: JobRow, triggeredBy: string | null,
   // ID is refused outright by the carrier, so an empty string here would be
   // worse than no field at all.
   if (SMS_SENDER_ID) message.from = SMS_SENDER_ID;
+  // Checked again at the last moment, in case anything ever reaches here
+  // without going through refuse() first.
+  if (!numberAllowed(composed.to, SMS_ALLOWED)) return { jobId: job.id, kind, sent: false, reason: 'not-on-test-list' };
 
   const auth = btoa(`${CLICKSEND_USERNAME}:${CLICKSEND_API_KEY}`);
   const res = await fetch('https://rest.clicksend.com/v3/sms/send', {
@@ -733,6 +750,7 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null, bi
   if (isSmsKind(kind)) return sendSmsOne(kind, job, triggeredBy, biz);
 
   const to = (job.client_email || '').trim();
+  if (!emailAllowed(to, EMAIL_ALLOWED)) return { jobId: job.id, kind, sent: false, reason: 'not-on-test-list' };
   const composed = compose(kind, job, biz);
   const subject = composed.subject;
   let body = composed.body;

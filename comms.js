@@ -22,6 +22,10 @@
   // should not go, and said why. Each of these tells the technician what
   // happened and what, if anything, to do about it.
   const REFUSALS = {
+    'not-on-test-list':
+      'Not sent: test mode is on, and this client is not on the test list. The job is saved. '
+      + 'To reach them now, phone them; to message clients again, remove SMS_ALLOWED_NUMBERS / '
+      + 'EMAIL_ALLOWED_ADDRESSES in Supabase.',
     'opted-out':
       'Not sent. This client has asked not to receive automated email. '
       + 'You can still phone them, or send a report yourself from the report screen.',

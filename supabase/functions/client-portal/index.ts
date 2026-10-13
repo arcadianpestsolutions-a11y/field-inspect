@@ -44,7 +44,7 @@
 //
 // Required secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 import { loadBusiness } from '../_shared/business.js';
 // Shared with the browser test suite, which is where the rules below are
 // actually covered — see _shared/acceptance.js.

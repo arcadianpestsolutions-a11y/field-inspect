@@ -16,7 +16,7 @@
 //
 // Requires ANTHROPIC_API_KEY (already set for analyze-inspection).
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 import { loadBusiness, orgIdForUser } from '../_shared/business.js';
 
 // The prompt names the business from the signed-in user's own record rather

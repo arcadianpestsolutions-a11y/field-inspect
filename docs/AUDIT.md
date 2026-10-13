@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈11,150 lines, 539 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈11,250 lines, 542 tests, all
 passing), 11 Edge Function folders, 36 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -85,8 +85,8 @@ and no console error in ~2,400 random steps after the fixes.
 5. **No Content-Security-Policy.** GitHub Pages cannot set headers; a `<meta>` CSP
    is possible but the print windows use `document.write` and an inline
    `onclick="window.print()"`, which would need reworking first.
-6. **Edge functions import `@supabase/supabase-js@2` from esm.sh unpinned.** A
-   breaking release would affect the next deploy. Pin a version.
+6. ~~**Edge functions import `@supabase/supabase-js@2` from esm.sh unpinned.**~~ **Fixed in v124**:
+   all nine pin `@2.117.3` (the version they were already running), and a test fails if one drifts.
 7. **In-app restore exists (v116) but only for the Export file.** It adds and updates records and never deletes; photos are not in that file. A whole-project restore (database + photos) is still the manual procedure in `docs/BACKUP-RUNBOOK.md`. Free Supabase plan has no automatic backups.
 8. **No 2FA** for staff accounts; no self-service signup/invite flow.
 9. **Cross-device concurrency** is merged field by field since v117. When two

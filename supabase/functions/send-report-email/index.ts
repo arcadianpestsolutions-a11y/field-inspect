@@ -15,8 +15,11 @@
 // below), same gating as analyze-inspection — this costs real money and
 // sends real email per call.
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 import { escapeHtml, loadBusiness, orgIdForUser } from '../_shared/business.js';
+// Test mode (v124): when EMAIL_ALLOWED_ADDRESSES is set, only those addresses.
+import { emailAllowed, parseEmailList } from '../_shared/allow-list.js';
+const EMAIL_ALLOWED = parseEmailList(Deno.env.get('EMAIL_ALLOWED_ADDRESSES'));
 
 // Who the email is signed as comes from the signed-in user's own business
 // record, not from a name typed into this file. These secrets are only a
@@ -88,6 +91,9 @@ Deno.serve(async (req) => {
 
     if (!recipientEmail || !EMAIL_PATTERN.test(recipientEmail)) {
       return json({ error: 'A valid recipientEmail is required' }, 400);
+    }
+    if (!emailAllowed(recipientEmail, EMAIL_ALLOWED)) {
+      return json({ error: 'Not sent: test mode is on (EMAIL_ALLOWED_ADDRESSES) and that address is not on the test list.' }, 403);
     }
     if (!pdfBase64) return json({ error: 'pdfBase64 is required' }, 400);
 

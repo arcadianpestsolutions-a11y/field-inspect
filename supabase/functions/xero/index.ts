@@ -19,7 +19,7 @@
 //
 // Actions: 'status' | 'exchange-code' | 'create-invoice' | 'invoice-statuses' | 'disconnect'
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 
 const XERO_CLIENT_ID = Deno.env.get('XERO_CLIENT_ID') || '';
 const XERO_CLIENT_SECRET = Deno.env.get('XERO_CLIENT_SECRET') || '';

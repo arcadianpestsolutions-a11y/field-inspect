@@ -194,3 +194,10 @@ More > **SOP library**. Standard operating procedures kept the way ISO 9001 (cla
 - Every AI answer now carries the model and the prompt version that produced it. The report keeps each pass, and its audit trail shows "AI suggestions prepared: 12 suggestions from claude-sonnet-5 (draft-report@2026-10-13). Nothing changes until a person accepts it."
 - More > Saved reports: the accuracy box gives the overall figure, then each report section worst first, e.g. "Findings & Observations: 2 of 7 kept (29%) · check these closely". A section under 70% kept is flagged; one with fewer than 5 answers says "not enough to judge yet". It ends with which model and prompt the figures were measured on.
 - The model is changed in one place (`AI_MODEL` in analyze-inspection) and only after measuring the new one against real graded photos. Change a prompt, change its date in `PROMPT_VERSIONS`.
+
+## 19. Test mode for client messages (v124)
+For a test period, set either or both secrets in Supabase (Edge Functions > Secrets), comma-separated:
+- `SMS_ALLOWED_NUMBERS`, e.g. `0400 111 222` (your own mobile)
+- `EMAIL_ALLOWED_ADDRESSES`, e.g. `you@example.com`
+
+While set, booking confirmations, day-before reminders, report-ready and due reminders, and reports or invoices emailed by hand, go only to those. Anybody else gets nothing; the app says "Not sent: test mode is on, and this client is not on the test list", and the job is not marked as sent, so it goes out normally once the secret is removed. A list with nothing valid in it blocks everything. Delete the secrets to go back to normal.

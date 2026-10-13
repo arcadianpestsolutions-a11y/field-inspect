@@ -59,7 +59,7 @@ Exit: a tested, documented restore; no silent overwrites.
 | # | Task | Size |
 |---|---|---|
 | 4.1 | Confirm reminder end-to-end with Tal's own phone as the only recipient (never real clients) | S |
-| 4.2 | Optional outbound allow-list `SMS_ALLOWED_NUMBERS` for test periods | S |
+| 4.2 | Optional outbound allow-list `SMS_ALLOWED_NUMBERS` for test periods. **Done in v124**, with `EMAIL_ALLOWED_ADDRESSES` too: when set, automated texts and emails, and reports or invoices emailed by hand, go only to those; everyone else is refused with "test mode is on" and nothing is marked sent | S |
 | 4.3 | Re-check that no Edge Function hard-codes the business name (none found by search on 8 Oct 2026; the older handover said some did) | S |
 | 4.4 | Quote -> accept -> pay online (Stripe) | L |
 | 4.5 | Branded client portal (logo, colours from `organisations`) | M |
@@ -71,7 +71,7 @@ Exit: a tested, documented restore; no silent overwrites.
 | 5.1 | Move to a single git repository (remove the two-folder copy step) | M |
 | 5.2 | Shared `common.js`: consolidate `toast`, `askConfirm`, `el`, `fmtDate`, `pad`, `uid`, `money` | M |
 | 5.3 | Split `report.js` (form renderer, print view) and `app.js` | L |
-| 5.4 | Pin `@supabase/supabase-js` import version in every function | S |
+| 5.4 | Pin `@supabase/supabase-js` import version in every function. **Done in v124** (`@2.117.3`, test-guarded) | S |
 | 5.5 | Add a linter and a CI job that runs the browser suite headless | M |
 | 5.6 | Content-Security-Policy via `<meta>`; first remove `document.write` and inline `onclick` from print windows | M |
 | 5.7 | Checksums for vendored libraries; full licence texts | S |
