@@ -785,6 +785,47 @@
       if (currentJobId === jobId) { currentReport = report; renderSectionList(); renderAuditTrail(); }
       return { ok: true };
     },
+    // The inspection agreement the client signed through their own link before
+    // the visit (client-agreement.js, migration 034), into section 3, About Our
+    // Agreement. Usually called by itself after a sync. The report may not
+    // exist yet (the visit has not happened), so it is made here.
+    //
+    // Never over a signature already there: one taken on the day stays, and a
+    // second call for the same agreement finds it signed and does nothing. Not
+    // on a finalized report either: an agreement made in advance has no
+    // business arriving after the report was issued.
+    async applyClientAgreement(jobId, agreement) {
+      if (!agreement || !agreement.signature) return { ok: false, reason: 'nothing' };
+      const job = await DB.getJob(jobId);
+      if (!job) return { ok: false, reason: 'no-job' };
+      const report = await loadOrCreateReport(jobId);
+      if (report.finalizedAt) return { ok: false, reason: 'finalized' };
+      const section = { ...(report.sections.agreement || {}) };
+      if (String(section.agreementSignature || '').trim()) return { ok: false, reason: 'already-signed' };
+
+      // The client's date, from local parts (see applyClientAcceptance above
+      // for the one-day slip toISOString() causes in Sydney).
+      const at = new Date(agreement.at || Date.now());
+      const pad = (n) => String(n).padStart(2, '0');
+      const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+      const name = String(agreement.name || '').trim();
+      section.agreementAcceptedBy = name;
+      section.agreementAcceptedAt = date;
+      section.agreementSignature = agreement.signature;
+      report.sections.agreement = section;
+
+      appendAudit(report, {
+        event: 'client-agreement-applied',
+        sectionId: 'agreement',
+        fieldId: 'agreementSignature',
+        from: '(blank)',
+        to: `signed by ${name || 'client'} on ${date}`,
+        reason: 'Signed by the client through their own link before the visit, then filed here.',
+      });
+      await DB.saveReport(report);
+      if (currentJobId === jobId) { currentReport = report; renderSectionList(); renderAuditTrail(); }
+      return { ok: true };
+    },
     // The jobCategory picked on Client Details (pest treatment jobs only) —
     // read by app.js at Start Inspection to pick which photo checklist to
     // show (photo-checklists.js). Returns null for termite jobs and for any
@@ -1360,6 +1401,12 @@
     const when = fmtAuditTime(entry.at);
     if (entry.event === 'created') return `<strong>Report created</strong> — ${when} by ${who}`;
     if (entry.event === 'finalized') return `<strong>Report finalized</strong> — ${when} by ${who}`;
+    if (entry.event === 'client-agreement-applied' || entry.event === 'client-acceptance-applied') {
+      const what = entry.event === 'client-agreement-applied' ? 'Inspection agreement signed by the client' : 'Quote accepted by the client';
+      return `<strong>${what}</strong><br>`
+        + `<span class="audit-change">${escapeHtml(entry.to || '')}</span><br>`
+        + `<span class="audit-meta">filed ${when} by ${who}</span>`;
+    }
     if (entry.event === 'field-changed') {
       const where = entry.sectionTitle ? escapeHtml(entry.sectionTitle) : escapeHtml(entry.sectionId || '');
       return `<strong>${escapeHtml(entry.label || entry.fieldId || 'Field')}</strong> `

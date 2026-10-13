@@ -121,8 +121,11 @@
   async function send(kind, jobId) {
     if (!jobId) return { sent: false, message: refusalText('job-not-found') };
     try {
+      // portalUrl: where this app's portal page is, so a booking confirmation
+      // can carry the inspection agreement link. The server checks its shape.
+      const portalUrl = location.href.replace(/[^/]*([?#].*)?$/, '') + 'portal.html';
       const { data, error } = await client.functions.invoke('send-client-message', {
-        body: { kind, jobId },
+        body: { kind, jobId, portalUrl },
       });
       if (error) { noteServerError(error); return { sent: false, message: failureText(await edgeErrorMessage(error)) }; }
       if (data && data.sent) return { sent: true, message: null };

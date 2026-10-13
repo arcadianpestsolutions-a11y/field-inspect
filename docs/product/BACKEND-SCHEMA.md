@@ -1,6 +1,6 @@
 # Backend Schema - Scope
 
-Source of truth: `supabase-schema.sql` then `supabase-migration-002 ... 033`,
+Source of truth: `supabase-schema.sql` then `supabase-migration-002 ... 034`,
 applied in order to the live project (all applied as of 8 Oct 2026). This file is
 a reader's map. If it disagrees with the SQL, the SQL wins.
 
@@ -95,8 +95,10 @@ timestamps, `created_by`, `org_id`.
 ### client_acceptances
 `id`, `job_id`, `token`, `document_type`, `report_finalized_at`, `accepted_name`,
 `signature` (data URL; **never returned to the portal**), `accepted_at`,
-`presented jsonb`, `ip`, `user_agent`, `applied_to_report_at`, `superseded_at`,
-timestamps, `org_id`.
+`kind` (`quote` | `agreement`, migration 034), `presented jsonb`, `ip`, `user_agent`,
+`applied_to_report_at`, `superseded_at`, timestamps, `org_id`. One live row per
+job per kind. `client_access.agreement_requested_at` marks a link that asks
+for the inspection agreement.
 
 ### client_messages (send log)
 `id`, `job_id`, `kind` (`booking_confirmation | day_before | report_ready |
@@ -191,7 +193,8 @@ at the end of migration 033, or query `information_schema.role_table_grants`.)
 | 024-026 | SMS reminders, SWMS, leads |
 | 027-030 | Client portal, service-role grants, clients, client acceptance |
 | 031-032 | Client error log, inbound SMS |
-| 033 | Privilege audit (this release) |
+| 033 | Privilege audit |
+| 034 | Inspection agreement signed before the visit (`client_acceptances.kind`, `client_access.agreement_requested_at`) |
 (023 is not present in the repository; confirm it was intentionally skipped.)
 
 ## 8. Schema debt and risks

@@ -114,6 +114,12 @@
         <input id="job-scheduled-date" type="date" />
         <input id="job-scheduled-time" type="time" value="09:00" />
       </div>
+      <!-- Timber pest inspections only (client-agreement.js). Goes with the
+           booking confirmation, so it needs an email and a booked time. -->
+      <label id="job-agreement-row" class="job-agreement-row">
+        <input id="job-agreement" type="checkbox" checked />
+        <span>Email the inspection agreement for the client to sign before the visit</span>
+      </label>
       <textarea id="job-notes" maxlength="2000" placeholder="Notes (optional)" rows="2"></textarea>
       <div class="row gap">
         <button id="job-form-cancel" class="btn btn-secondary flex1">Cancel</button>
@@ -195,6 +201,12 @@
         <p id="client-link-accepted-text"></p>
         <button id="client-link-apply" class="btn btn-outline full">Put this signature on the report</button>
       </div>
+      <!-- The inspection agreement, signed before the visit (client-agreement.js). -->
+      <label id="client-link-agree-row" class="client-link-ask hidden">
+        <input id="client-link-agree" type="checkbox" />
+        <span>Ask the client to sign the inspection agreement on this page</span>
+      </label>
+      <p id="client-link-agreed-text" class="client-link-agreed hidden"></p>
       <button id="client-link-create" class="btn btn-outline full hidden">Create a link</button>
       <button id="client-link-revoke" class="btn btn-secondary full hidden">Revoke this link</button>
     </div>
@@ -874,6 +886,7 @@
 <script src="today-ui.js"></script>
 <script src="tabbar.js"></script>
 <script src="sync-state.js"></script>
+<script src="client-agreement.js"></script>
 <script src="client-link.js"></script>
 <script src="scheduler.js"></script>
 <script src="schedule-agent.js"></script>

@@ -1167,6 +1167,9 @@
         chip.classList.toggle('active', chip.dataset.docType === selectedDocType);
       });
     }
+    const agreeBox = document.getElementById('job-agreement');
+    if (agreeBox) agreeBox.checked = true;
+    syncAgreementRow();
     hideAddressSuggestions();
     show(jobForm);
     jobNameInput.focus();
@@ -1252,6 +1255,10 @@
       console.warn('[app] could not link a client to this job:', err.message || err);
     }
 
+    // Read before the form is hidden and reset.
+    const agreeInput = document.getElementById('job-agreement');
+    const wantsAgreement = selectedDocType === 'timber_pest_inspection' && !!(agreeInput && agreeInput.checked);
+
     const job = await DB.addJob({
       name,
       jobType: selectedJobType,
@@ -1268,7 +1275,7 @@
     hide(jobForm);
     await renderJobList();
     showJobView(job.id);
-    confirmBookingByEmail(job);
+    confirmBookingByEmail(job, { agreement: wantsAgreement });
   }
 
   jobFormSave.addEventListener('click', async () => {
@@ -1292,15 +1299,39 @@
   // it, so the row has to exist in the cloud before there is anything to
   // read. A job that never gets there is reported as such rather than
   // silently doing nothing.
-  async function confirmBookingByEmail(job) {
+  //
+  // For a timber pest inspection the client's link is made first, asking for
+  // the inspection agreement, because the email reads that link to include it
+  // (client-agreement.js). If the link cannot be made, the confirmation still
+  // goes, just without it, and the technician is told.
+  async function confirmBookingByEmail(job, { agreement = false } = {}) {
     if (!job || !job.scheduledAt || !job.clientEmail) return;
     if (!window.CommsService) return;
     try {
       if (window.Sync && window.Sync.pushJob) await window.Sync.pushJob(job);
     } catch (e) { /* reported below as job-not-found */ }
+    let agreementLinked = false;
+    if (agreement && window.ClientAgreement && window.ClientAgreement.needsAgreement(job, null)) {
+      try {
+        const made = await window.ClientAgreement.requestFor(job.id);
+        agreementLinked = !!(made && made.ok);
+      } catch (e) {
+        if (window.ErrorLog) window.ErrorLog.note(e, 'booking: agreement link');
+      }
+    }
     const result = await window.CommsService.sendBookingConfirmation(job.id);
-    if (result.sent) toast('Booking confirmation emailed to the client');
-    else if (result.message) toast(result.message);
+    if (result.sent) {
+      toast(agreementLinked
+        ? 'Booking confirmation emailed, with the inspection agreement to sign'
+        : 'Booking confirmation emailed to the client'
+          + (agreement ? '. The agreement link could not be made: send it from Client link.' : ''));
+    } else if (result.message) toast(result.message);
+  }
+
+  // The agreement option only means something for a timber pest inspection.
+  function syncAgreementRow() {
+    const row = document.getElementById('job-agreement-row');
+    if (row) row.classList.toggle('hidden', selectedDocType !== 'timber_pest_inspection');
   }
 
   // Combines the two form inputs into an epoch ms. Built from local calendar
@@ -1348,6 +1379,7 @@
       jobTypePicker.querySelectorAll('.job-type-chip').forEach((chip) => {
         chip.classList.toggle('active', chip === btn);
       });
+      syncAgreementRow();
     });
   }
 

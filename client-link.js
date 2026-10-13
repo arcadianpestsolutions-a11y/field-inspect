@@ -35,6 +35,10 @@
   const acceptedBox = el('client-link-accepted');
   const acceptedText = el('client-link-accepted-text');
   const applyBtn = el('client-link-apply');
+  // The inspection agreement (client-agreement.js), v120.
+  const agreeRow = el('client-link-agree-row');
+  const agreeBox = el('client-link-agree');
+  const agreedText = el('client-link-agreed-text');
 
   const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
   const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
@@ -48,6 +52,8 @@
   let jobId = null;
   let liveRow = null;
   let liveAcceptance = null;
+  let needsAgreement = false;
+  let liveAgreementRow = null;
 
   const client = () => window.supabaseClient || null;
 
@@ -90,7 +96,7 @@
     const c = client();
     if (!c) return null;
     const { data, error } = await c.from('client_access')
-      .select('token, expires_at, revoked_at, last_seen_at, view_count, acceptance_requested_at')
+      .select('token, expires_at, revoked_at, last_seen_at, view_count, acceptance_requested_at, agreement_requested_at')
       .eq('job_id', jobId)
       .is('revoked_at', null)
       .order('created_at', { ascending: false })
@@ -111,6 +117,7 @@
     const { data, error } = await c.from('client_acceptances')
       .select('id, accepted_name, accepted_at, signature, applied_to_report_at')
       .eq('job_id', jobId)
+      .eq('kind', 'quote')
       .is('superseded_at', null)
       .limit(1);
     // A missing table must not take the link panel down with it — the link
@@ -144,6 +151,23 @@
     if (askBox) askBox.checked = !!(row && row.acceptance_requested_at);
   }
 
+  // The inspection agreement: the option to ask for it, or where it is up to.
+  function renderAgreement(row) {
+    if (!agreeRow || !agreedText) return;
+    if (!needsAgreement) { show(agreeRow, false); show(agreedText, false); return; }
+    const a = liveAgreementRow;
+    if (a) {
+      show(agreeRow, false);
+      show(agreedText, true);
+      agreedText.textContent = `${a.accepted_name} signed the inspection agreement on ${fmtDate(a.accepted_at)}.`
+        + (a.applied_to_report_at ? ' It is on the report.' : ' It goes onto the report at the next sync.');
+      return;
+    }
+    show(agreedText, false);
+    show(agreeRow, true);
+    if (agreeBox) agreeBox.checked = row ? !!row.agreement_requested_at : true;
+  }
+
   function render(row, acceptance) {
     liveRow = row || null;
     liveAcceptance = acceptance || null;
@@ -153,6 +177,7 @@
     show(revokeBtn, live);
     show(createBtn, !live);
     renderAcceptance(row, acceptance);
+    renderAgreement(row);
 
     if (!live) {
       hintEl.textContent = `Creates a page where this client can read their own report and see their invoice. `
@@ -180,7 +205,21 @@
     show(revokeBtn, false);
     show(askRow, false);
     show(acceptedBox, false);
+    show(agreeRow, false);
+    show(agreedText, false);
     try {
+      const job = await DB.getJob(id).catch(() => null);
+      const report = await DB.getReport(id).catch(() => null);
+      needsAgreement = !!(window.ClientAgreement && window.ClientAgreement.needsAgreement(job, report));
+      liveAgreementRow = null;
+      if (needsAgreement) {
+        liveAgreementRow = await window.ClientAgreement.liveAgreement(id).catch(() => null);
+        // Signed but not filed yet, and there is a signed-in person right
+        // here: file it now rather than wait for the sync.
+        if (liveAgreementRow && !liveAgreementRow.applied_to_report_at) {
+          await window.ClientAgreement.applyRow(liveAgreementRow).catch(() => null);
+        }
+      }
       const row = await currentLink();
       render(row, row ? await currentAcceptance() : null);
     } catch (e) {
@@ -204,6 +243,7 @@
         // then creating the link is the obvious order to do this in, so it had
         // better be the order that works.
         acceptance_requested_at: askBox && askBox.checked ? now : null,
+        agreement_requested_at: needsAgreement && agreeBox && agreeBox.checked ? now : null,
         created_by: user ? user.id : null,
         created_at: now,
         updated_at: now,
@@ -248,6 +288,27 @@
   // user who gets named in the report's audit trail — never from the public
   // endpoint that collected it. Migration 030 and ReportUI
   // .applyClientAcceptance both carry the long version of why.
+  async function setAgreeing(on) {
+    if (!liveRow) return;
+    const was = liveRow.agreement_requested_at;
+    const next = on ? Date.now() : null;
+    try {
+      const { error } = await client().from('client_access')
+        .update({ agreement_requested_at: next, updated_at: Date.now() })
+        .eq('token', liveRow.token);
+      if (error) throw error;
+      liveRow.agreement_requested_at = next;
+      toast(on ? 'The client will be asked to sign the inspection agreement' : 'The agreement will not be shown on this link');
+    } catch (e) {
+      if (window.ErrorLog) window.ErrorLog.note(e, 'client link: ask for agreement');
+      liveRow.agreement_requested_at = was;
+      if (agreeBox) agreeBox.checked = !!was;
+      hintEl.textContent = /agreement_requested_at|kind/i.test(String((e && e.message) || ''))
+        ? 'The inspection agreement is not set up on the server yet: run supabase-migration-034-inspection-agreement.sql, then try again.'
+        : errorText(e);
+    }
+  }
+
   async function applyAcceptance() {
     if (!liveAcceptance || !window.ReportUI || !window.ReportUI.applyClientAcceptance) {
       toast('Open the report first.');
@@ -319,6 +380,7 @@
   createBtn.addEventListener('click', create);
   revokeBtn.addEventListener('click', revoke);
   if (askBox) askBox.addEventListener('change', () => setAsking(askBox.checked));
+  if (agreeBox) agreeBox.addEventListener('change', () => { if (liveRow) setAgreeing(agreeBox.checked); });
   if (applyBtn) applyBtn.addEventListener('click', applyAcceptance);
   closeBtn.addEventListener('click', () => panel.classList.add('hidden'));
   openBtn.addEventListener('click', async () => {

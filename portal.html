@@ -54,6 +54,8 @@
     text-align: center; text-decoration: none; cursor: pointer;
   }
   .note { font-size: .8rem; color: var(--dim); margin: 10px 0 0; }
+  .term-h { font-size: .88rem; margin: 14px 0 2px; }
+  .term { font-size: .86rem; line-height: 1.5; margin: 0; }
   .paid { color: var(--accent); font-weight: 600; }
   .unpaid { color: var(--warn); font-weight: 600; }
   .msg { text-align: center; padding: 40px 16px; color: var(--dim); }
@@ -344,11 +346,105 @@
     });
   }
 
+  // -------------------------------------------------------------------------
+  // The inspection agreement, signed before the visit (migration 034).
+  //
+  // Only when the server sends one. The wording comes from the server too
+  // (supabase/functions/_shared/agreement.js), so what is shown here is what
+  // is recorded as having been shown.
+  // -------------------------------------------------------------------------
+
+  function agreedCard(accepted) {
+    return `<div class="card"><h2>Inspection agreement</h2>
+      <p class="accepted"><strong>${esc(accepted.name)}</strong>
+      signed this on ${esc(fmtWhen(accepted.at))}.</p>
+      <p class="note">Thank you. There is nothing else you need to do before we arrive.</p></div>`;
+  }
+
+  function agreementCard(a) {
+    if (a.accepted) return agreedCard(a.accepted);
+    if (a.signedOnSite) {
+      return `<div class="card"><h2>Inspection agreement</h2>
+        <p class="note">This was already signed in person, so there is nothing more to do here.</p></div>`;
+    }
+    const when = a.scheduledAt ? `<p class="note">Booked for ${esc(fmtWhen(a.scheduledAt))}${a.address ? `, at ${esc(a.address)}` : ''}.</p>` : '';
+    const terms = (a.terms || []).map((t) => `<h3 class="term-h">${esc(t.heading)}</h3><p class="term">${esc(t.text)}</p>`).join('');
+    const limits = a.accessLimitations
+      ? `<h3 class="term-h">Access limitations you have told us about</h3><p class="term">${esc(a.accessLimitations)}</p>` : '';
+    return `<div class="card" id="agree-card">
+      <h2>Before we arrive: your inspection agreement</h2>
+      ${when}
+      <p class="note">Please read what the inspection covers and what it cannot, then sign. It takes a minute,
+        and it means we can start as soon as we arrive.</p>
+      ${terms}${limits}
+      <label class="f" for="agr-name">Your full name</label>
+      <input class="t" id="agr-name" type="text" autocomplete="name"
+             enterkeyhint="done" placeholder="First and last name" />
+      <label class="f" for="agr-sig">Sign below with your finger or your mouse</label>
+      <canvas class="sig" id="agr-sig" width="320" height="130"
+              aria-label="Signature box"></canvas>
+      <div class="sigrow"><button type="button" id="agr-clear">Start the signature again</button></div>
+      <button class="btn" id="agr-go" style="margin-top:12px">I agree to this inspection</button>
+      <p class="note">When you tap that, we save your name, your signature, the date and time,
+        and basic details about the device you used. That is what makes this count as
+        your signature, the same as signing on paper.</p>
+      <p class="err" id="agr-err" hidden></p>
+    </div>`;
+  }
+
+  function wireAgreement(token) {
+    const card = document.getElementById('agree-card');
+    if (!card) return;
+    const nameEl = document.getElementById('agr-name');
+    const errEl = document.getElementById('agr-err');
+    const goBtn = document.getElementById('agr-go');
+    const pad = wireSignature(document.getElementById('agr-sig'));
+    document.getElementById('agr-clear').addEventListener('click', pad.clear);
+    const fail = (m) => { errEl.textContent = m; errEl.hidden = false; };
+    const LABEL = 'I agree to this inspection';
+
+    goBtn.addEventListener('click', async () => {
+      errEl.hidden = true;
+      const name = (nameEl.value || '').trim();
+      if (name.length < 2) { fail('Please type your full name first.'); nameEl.focus(); return; }
+      const signature = pad.value();
+      if (!signature) { fail('Please sign in the box first.'); return; }
+      goBtn.disabled = true;
+      goBtn.textContent = 'Sending…';
+      let data = null;
+      let res = null;
+      try {
+        res = await fetch(`${window.PORTAL_ENDPOINT}?t=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ action: 'agree', name, signature }),
+        });
+        data = await res.json().catch(() => null);
+      } catch (e) {
+        goBtn.disabled = false;
+        goBtn.textContent = LABEL;
+        fail('Could not send that. Check your connection and try again.');
+        return;
+      }
+      if (data && data.error === 'already-accepted' && data.accepted) { card.outerHTML = agreedCard(data.accepted); return; }
+      if (!res.ok || !data || !data.accepted) {
+        goBtn.disabled = false;
+        goBtn.textContent = LABEL;
+        fail((data && data.message) || 'Could not send that. Please try again, or give us a call.');
+        return;
+      }
+      card.outerHTML = agreedCard(data.accepted);
+    });
+  }
+
   function render(d, token) {
     const parts = [];
     parts.push(`<p class="biz">${esc(d.business.name)}</p>`);
     parts.push(`<h1>${esc(SERVICE[d.visit.jobType] || 'Your service')}</h1>`);
     parts.push(`<p class="addr">${esc(d.client.address || d.client.name)}</p>`);
+
+    // First, because before the visit it is the one thing to do here.
+    if (d.agreement) parts.push(agreementCard(d.agreement));
 
     if (d.report) {
       parts.push(`<div class="card">
@@ -405,6 +501,7 @@
     // After the HTML is in the document, because the signature pad needs a
     // canvas that actually exists to get a drawing context from.
     if (d.acceptance) wireAcceptance(token);
+    if (d.agreement) wireAgreement(token);
   }
 
   load();

@@ -2806,6 +2806,15 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   border-left: 3px solid var(--accent); padding-left: 10px;
 }
 .client-link-accepted p { margin: 0; font-size: .9rem; line-height: 1.45; }
+.client-link-agreed { margin: 0; font-size: .9rem; line-height: 1.45; border-left: 3px solid var(--accent); padding-left: 10px; }
+.client-link-agreed.hidden { display: none; }
+/* New job form: email the inspection agreement with the booking. */
+.job-agreement-row {
+  display: flex; align-items: flex-start; gap: 9px;
+  font-size: .9rem; line-height: 1.4; cursor: pointer; padding: 2px 0;
+}
+.job-agreement-row.hidden { display: none; }
+.job-agreement-row input { margin: 2px 0 0; flex: 0 0 auto; width: 18px; height: 18px; }
 
 /* Replies that came back to a reminder. The bell gets a dot when any are unread,
    because nobody opens a panel to find out whether there is something in it. */
@@ -3333,3 +3342,9 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 @media (prefers-reduced-motion: reduce) {
   .inspection-flash.flash { animation-duration: 120ms; }
 }
+
+/* New job form, booking row: a phone's date and time boxes will not shrink
+   below their own natural width unless told to, so on a 320px screen the time
+   ran 50px past the edge of the form and was cut off. */
+#job-scheduled-date { flex: 1.3 1 0; min-width: 0; }
+#job-scheduled-time { flex: 1 1 0; min-width: 0; }

@@ -69,6 +69,8 @@ import { isNumberOptedOut } from '../_shared/sms-inbound.js';
 // in a second function of their own. See _shared/due-reminder.js.
 import { loadBusiness } from '../_shared/business.js';
 import { dueReminderTiming, needsAPhoneCall as stillNotRebooked } from '../_shared/due-reminder.js';
+// Which jobs start with the inspection agreement (migration 034).
+import { needsAgreement } from '../_shared/agreement.js';
 
 // Reasons a job was skipped that are NOT something for a person to act on.
 // The skipped list is a call list — a landline, a missing mobile, a typo in an
@@ -663,11 +665,81 @@ async function sweepOneOrg(
   };
 }
 
-async function sendOne(kind: string, job: JobRow, triggeredBy: string | null, biz: Biz) {
+// ------------------------------------------------- inspection agreement ---
+//
+// When the app booked a timber pest inspection it also made the client's link
+// asking for the inspection agreement (client_access.agreement_requested_at,
+// migration 034). The booking confirmation and the day-before email carry
+// that link until the agreement is signed. The link is read here, for this
+// job, from the database, never taken from the request: the same rule as the
+// recipient address.
+//
+// Anything that goes wrong finding it (no link, the migration not run, a read
+// error) means the email goes without it. A booking confirmation must never
+// fail because the extra paragraph could not be built.
+//
+// Where the portal page lives. A booking sent from the app says (the app knows
+// its own address); a sweep has no app behind it and uses PORTAL_URL if that
+// is set, otherwise goes without the link. Either way it must look exactly
+// like a portal page on https, so a tampered request cannot point a client
+// anywhere else. Nothing here names a business: see _shared/business.js.
+const PORTAL_URL = (Deno.env.get('PORTAL_URL') || '').trim();
+const PORTAL_PATTERN = /^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9._~-]+)*\/portal\.html$/;
+
+function portalBase(fromRequest: unknown): string {
+  for (const candidate of [String(fromRequest || '').trim(), PORTAL_URL]) {
+    if (PORTAL_PATTERN.test(candidate)) return candidate;
+  }
+  return '';
+}
+const AGREEMENT_KINDS = new Set(['booking_confirmation', 'day_before']);
+
+async function agreementLinkFor(job: JobRow, base: string): Promise<string | null> {
+  if (!base) return null;
+  if (!needsAgreement(job.job_type, job.preferred_document_type)) return null;
+  try {
+    const { data, error } = await admin.from('client_access')
+      .select('token, created_at')
+      .eq('job_id', job.id)
+      .is('revoked_at', null)
+      .not('agreement_requested_at', 'is', null)
+      .gt('expires_at', Date.now())
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error || !data || !data[0] || !/^[a-f0-9]{64}$/i.test(String(data[0].token))) return null;
+    const { data: signed, error: signedError } = await admin.from('client_acceptances')
+      .select('id')
+      .eq('job_id', job.id)
+      .eq('kind', 'agreement')
+      .is('superseded_at', null)
+      .limit(1);
+    if (signedError || (signed && signed.length)) return null;
+    return `${base}?t=${data[0].token}`;
+  } catch (e) {
+    console.warn('[send-client-message] no agreement link:', e);
+    return null;
+  }
+}
+
+function agreementBlock(url: string): string {
+  return `<p><strong>Before we arrive:</strong> please read and sign your inspection
+      agreement. It explains what the inspection covers and what it cannot, and
+      takes about a minute.</p>
+    <p><a href="${esc(url)}" style="display:inline-block;background:#0a7a3d;color:#ffffff;
+      text-decoration:none;font-weight:600;padding:10px 18px;border-radius:8px">Read and sign the agreement</a></p>`;
+}
+
+async function sendOne(kind: string, job: JobRow, triggeredBy: string | null, biz: Biz, portalUrl = '') {
   if (isSmsKind(kind)) return sendSmsOne(kind, job, triggeredBy, biz);
 
   const to = (job.client_email || '').trim();
-  const { subject, body } = compose(kind, job, biz);
+  const composed = compose(kind, job, biz);
+  const subject = composed.subject;
+  let body = composed.body;
+  if (AGREEMENT_KINDS.has(kind)) {
+    const link = await agreementLinkFor(job, portalBase(portalUrl));
+    if (link) body += agreementBlock(link);
+  }
 
   const isCommercial = COMMERCIAL.has(kind);
 
@@ -857,7 +929,7 @@ Deno.serve(async (req) => {
     const reason = refuse(kind, job, Date.now(), biz, await optedOutNumbers(job.org_id));
     if (reason) return json({ sent: false, reason });
 
-    return json(await sendOne(kind, job, triggeredBy, biz));
+    return json(await sendOne(kind, job, triggeredBy, biz, String(body.portalUrl || '')));
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);

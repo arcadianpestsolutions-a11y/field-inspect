@@ -1165,8 +1165,11 @@
     // org_id may appear only in the row being inserted.
     assert(!/\bsections:/.test(src),
       'sections is read to build the quote and must never be a key in anything returned');
-    assertEqual((src.match(/\borg_id:/g) || []).length, 1,
-      'org_id belongs in the acceptance insert and nowhere else — never in a response');
+    // Two inserts since v120: the quote acceptance and the inspection agreement.
+    assertEqual((src.match(/\borg_id:/g) || []).length, 2,
+      'org_id belongs in the two acceptance inserts and nowhere else — never in a response');
+    assertEqual((src.match(/from\('client_acceptances'\)\.insert\(row\)/g) || []).length, 2,
+      'and those are the only two inserts');
     // Expired, revoked and never-existed all answer the same way, so the
     // portal cannot be used to confirm which tokens exist.
     assert(/const REFUSAL/.test(src) && (src.match(/json\(REFUSAL, 404\)/g) || []).length >= 4,
@@ -1182,7 +1185,8 @@
     // The only table it writes a new row to.
     const inserts = (src.match(/from\('([a-z_]+)'\)[^;]*\.insert\(/g) || [])
       .map((s) => s.replace(/^from\('|'\)[\s\S]*$/g, ''));
-    assertEqual(inserts.join(','), 'client_acceptances',
+    // Two inserts since v120 (a quote and an inspection agreement), one table.
+    assertEqual(Array.from(new Set(inserts)).join(','), 'client_acceptances',
       `an endpoint with no login should insert into exactly one table, found: ${inserts.join(',') || 'none'}`);
   });
 
@@ -11122,6 +11126,124 @@
     assert(/db\.onversionchange = \(\) => \{\s*\n\s*db\.close\(\);/.test(src), 'an old copy closes its connection when a newer version needs the database');
     assert(/req\.onblocked = \(\) => \{/.test(src), 'and a blocked upgrade tells the person what to do');
     assert(/const DB_VERSION = 10;/.test(src), 'version 10 is the one with the merge bases');
+  });
+
+  // ---------- Inspection agreement signed before the visit (v120, migration 034) ----------
+  let __agree = null;
+  async function Agree() {
+    if (!__agree) __agree = await import('../supabase/functions/_shared/agreement.js');
+    return __agree;
+  }
+
+  test('Agreement: only a timber pest inspection asks for it, and the app and server agree on which', async () => {
+    const A = await Agree();
+    const win = frame.contentWindow;
+    const cases = [
+      ['termite', '', true],
+      ['termite', 'timber_pest_inspection', true],
+      ['termite', 'termite_monitoring', false],
+      ['termite', 'termite_certificate', false],
+      ['termite', 'termite_action_plan', false],
+      ['pest_treatment', '', false],
+      ['pest_treatment', 'general_pest', false],
+    ];
+    for (const [jobType, doc, want] of cases) {
+      assertEqual(A.needsAgreement(jobType, doc), want, `server: ${jobType}/${doc || 'none'}`);
+      assertEqual(win.ClientAgreement.needsAgreement({ jobType, preferredDocumentType: doc }, null), want, `app: ${jobType}/${doc || 'none'}`);
+    }
+    assertEqual(win.ClientAgreement.needsAgreement({ jobType: 'termite' }, { documentType: 'timber_pest_inspection', finalizedAt: Date.now() }), false,
+      'once the report is finalized there is nothing to agree to in advance');
+  });
+
+  test('Agreement: the client sees the scope and limitations, versioned, and nothing from the findings', async () => {
+    const A = await Agree();
+    const sections = {
+      agreement: { agreedAccessLimitations: 'Roof void has no manhole.', agreementAcceptedBy: 'x' },
+      findings: { liveTermitesFound: 'Yes', findingsNotes: 'SECRET FINDING' },
+      clientDetails: { clientPhone: '0400 000 000' },
+    };
+    const shown = A.agreementFrom({ sections, address: '1 Test St', scheduledAt: 1790000000000 });
+    assertEqual(shown.version, A.AGREEMENT_VERSION, 'the version goes with it, so a later change of wording cannot change what was agreed');
+    assert(shown.terms.length >= 6, 'every paragraph is there');
+    const all = JSON.stringify(shown);
+    for (const needle of ['AS 4349.3-2010', 'non-invasive', 'Drywood termites', 'Australian Consumer Law', 'roof void manhole']) {
+      assert(all.toLowerCase().includes(needle.toLowerCase()), `it says: ${needle}`);
+    }
+    assertEqual(shown.accessLimitations, 'Roof void has no manhole.', 'access limitations the technician wrote are shown too');
+    assert(!all.includes('SECRET FINDING') && !all.includes('0400'), 'nothing else from the report goes out');
+    assertEqual(A.agreementSignedOnSite(sections), false, 'not signed yet');
+    assertEqual(A.agreementSignedOnSite({ agreement: { agreementSignature: 'data:image/png;base64,AAAA' } }), true, 'signed on the day');
+  });
+
+  test('Agreement: a signature from the link lands in section 3 with the client\'s own date, once, and never on a finalized report', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Agreement Job', jobType: 'termite', preferredDocumentType: 'timber_pest_inspection' });
+    const sig = 'data:image/png;base64,iVBORw0KGgo=';
+    const at = new Date(2031, 2, 10, 7, 30, 0, 0).getTime(); // early morning: the UTC-date trap
+    const res = await win.ReportUI.applyClientAgreement(job.id, { name: 'Jane Smith', signature: sig, at });
+    assert(res && res.ok, 'filed');
+    let report = await win.DB.getReport(job.id);
+    const a = report.sections.agreement;
+    assertEqual(a.agreementAcceptedBy, 'Jane Smith', 'their name');
+    assertEqual(a.agreementAcceptedAt, '2031-03-10', 'the day they signed, in local time');
+    assertEqual(a.agreementSignature, sig, 'their signature');
+    assert(report.auditLog.some((e) => e.event === 'client-agreement-applied'), 'and it is in the audit trail');
+
+    const again = await win.ReportUI.applyClientAgreement(job.id, { name: 'Someone Else', signature: sig, at });
+    assertEqual(again.reason, 'already-signed', 'a second filing changes nothing');
+    report = await win.DB.getReport(job.id);
+    assertEqual(report.sections.agreement.agreementAcceptedBy, 'Jane Smith', 'the first signature stays');
+
+    const job2 = await win.DB.addJob({ name: 'Agreement Job 2', jobType: 'termite' });
+    const r2 = await win.ReportUI.applyClientAgreement(job2.id, { name: 'A B', signature: sig, at });
+    assert(r2.ok, 'a fresh job');
+    const rep2 = await win.DB.getReport(job2.id);
+    rep2.sections.agreement.agreementSignature = '';
+    rep2.finalizedAt = Date.now();
+    await win.DB.saveReport(rep2);
+    const r3 = await win.ReportUI.applyClientAgreement(job2.id, { name: 'A B', signature: sig, at });
+    assertEqual(r3.reason, 'finalized', 'not onto a report already issued');
+  });
+
+  test('Agreement: the public page can only record a signature; the email reads its link from the database', async () => {
+    const portal = await (await fetch('../supabase/functions/client-portal/index.ts', { cache: 'reload' })).text();
+    assert(/async function handleAgree/.test(portal), 'the portal takes an agreement');
+    assert(/kind: 'agreement'/.test(portal), 'recorded as an agreement');
+    assert(/\.eq\('kind', kind\)/.test(portal), 'a quote acceptance and an agreement are never mistaken for each other');
+    assert(!/from\('reports'\)\s*\.(update|upsert|insert|delete)/.test(portal), 'and it never writes to a report');
+    const send = await (await fetch('../supabase/functions/send-client-message/index.ts', { cache: 'reload' })).text();
+    assert(/async function agreementLinkFor\(job: JobRow, base: string\)/.test(send), 'the email finds the link for the job itself');
+    assert(/AGREEMENT_KINDS = new Set\(\['booking_confirmation', 'day_before'\]\)/.test(send), 'in the booking confirmation and the day-before email');
+    assert(/\.eq\('kind', 'agreement'\)/.test(send), 'and stops sending it once signed');
+    const pattern = /const PORTAL_PATTERN = (\/.+\/);/.exec(send);
+    assert(pattern, 'the portal address is checked against a pattern');
+    const re = new Function(`return ${pattern[1]}`)();
+    assert(re.test('https://example.github.io/field-inspect/portal.html'), 'a real portal address passes');
+    for (const bad of ['http://example.com/portal.html', 'https://evil.example/phish.html',
+      'https://example.com/portal.html?x=1', 'javascript:alert(1)//portal.html', 'https://a.com/portal.html/../x']) {
+      assert(!re.test(bad), `refused: ${bad}`);
+    }
+    const sql = await (await fetch('../supabase-migration-034-inspection-agreement.sql', { cache: 'reload' })).text();
+    assert(/on public\.client_acceptances\(job_id, kind\)/.test(sql), 'one live agreement per job, separate from a quote');
+  });
+
+  test('Agreement: the new job form offers it for a timber pest inspection only', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.showJobListView();
+    await wait(200);
+    doc.getElementById('new-job-btn').click();
+    await wait(200);
+    const row = doc.getElementById('job-agreement-row');
+    assert(row && !row.classList.contains('hidden'), 'shown for the default, a timber pest inspection');
+    assert(doc.getElementById('job-agreement').checked, 'and ticked');
+    doc.querySelector('.job-type-chip[data-doc-type="termite_monitoring"]').click();
+    assert(row.classList.contains('hidden'), 'hidden for a monitoring visit');
+    doc.querySelector('.job-type-chip[data-doc-type="general_pest"]').click();
+    assert(row.classList.contains('hidden'), 'and for general pest');
+    doc.querySelector('.job-type-chip[data-doc-type="timber_pest_inspection"]').click();
+    assert(!row.classList.contains('hidden'), 'back for the inspection');
+    doc.getElementById('job-form-cancel').click();
   });
 
 

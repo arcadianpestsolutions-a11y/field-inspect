@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v119 · **520 tests passing** (as of 12 Oct 2026)
+**Current build:** v120 · **525 tests passing** (as of 13 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
@@ -105,7 +105,7 @@ and `report.js` open with a table of contents.
 
 ### Tests and tools
 
-`tests/run-tests.html` (520 tests), `tests/chaos.js` + `chaos-scenarios.js`
+`tests/run-tests.html` (525 tests), `tests/chaos.js` + `chaos-scenarios.js`
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
 
@@ -213,7 +213,7 @@ write that live termites *were* found without that framing being handled.
 ## Outstanding
 
 **Waiting on the operator (not code):**
-- Migrations 002–033 are all applied to the live project (033 on 8 Oct 2026).
+- Migrations 002–034 are all applied to the live project (034 on 13 Oct 2026).
 - Set `CLICKSEND_USERNAME` / `CLICKSEND_API_KEY` in Supabase secrets — until
   then day-before reminders go by email instead of SMS
 - Set `SMS_INBOUND_TOKEN` and add the ClickSend inbound rule pointing at

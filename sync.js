@@ -1314,6 +1314,12 @@
       // Edits that clashed with another device's: kept where a person can see them.
       if (syncConflicts.length && window.SyncConflicts) window.SyncConflicts.record(syncConflicts);
 
+      // Inspection agreements clients signed since the last look, filed into
+      // their reports (client-agreement.js). Never holds up or fails a sync.
+      if (window.ClientAgreement && window.ClientAgreement.applyPending) {
+        window.ClientAgreement.applyPending().catch((e) => console.warn('[sync] agreements not filed:', e.message || e));
+      }
+
       if (failed.length) {
         setStatus({ state: 'partial', lastSyncedAt: Date.now(), error: syncFailureText(failed) });
         return { ok: false, partial: true, failed: failed.map((f) => f.table) };

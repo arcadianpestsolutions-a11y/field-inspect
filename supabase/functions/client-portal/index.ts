@@ -29,6 +29,8 @@
 // THE ONE THING THIS FUNCTION WRITES, AND THE ONE THING IT WILL NOT.
 //
 // POST ?t=<token> {action:'accept'} INSERTS a row into client_acceptances.
+// POST ?t=<token> {action:'agree'} does the same for the inspection
+// agreement signed before the visit (kind 'agreement', migration 034).
 // That is the only write of consequence here, and it is an insert: migration
 // 030 grants this role SELECT and INSERT on that table and nothing else.
 //
@@ -49,6 +51,11 @@ import { loadBusiness } from '../_shared/business.js';
 import {
   checkAcceptance, MAX_NAME_CHARS, quoteFrom, signedOnSite, str,
 } from '../_shared/acceptance.js';
+// The inspection agreement signed before the visit (migration 034). Same
+// rules as a quote acceptance: insert only, never the report.
+import {
+  agreementFrom, agreementSignedOnSite, needsAgreement, AGREEMENT_VERSION,
+} from '../_shared/agreement.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -110,11 +117,12 @@ function callerIp(req: Request) {
   return (fwd.split(',')[0] || '').trim().slice(0, 64);
 }
 
-async function liveAcceptanceFor(jobId: string) {
+async function liveAcceptanceFor(jobId: string, kind = 'quote') {
   const { data, error } = await admin
     .from('client_acceptances')
     .select('accepted_name, accepted_at')
     .eq('job_id', jobId)
+    .eq('kind', kind)
     .is('superseded_at', null)
     .maybeSingle();
   if (error) console.error('[client-portal] could not read acceptance:', error.message);
@@ -147,7 +155,7 @@ async function gate(req: Request): Promise<Gate> {
 
   const { data: access, error: accessError } = await admin
     .from('client_access')
-    .select('token, job_id, expires_at, revoked_at, view_count, acceptance_requested_at')
+    .select('token, job_id, expires_at, revoked_at, view_count, acceptance_requested_at, agreement_requested_at')
     .eq('token', token)
     .maybeSingle();
 
@@ -172,7 +180,7 @@ async function gate(req: Request): Promise<Gate> {
     // signed-in user — so an insert that leaves org_id to the default lands
     // with a null and belongs to nobody. Migration 029's backfill learned
     // this the expensive way.
-    .select('id, name, address, job_type, inspection_date, inspection_ended_at, next_due_at, scheduled_at, org_id')
+    .select('id, name, address, job_type, preferred_document_type, inspection_date, inspection_ended_at, next_due_at, scheduled_at, org_id')
     .eq('id', access.job_id)
     .maybeSingle();
 
@@ -257,6 +265,20 @@ async function handleGet(req: Request) {
     };
   }
 
+  // The inspection agreement, only when the link was issued asking for it and
+  // the job is an inspection that starts with one. Once the report is
+  // finalized the inspection has happened and there is nothing to agree to in
+  // advance, so the card goes.
+  let agreement = null;
+  if (access.agreement_requested_at && agreementApplies(job, report)) {
+    const sections = report ? (report.sections as Row) : null;
+    agreement = {
+      ...agreementFrom({ sections, address: job.address, scheduledAt: job.scheduled_at }),
+      accepted: await liveAcceptanceFor(access.job_id, 'agreement'),
+      signedOnSite: agreementSignedOnSite(sections),
+    };
+  }
+
   // Best effort. A counter that fails must never stop a client reading their
   // own report.
   admin.from('client_access')
@@ -284,8 +306,76 @@ async function handleGet(req: Request) {
       : null,
     invoice,
     acceptance,
+    agreement,
     expiresAt: access.expires_at,
   });
+}
+
+function agreementApplies(job: Row, report: Row | null) {
+  if (report && report.finalized_at) return false;
+  const doc = (report && report.document_type) || job.preferred_document_type || '';
+  return needsAgreement(job.job_type, doc);
+}
+
+async function handleAgree(req: Request, body: Row) {
+  const g = await gate(req);
+  if (g.fail) return g.fail;
+  const { token, access, job, report } = g;
+
+  // A link not asking for the agreement gets the same refusal as a made-up one.
+  if (!access.agreement_requested_at) return json(REFUSAL, 404);
+  if (!agreementApplies(job, report)) {
+    return json({
+      error: 'not-needed',
+      message: 'There is nothing to sign here any more. If you have a question, please get in touch.',
+    }, 409);
+  }
+
+  const sections = report ? (report.sections as Row) : null;
+  if (agreementSignedOnSite(sections)) {
+    return json({ error: 'already-signed', message: 'This has already been signed. There is nothing more to do.' }, 409);
+  }
+  const existing = await liveAcceptanceFor(access.job_id, 'agreement');
+  if (existing) return json({ error: 'already-accepted', accepted: existing }, 409);
+
+  const name = str(body.name).slice(0, MAX_NAME_CHARS);
+  const signature = str(body.signature);
+  const problem = checkAcceptance({ name, signature });
+  if (problem === 'need-name') return json({ error: problem, message: 'Please type your full name.' }, 400);
+  if (problem === 'need-signature') return json({ error: problem, message: 'Please sign in the box above.' }, 400);
+  if (problem) {
+    return json({ error: 'need-signature', message: 'That signature did not come through. Please try again.' }, 400);
+  }
+
+  const now = Date.now();
+  const row = {
+    id: `ag_${crypto.randomUUID().replace(/-/g, '')}`,
+    kind: 'agreement',
+    job_id: access.job_id,
+    token,
+    document_type: 'timber_pest_inspection',
+    report_finalized_at: null,
+    accepted_name: name,
+    signature,
+    accepted_at: now,
+    // Word for word what the page showed, with its version. Never a lookup.
+    presented: agreementFrom({ sections, address: job.address, scheduledAt: job.scheduled_at }),
+    ip: callerIp(req),
+    user_agent: (req.headers.get('user-agent') || '').slice(0, 400),
+    org_id: job.org_id,
+    created_at: now,
+    updated_at: now,
+  };
+
+  const { error } = await admin.from('client_acceptances').insert(row);
+  if (error) {
+    if (String((error as Row).code) === '23505') {
+      return json({ error: 'already-accepted', accepted: await liveAcceptanceFor(access.job_id, 'agreement') }, 409);
+    }
+    console.error('[client-portal] could not record agreement', error);
+    return json({ error: 'unavailable', message: 'Something went wrong. Please try again shortly.' }, 500);
+  }
+  return json({ accepted: { name, at: now }, version: AGREEMENT_VERSION });
 }
 
 async function handleAccept(req: Request) {
@@ -386,7 +476,12 @@ async function handleAccept(req: Request) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
-  if (req.method === 'POST') return handleAccept(req);
+  if (req.method === 'POST') {
+    // Read from a copy, so handleAccept can still read the original itself.
+    const body = (await req.clone().json().catch(() => ({}))) as Row;
+    if (body && str(body.action) === 'agree') return handleAgree(req, body);
+    return handleAccept(req);
+  }
   if (req.method === 'GET') return handleGet(req);
   return json({ error: 'bad-request', message: 'Not supported.' }, 405);
 });

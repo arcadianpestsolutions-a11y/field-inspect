@@ -161,3 +161,12 @@ Nothing to tap; it happens during sync.
 - Photos added to the same report on two phones are all kept. The audit trail keeps every entry from both.
 - If you both changed the *same* field, the later save is kept. A message says how many changes clashed, and More > Saved reports shows a **Changes that clashed** card: which record, which field, the value kept and the value that lost, for example `Smith House: phone number. Kept "0400 111 111" (from this phone); the other change was "0400 222 222".` If the other one was right, open the record and put it back. **Clear this list** empties the card.
 - The first time a phone opens this version it upgrades its database. If Scope is open in another tab or window, a message asks you to close the others.
+
+## 15. Inspection agreement signed before the visit (v120)
+Section 3 of the timber pest inspection report (About Our Agreement) can now be signed by the client from home.
+1. **Booking.** New job, Timber Pest Inspection, with the client's email and a booked time. **"Email the inspection agreement for the client to sign before the visit"** is ticked by default. Save: the client's link is made, asking for the agreement, and the booking confirmation email carries a **Read and sign the agreement** button. The day-before email carries it too, until it is signed.
+2. **The client** opens the link, reads what the inspection covers and what it cannot (scope to AS 4349.3, what is not covered, non-invasive, areas that cannot be reached, access on the day, who may rely on the report, Australian Consumer Law), plus any access limitations already written in section 3, types their name, signs with a finger, and taps **I agree to this inspection**. Name, signature, time, device details and the exact wording (versioned) are recorded. The public page cannot change the report.
+3. **Filing.** On the next sync the phone puts the name, date and signature into section 3 by itself, with an audit-trail entry ("Inspection agreement signed by the client"), and a message says so. Opening **Client link** on the job files it straight away and shows "Jane Smith signed the inspection agreement on 14 Oct 2026. It is on the report."
+- A signature already taken on the day is never replaced. A finalized report is not changed.
+- Already booked, or no email at the time? **Client link** on the job has **"Ask the client to sign the inspection agreement on this page"**; copy the link and send it yourself.
+- Only for a timber pest inspection: never for a monitoring visit, certificate, action plan or general pest job.
