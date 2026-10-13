@@ -12,7 +12,7 @@
   const view = document.getElementById('view-invoice');
   if (!view) { console.warn('[invoice-ui] invoice view missing from the page'); return; }
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const backBtn = el('invoice-back-btn');
   const printBtn = el('invoice-print-btn');
   const subtitle = el('invoice-subtitle');
@@ -46,14 +46,11 @@
   let current = null;   // the invoice being edited
   let returnToJobId = null;
 
-  const toast = (msg) => (window.appToast ? window.appToast(msg) : console.log(msg));
+  // Shared helpers (common.js). The in-app confirm matters here: both uses
+  // guard something that costs money to get wrong.
+  const { toast, askConfirm, escapeHtml } = window.Common;
   const show = (e) => e.classList.remove('hidden');
   const hide = (e) => e.classList.add('hidden');
-  // See app.js — native confirm never renders in an installed iOS app, and
-  // both uses here guard something that costs money to get wrong.
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
-
-  const escapeHtml = window.HtmlSafe.escape;
 
   // ---------- rendering ----------
   function renderTotals() {
@@ -216,10 +213,9 @@
     renderReferral();
   }
 
-  // Mirrors report.js's renderEmailStatus/EMAIL_STATUS_LABELS exactly —
-  // duplicated rather than shared, matching this codebase's existing
-  // convention of each module owning its own small toast()/escapeHtml()
-  // rather than importing one shared copy across files.
+  // Mirrors report.js's renderEmailStatus/EMAIL_STATUS_LABELS exactly.
+  // Still a copy: the two screens show slightly different things beside it,
+  // and the small helpers both use now come from common.js.
   const EMAIL_STATUS_LABELS = {
     sent: 'Sent', delivered: 'Delivered ✓', opened: 'Opened by client', clicked: 'Opened by client',
     bounced: '⚠ Bounced — check the address', complained: '⚠ Marked as spam',

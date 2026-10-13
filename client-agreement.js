@@ -26,7 +26,7 @@
 
   const LIFETIME_DAYS = 90;
   const client = () => window.supabaseClient || null;
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
+  const { toast } = window.Common;
 
   // The same rule as supabase/functions/_shared/agreement.js needsAgreement,
   // in the app's own field names. A test keeps the two in step.

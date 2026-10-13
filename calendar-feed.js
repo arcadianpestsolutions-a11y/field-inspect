@@ -22,7 +22,7 @@
   const hintEl = document.getElementById('calendar-feed-hint');
   if (!openBtn || !panel) return; // markup not present — nothing to wire up
 
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
+  const { toast } = window.Common;
 
   // ai.js's humanError exists for a different domain (Edge Function/network
   // failures) and falls through to the raw string for anything it doesn't
@@ -164,8 +164,8 @@
   });
 
   regenerateBtn.addEventListener('click', async () => {
-    // See app.js — native confirm never renders in an installed iOS app.
-    const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+    // In-app confirm (common.js): a native one never renders in an installed iOS app.
+    const { askConfirm } = window.Common;
     if (!await askConfirm('This replaces the current link. Any calendar already subscribed to the old one will stop updating.',
       { title: 'Replace the calendar link?', okLabel: 'Replace link', danger: true })) return;
     regenerateBtn.disabled = true;

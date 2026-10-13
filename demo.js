@@ -44,7 +44,7 @@
   function localDate(dayOffset) {
     const d = new Date();
     d.setDate(d.getDate() + (dayOffset || 0));
-    const pad = (n) => String(n).padStart(2, '0');
+    const { pad2: pad } = window.Common;
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
@@ -768,7 +768,7 @@
     reset.className = 'link-btn';
     reset.textContent = 'Reset demo';
     reset.addEventListener('click', async () => {
-      const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+      const { askConfirm } = window.Common;
       if (!await askConfirm('Clear the demo data and start again?',
         { title: 'Reset demo', okLabel: 'Reset' })) return;
       for (const j of await DB.getJobs()) await DB.deleteJob(j.id);

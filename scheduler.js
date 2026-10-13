@@ -30,7 +30,7 @@
   const BOOK_DEFAULT_START_HOUR = 8;
   const DURATION_OPTIONS = [30, 60, 90, 120, 180, 240];
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const backBtn = el('scheduler-back-btn');
   const titleEl = el('scheduler-month-label');
   const prevBtn = el('scheduler-prev');
@@ -48,11 +48,9 @@
   const pickerDuration = el('slot-picker-duration');
   const pickerCancel = el('slot-picker-cancel');
 
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  // See app.js — native confirm never renders in an installed iOS app, and
-  // this one is the only thing standing between a technician and a
-  // double-booking they never saw.
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+  // Shared helpers (common.js). The in-app confirm matters here: it is the
+  // only thing standing between a technician and a double-booking they never saw.
+  const { toast, askConfirm } = window.Common;
 
   // All calendar maths is on local calendar days. Going through UTC here would
   // shift every booking by the timezone offset.

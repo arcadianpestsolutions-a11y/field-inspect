@@ -11,7 +11,7 @@
   const stickerView = document.getElementById('view-asset-stickers');
   if (!listView || !propertyView || !stickerView) return;
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const propertyListEl = el('assets-property-list');
   const stationListEl = el('asset-station-list');
   const titleEl = el('asset-property-title');
@@ -19,8 +19,7 @@
   const stickerSheetEl = el('asset-sticker-sheet');
   const stickerSubtitleEl = el('asset-stickers-subtitle');
 
-  const escapeHtml = window.HtmlSafe.escape;
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
+  const { escapeHtml, toast } = window.Common;
 
   let currentProperty = null;
   let currentAssets = [];

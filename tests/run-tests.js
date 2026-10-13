@@ -5913,7 +5913,9 @@
     // Rebooking calls the gate with a null id, because the follow-up job is
     // created only after the time is agreed. A travel estimate is advisory;
     // it must never be the thing that stops a real booking being made.
-    const day = dayThisMonth(13, 9);
+    // A fixed future date: "the 13th of this month" was in the past from the
+    // 14th on, and a past booking is (rightly) questioned for other reasons.
+    const day = new Date(2031, 2, 13, 9, 0, 0, 0);
     const clear = await win.Scheduler.confirmNoOverlap(null, day.getTime(), 60);
     assertEqual(clear, true, 'no job yet means nothing to estimate from, so nothing to warn about');
   });
@@ -11182,6 +11184,49 @@
     assert(/db\.onversionchange = \(\) => \{\s*\n\s*db\.close\(\);/.test(src), 'an old copy closes its connection when a newer version needs the database');
     assert(/req\.onblocked = \(\) => \{/.test(src), 'and a blocked upgrade tells the person what to do');
     assert(/const DB_VERSION = 12;/.test(src), 'version 12 is the one with the SOP library');
+  });
+
+  // ---------- Shared helpers (common.js, v125) ----------
+  test('Common: the shared helpers load before everything that uses them', async () => {
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+    const at = scripts.indexOf('common.js');
+    assert(at > -1, 'common.js is on the page');
+    assert(at > scripts.indexOf('html-safe.js') && at > scripts.indexOf('dialog.js'), 'after the two things it calls');
+    const users = [];
+    for (const src of scripts) {
+      if (src.startsWith('vendor/') || src === 'common.js') continue;
+      const code = await (await fetch(`../${src}`, { cache: 'reload' })).text();
+      if (/window\.Common\b/.test(code)) users.push(src);
+    }
+    assert(users.length >= 20, `it is used widely (${users.length} files)`);
+    const early = users.filter((s) => scripts.indexOf(s) < at);
+    assertEqual(early.join(','), '', 'and nothing that uses it loads before it');
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(/'\.\/common\.js'/.test(sw), 'and it is cached for offline use');
+  });
+
+  test('Common: no screen keeps its own copy of a shared helper', async () => {
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]).filter((s) => !s.startsWith('vendor/') && s !== 'common.js');
+    const copies = [
+      /const toast = \((m|msg)\) => \(window\.appToast/,
+      /const askConfirm = \(msg, opts\) => \(window\.Dialog/,
+      /const askPrompt = \(msg, def, opts\) => \(window\.Dialog/,
+      /const el = \(id\) => document\.getElementById\(id\);/,
+      /const escapeHtml = window\.HtmlSafe/,
+    ];
+    const found = [];
+    for (const src of scripts) {
+      const code = await (await fetch(`../${src}`, { cache: 'reload' })).text();
+      for (const re of copies) if (re.test(code)) found.push(`${src}: ${re.source.slice(0, 30)}`);
+    }
+    assertEqual(found.join(' | '), '', 'one copy, in common.js');
+    const C = frame.contentWindow.Common;
+    assertEqual(C.fmtDay(new Date(2031, 2, 10).getTime()), '10 Mar 2031', 'dates read the Australian way');
+    assertEqual(C.fmtDay(null), '', 'and a missing date is blank');
+    assertEqual(C.pad2(7), '07', 'two-digit padding');
+    assertEqual(C.escapeHtml('<b>"x"</b>'), frame.contentWindow.HtmlSafe.escape('<b>"x"</b>'), 'escaping is html-safe.js’s own');
   });
 
   // ---------- Test mode for client messages, pinned server library (v124) ----------

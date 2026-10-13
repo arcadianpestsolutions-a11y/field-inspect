@@ -281,8 +281,7 @@
     return !!me && assigned.toLowerCase() === (me.email || '').toLowerCase();
   }
 
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
-  const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
+  const { askConfirm, askPrompt } = window.Common;
 
   function fmtDate(ts) {
     const d = new Date(ts);
@@ -1753,7 +1752,7 @@
 
   // One shared implementation (html-safe.js). Escapes quotes too, so it is
   // safe inside attribute values as well as between tags.
-  const escapeHtml = window.HtmlSafe.escape;
+  const { escapeHtml } = window.Common;
 
   // ---------- Voice recording ----------
   function pickMimeType() {

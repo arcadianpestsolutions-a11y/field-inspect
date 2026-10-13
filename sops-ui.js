@@ -23,12 +23,7 @@
   const listView = document.getElementById('view-sops');
   if (!S || !listView) return;
 
-  const el = (id) => document.getElementById(id);
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  const escapeHtml = window.HtmlSafe ? window.HtmlSafe.escape : (s) => String(s);
-  const fmtDate = (ts) => (ts ? new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
-  const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
+  const { el, toast, escapeHtml, fmtDay: fmtDate, askConfirm, askPrompt } = window.Common;
 
   const sopView = el('view-sop');
   const editView = el('view-sop-edit');

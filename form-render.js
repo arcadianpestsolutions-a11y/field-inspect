@@ -27,7 +27,7 @@
 (() => {
   'use strict';
 
-  const escapeHtml = window.HtmlSafe.escape;
+  const { escapeHtml } = window.Common;
 
   const fieldVisible = (field, values) => (window.ReportSchemaUtils
     ? window.ReportSchemaUtils.isFieldVisible(field, values)

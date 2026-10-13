@@ -14,7 +14,7 @@
   const leadView = document.getElementById('view-lead');
   if (!boardView || !leadView) return;
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const boardEl = el('leads-board');
   const dueEl = el('leads-due');
   const subtitleEl = el('leads-subtitle');
@@ -24,10 +24,7 @@
   const stagesEl = el('lead-stages');
   const dueBannerEl = el('lead-due-banner');
 
-  const escapeHtml = window.HtmlSafe.escape;
-  const money = (cents) => (window.Invoicing ? window.Invoicing.formatMoney(cents) : `$${((cents || 0) / 100).toFixed(2)}`);
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+  const { escapeHtml, money, toast, askConfirm } = window.Common;
 
   let current = null;
   let values = {};

@@ -19,7 +19,7 @@
   const openBtn = document.getElementById('client-link-btn');
   if (!panel || !openBtn) return;
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const hintEl = el('client-link-hint');
   const urlEl = el('client-link-url');
   const copyBtn = el('client-link-copy');
@@ -40,8 +40,7 @@
   const agreeBox = el('client-link-agree');
   const agreedText = el('client-link-agreed-text');
 
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+  const { toast, askConfirm } = window.Common;
   const show = (node, on) => { if (node) node.classList.toggle('hidden', !on); };
 
   // Ninety days. Long enough that a client who files the email and comes back

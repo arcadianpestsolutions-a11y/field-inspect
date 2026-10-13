@@ -33,7 +33,7 @@
   const DISMISS_KEY = 'scope-reminder-nudge-dismissed';
   const BANNER_ID = 'reminder-nudge';
 
-  const pad = (n) => String(n).padStart(2, '0');
+  const { pad2: pad } = window.Common;
   const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
   // Tomorrow as the CALENDAR sees it, built from date parts rather than by adding

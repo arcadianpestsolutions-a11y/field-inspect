@@ -30,10 +30,8 @@
   const checkBtn = document.getElementById('reminders-check');
   const sendBtn = document.getElementById('reminders-send');
 
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  const askConfirm = (msg, opts) => (window.Dialog
-    ? window.Dialog.confirm(msg, opts)
-    : Promise.resolve(window.confirm(msg)));
+  const { toast } = window.Common;
+  const { askConfirm } = window.Common;
 
   // What was last previewed. "Send these now" only appears once this holds
   // something, so the live send can never be the first button pressed.

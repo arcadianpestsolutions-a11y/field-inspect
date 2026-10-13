@@ -27,7 +27,7 @@
   const cancelBtn = document.getElementById('qr-cancel-btn');
   if (!modal || !video) return;
 
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
+  const { toast } = window.Common;
 
   let stream = null;
   let running = false;

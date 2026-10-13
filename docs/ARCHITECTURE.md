@@ -46,7 +46,7 @@ talks to one Supabase project.
 | Group | Files | Role |
 |---|---|---|
 | Boot | `error-log.js`, `version.js`, `supabase-config.js` | Error capture, build id, publishable key |
-| Safety/UI primitives | `html-safe.js`, `dialog.js`, `ios-install.js` | Escaping; in-app confirm/prompt (native ones do not render in iOS home-screen apps) |
+| Safety/UI primitives | `html-safe.js`, `dialog.js`, `common.js` (the small helpers every screen shares: toast, confirm/prompt, el, escapeHtml, fmtDay, money, pad2), `ios-install.js` | Escaping; in-app confirm/prompt (native ones do not render in iOS home-screen apps) |
 | Data | `db.js` | IndexedDB wrapper (`DB_VERSION` 12). Stores: jobs, captures, reports, swms, leads, clients, invoices, referrals, sops, sectionDrafts, deletions, syncBase (last copy both sides agreed on, for merging) |
 | Schemas (pure data) | `report-schema.js`, `pest-treatment-schema.js`, `termite-management-schemas.js`, `swms-schema.js`, `photo-checklists.js`, `pest-products.js`, `form-render.js` | What each document contains; generic renderer |
 | Pure logic | `invoicing.js`, `availability.js`, `routing.js`, `reporting.js`, `assets.js`, `clients.js`, `pipeline.js` | Maths and rules with no DOM; best covered by tests |

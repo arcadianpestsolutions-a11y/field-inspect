@@ -29,10 +29,8 @@
   const backBtn = document.getElementById('business-back-btn');
   const openBtn = document.getElementById('open-business-btn');
 
-  const escapeHtml = window.HtmlSafe.escape;
-  const money = (cents) => (window.Invoicing
-    ? window.Invoicing.formatMoney(cents)
-    : `$${((cents || 0) / 100).toFixed(2)}`);
+  const { escapeHtml } = window.Common;
+  const { money } = window.Common;
 
   // Remembered between visits, because somebody who thinks in financial
   // years does not want to re-pick it every time.

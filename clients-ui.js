@@ -16,7 +16,7 @@
   const clientView = document.getElementById('view-client');
   if (!listView || !clientView) return;
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const listEl = el('clients-list');
   const searchEl = el('clients-search');
   const subtitleEl = el('clients-subtitle');
@@ -26,9 +26,7 @@
   const propsEl = el('client-properties');
   const jobsEl = el('client-jobs');
 
-  const escapeHtml = window.HtmlSafe.escape;
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+  const { escapeHtml, toast, askConfirm } = window.Common;
 
   let current = null;
   let values = {};
@@ -58,7 +56,7 @@
     view.classList.remove('hidden');
   }
 
-  const fmtDate = (ts) => (ts ? new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+  const { fmtDay: fmtDate } = window.Common;
 
   // ---------- the list ----------
   async function openList() {

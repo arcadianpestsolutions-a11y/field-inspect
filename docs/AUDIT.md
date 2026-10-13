@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈11,250 lines, 542 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈11,350 lines, 544 tests, all
 passing), 11 Edge Function folders, 36 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -74,10 +74,13 @@ and no console error in ~2,400 random steps after the fixes.
 1. **Two giant closures**: `app.js` (~2,600 lines) and `report.js` (~4,400). Each
    has a table of contents in its header. Splitting the form renderer and print
    view out of `report.js` is the obvious first refactor.
-2. **Duplicated helpers**: `toast` (12 copies), `askConfirm` (11), `el` (12),
-   `fmtDate` (6), `pad` (7), `uid` (4), `money` (2), `plural` (2). Each is tiny
-   and behaves the same; consolidating them into a shared module is mechanical.
-   `window.technicianDisplayName` is defined in both `app.js` and `report.js`.
+2. ~~**Duplicated helpers.**~~ **Consolidated in v125** into `common.js`
+   (`toast`, `askConfirm`, `askPrompt`, `el`, `escapeHtml`, `fmtDay`, `money`, `pad2`):
+   61 identical copies across 21 files replaced, and a test fails if one is added back.
+   Deliberately left alone because they differ on purpose: the date formatters that
+   print "never" or follow the phone's locale, the three `plural()` signatures, and the
+   `el(tag, ...)` element builders. `technicianDisplayName` was defined twice in
+   `report.js`; the stray copy outside its closure is gone.
 3. **No build tooling**: no package.json, linter, formatter, type checking, or CI.
    Tests are a browser page run by hand (plus a demo-only random tapper).
 4. **Two-folder workflow**: development happens in one folder and is copied into

@@ -34,12 +34,7 @@
 // KNOWN DEBT: 4,300 lines in one closure. Candidates to split: the form
 //   renderer and the print view. See docs/AUDIT.md.
 // ===========================================================================
-  // Turns a job's assignedTo email into a name worth showing on a job list or
-  // a scheduler slot. Reads the team roster rather than a table in this file.
-  window.technicianDisplayName = function technicianDisplayName(email) {
-    if (!email) return '';
-    return window.Org ? window.Org.nameFor(email) : email;
-  };(() => {
+(() => {
   'use strict';
 
   // Every AI failure shown to a technician goes through here. The real
@@ -287,19 +282,11 @@
   function show(el) { el.classList.remove('hidden'); }
   function hide(el) { el.classList.add('hidden'); }
 
-  function toast(msg) {
-    if (window.appToast) { window.appToast(msg); return; }
-    console.log(msg);
-  }
-
-  // See the same pair in app.js. Native confirm/prompt never render in an
-  // installed iOS home-screen app, which silently took out Finalize Report,
-  // sending a report, and the mandatory reason for amending a finalized one
-  // — the three flows in this file that most need to work.
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
-  const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
-
-  const escapeHtml = window.HtmlSafe.escape;
+  // Shared helpers (common.js). The in-app confirm and prompt matter most
+  // here: native ones never render in an installed iOS home-screen app,
+  // which once silently took out Finalize Report, sending a report, and the
+  // mandatory reason for amending a finalized one.
+  const { toast, askConfirm, askPrompt, escapeHtml } = window.Common;
 
   function findSection(sectionId) {
     return currentSchema().find((s) => s.id === sectionId);
@@ -825,7 +812,7 @@
       // somebody might later argue about. The test for this failed on the
       // first run with exactly that one-day slip.
       const at = new Date(acceptance.at || Date.now());
-      const pad = (n) => String(n).padStart(2, '0');
+      const { pad2: pad } = window.Common;
       section.clientAckDate = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
       report.sections.acknowledgement = section;
 
@@ -862,7 +849,7 @@
       // The client's date, from local parts (see applyClientAcceptance above
       // for the one-day slip toISOString() causes in Sydney).
       const at = new Date(agreement.at || Date.now());
-      const pad = (n) => String(n).padStart(2, '0');
+      const { pad2: pad } = window.Common;
       const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
       const name = String(agreement.name || '').trim();
       section.agreementAcceptedBy = name;
@@ -1481,7 +1468,7 @@
 
   function fmtAuditTime(ts) {
     const d = new Date(ts);
-    const pad = (n) => String(n).padStart(2, '0');
+    const { pad2: pad } = window.Common;
     return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 

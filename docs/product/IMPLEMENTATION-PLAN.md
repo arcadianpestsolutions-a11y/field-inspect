@@ -69,7 +69,7 @@ Exit: a tested, documented restore; no silent overwrites.
 | # | Task | Size |
 |---|---|---|
 | 5.1 | Move to a single git repository (remove the two-folder copy step) | M |
-| 5.2 | Shared `common.js`: consolidate `toast`, `askConfirm`, `el`, `fmtDate`, `pad`, `uid`, `money` | M |
+| 5.2 | Shared `common.js`: consolidate `toast`, `askConfirm`, `el`, `fmtDate`, `pad`, `uid`, `money` **Done in v125** (61 copies across 21 files; the look-alikes that differ on purpose were left) | M |
 | 5.3 | Split `report.js` (form renderer, print view) and `app.js` | L |
 | 5.4 | Pin `@supabase/supabase-js` import version in every function. **Done in v124** (`@2.117.3`, test-guarded) | S |
 | 5.5 | Add a linter and a CI job that runs the browser suite headless | M |

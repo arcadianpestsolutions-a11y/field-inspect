@@ -35,7 +35,7 @@
     minLeadMins: 0,
   };
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const panel = el('agent-panel');
   const logEl = el('agent-log');
   const inputEl = el('agent-input');
@@ -49,7 +49,7 @@
   let busy = false;
 
   // ---------- local date helpers (local calendar days, never UTC) ----------
-  const pad = (n) => String(n).padStart(2, '0');
+  const { pad2: pad } = window.Common;
   const toLocalDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const parseLocalDate = (s) => {
     const [y, m, d] = String(s).split('-').map(Number);

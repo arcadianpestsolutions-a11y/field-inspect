@@ -30,7 +30,7 @@
   // A week. Past that the line turns amber, which is the nudge.
   const OK_DAYS = 7;
 
-  const pad = (n) => String(n).padStart(2, '0');
+  const { pad2: pad } = window.Common;
 
   // LOCAL date, never toISOString(). That is UTC, so a backup made at 8am in Sydney
   // was stamped with yesterday's date, and the file name is the only thing telling

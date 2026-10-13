@@ -19,7 +19,7 @@
   const sectionView = document.getElementById('view-swms-section');
   if (!listView || !docView || !sectionView) return; // markup not present
 
-  const el = (id) => document.getElementById(id);
+  const { el } = window.Common;
   const listEl = el('swms-list');
   const newBtn = el('swms-new-btn');
   const listBackBtn = el('swms-list-back-btn');
@@ -35,13 +35,9 @@
   const sectionBackBtn = el('swms-section-back-btn');
   const sectionSaveBtn = el('swms-section-save-btn');
 
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  const askConfirm = (msg, opts) => (window.Dialog
-    ? window.Dialog.confirm(msg, opts)
-    : Promise.resolve(window.confirm(msg)));
+  const { toast, askConfirm, escapeHtml } = window.Common;
   const utils = () => window.ReportSchemaUtils;
   const schema = () => window.SWMS_SCHEMA || [];
-  const escapeHtml = window.HtmlSafe.escape;
 
   let current = null;            // the statement being edited
   let currentSectionId = null;

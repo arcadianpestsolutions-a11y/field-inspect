@@ -19,13 +19,7 @@
   const R = window.Referrals;
   if (!R) { console.warn('[referrals-ui] referrals.js not loaded'); return; }
 
-  const el = (id) => document.getElementById(id);
-  const toast = (m) => (window.appToast ? window.appToast(m) : console.log(m));
-  const escapeHtml = window.HtmlSafe ? window.HtmlSafe.escape : (s) => String(s);
-  const money = (c) => (window.Invoicing ? window.Invoicing.formatMoney(c) : `$${(c / 100).toFixed(2)}`);
-  const fmtDate = (ts) => (ts ? new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
-  const askConfirm = (msg, opts) => (window.Dialog ? window.Dialog.confirm(msg, opts) : Promise.resolve(window.confirm(msg)));
-  const askPrompt = (msg, def, opts) => (window.Dialog ? window.Dialog.prompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
+  const { el, toast, escapeHtml, money, fmtDay: fmtDate, askConfirm, askPrompt } = window.Common;
 
   // ---------- keeping statuses true ----------
   async function evaluate() {
