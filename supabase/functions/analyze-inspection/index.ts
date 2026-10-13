@@ -72,7 +72,34 @@ async function transcribeAudio(audioBase64: string, mimeType: string): Promise<T
   };
 }
 
-async function callClaude(systemPrompt: string, userContent: unknown[]): Promise<string> {
+// WHICH MODEL, AND WHICH PROMPT (v123).
+// One place for the model, and a version for each prompt, so every answer the
+// app keeps can say exactly what produced it. That matters twice over: the
+// accuracy tally is only meaningful per model and prompt (a change to either
+// is a new thing being measured), and a report that relied on a suggestion
+// can show, years later, which version suggested it.
+//
+// CHANGE THE DATE in PROMPT_VERSIONS whenever that action's prompt text
+// changes, and treat a model change the same way. Do not switch models
+// without measuring the new one against the graded photo set first: a newer
+// model is not automatically better at reading termite damage from a phone
+// photo, and the trial in ai-trial/ is the only evidence there is.
+const AI_MODEL = 'claude-sonnet-5';
+const PROMPT_VERSIONS: Record<string, string> = {
+  'draft-report': 'draft-report@2026-10-13',
+  'identify-pest': 'identify-pest@2026-10-13',
+  'identify-tree': 'identify-tree@2026-10-13',
+  'sort-photos': 'sort-photos@2026-10-13',
+  'trace-building': 'trace-building@2026-10-13',
+};
+
+// What the app records next to an answer. `model` is what the API says served
+// the request (data.model), which is the truth even if AI_MODEL is an alias.
+function aiStamp(action: string, servedModel: string) {
+  return { action, model: servedModel || AI_MODEL, requestedModel: AI_MODEL, promptVersion: PROMPT_VERSIONS[action] || `${action}@unversioned` };
+}
+
+async function callClaude(systemPrompt: string, userContent: unknown[]): Promise<{ text: string; model: string }> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -81,7 +108,7 @@ async function callClaude(systemPrompt: string, userContent: unknown[]): Promise
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-5',
+      model: AI_MODEL,
       max_tokens: 8192,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
@@ -90,7 +117,7 @@ async function callClaude(systemPrompt: string, userContent: unknown[]): Promise
   if (!res.ok) throw new Error(`Claude API call failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
   const textBlock = (data.content || []).find((b: any) => b.type === 'text');
-  return textBlock ? textBlock.text : '';
+  return { text: textBlock ? textBlock.text : '', model: typeof data.model === 'string' ? data.model : '' };
 }
 
 // Claude may wrap JSON in a code fence despite instructions not to — strip it defensively.
@@ -197,7 +224,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
     for (const frame of frames.slice(0, 12)) userContent.push(imageBlock(frame.dataUrl));
   }
 
-  const raw = await callClaude(systemPrompt, userContent);
+  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
   const parsed = extractJson(raw);
 
   return json({
@@ -205,6 +232,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
     draftFields: parsed.draftFields || {},
     fieldReasons: parsed.fieldReasons || {},
     frameNotes: parsed.frameNotes || [],
+    ai: aiStamp('draft-report', servedModel),
   });
 }
 
@@ -257,7 +285,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Identify every distinct pest or insect actually visible in these photographs.' });
 
-  const raw = await callClaude(systemPrompt, userContent);
+  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
   const parsed = extractJson(raw);
 
   const identifications = (Array.isArray(parsed.identifications) ? parsed.identifications : [])
@@ -270,7 +298,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
       matchedCategory: typeof id.matchedCategory === 'string' ? id.matchedCategory : '',
     }));
 
-  return json({ identifications });
+  return json({ identifications, ai: aiStamp('identify-pest', servedModel) });
 }
 
 // 'identify-tree': reads a photograph of a tree (or stump) near the property
@@ -321,7 +349,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Identify every distinct tree or stump actually visible and assess its termite susceptibility.' });
 
-  const raw = await callClaude(systemPrompt, userContent);
+  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
   const parsed = extractJson(raw);
 
   const trees = (Array.isArray(parsed.trees) ? parsed.trees : [])
@@ -334,7 +362,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
       recommendDrilling: !!t.recommendDrilling,
     }));
 
-  return json({ trees });
+  return json({ trees, ai: aiStamp('identify-tree', servedModel) });
 }
 
 // 'sort-photos': looks at a bucket of general/untagged photos (things a
@@ -381,7 +409,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Sort each photo into a specific field only where it clearly, specifically belongs. Leave the rest unassigned.' });
 
-  const raw = await callClaude(systemPrompt, userContent);
+  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
   const parsed = extractJson(raw);
 
   const targetKeys = new Set(targets.map((t: any) => `${t.sectionId}::${t.fieldId}`));
@@ -397,7 +425,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
       reasoning: typeof a.reasoning === 'string' ? a.reasoning : '',
     }));
 
-  return json({ assignments });
+  return json({ assignments, ai: aiStamp('sort-photos', servedModel) });
 }
 
 // 'trace-building': reads a building's exterior perimeter out of aerial
@@ -475,7 +503,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences:
     text: "Trace the main building's exterior perimeter. Use the shadow and the straight-line/right-angle rules to place any corner the tree canopy hides.",
   });
 
-  const raw = await callClaude(systemPrompt, userContent);
+  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
   const parsed = extractJson(raw);
 
   // The client draws this straight onto a canvas, so every vertex must be a
@@ -501,6 +529,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences:
     confidence: parsed.confidence || 'medium',
     note: parsed.note || '',
     obscured: parsed.obscured || '',
+    ai: aiStamp('trace-building', servedModel),
   });
 }
 

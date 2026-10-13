@@ -3429,3 +3429,12 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .sop-retire { margin-top: 8px; }
 .sop-edit textarea#sop-edit-body { font-family: var(--font-readout); font-size: .86rem; line-height: 1.5; min-height: 300px; }
 .sop-format-hint { margin: 4px 0 10px; text-align: left; padding: 0; }
+
+/* AI accuracy by section (report.js renderAiAccuracy, v123). */
+.ai-accuracy .ai-head { display: block; }
+.ai-accuracy .ai-sections { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ai-accuracy .ai-sections li { display: flex; justify-content: space-between; gap: 2px 10px; flex-wrap: wrap; }
+.ai-accuracy .ai-fig { margin-left: auto; text-align: right; }
+.ai-accuracy .ai-sec { color: var(--text); }
+.ai-accuracy .ai-weak .ai-fig { color: var(--warning); font-weight: 650; }
+.ai-accuracy .ai-versions { display: block; margin-top: 8px; font-size: .76rem; overflow-wrap: anywhere; }

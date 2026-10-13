@@ -189,3 +189,8 @@ More > **SOP library**. Standard operating procedures kept the way ISO 9001 (cla
 - **Retire** asks why and keeps the procedure and its history. Nothing in the library can be deleted.
 - **Print / save as PDF** gives a controlled-copy header (version, approval, owner, next review) and says printed copies are uncontrolled.
 - The library is in the Export backup file.
+
+## 18. Which AI, and how often it is right (v123)
+- Every AI answer now carries the model and the prompt version that produced it. The report keeps each pass, and its audit trail shows "AI suggestions prepared: 12 suggestions from claude-sonnet-5 (draft-report@2026-10-13). Nothing changes until a person accepts it."
+- More > Saved reports: the accuracy box gives the overall figure, then each report section worst first, e.g. "Findings & Observations: 2 of 7 kept (29%) · check these closely". A section under 70% kept is flagged; one with fewer than 5 answers says "not enough to judge yet". It ends with which model and prompt the figures were measured on.
+- The model is changed in one place (`AI_MODEL` in analyze-inspection) and only after measuring the new one against real graded photos. Change a prompt, change its date in `PROMPT_VERSIONS`.

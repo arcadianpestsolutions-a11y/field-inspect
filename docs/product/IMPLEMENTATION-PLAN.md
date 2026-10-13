@@ -39,10 +39,10 @@ Exit: a finalised, defensible report produced on site, offline, with no retyping
 ## 4. Phase 2 - Trustworthy AI
 | # | Task | Size |
 |---|---|---|
-| 2.1 | Keep structural-damage suggestions explicitly "unverified"; never auto-fill findings | S |
+| 2.1 | Keep structural-damage suggestions explicitly "unverified"; never auto-fill findings. **In place**: `confirmBeforeUse` fields (damage, workings, management system status and others) are offered, never filled in | S |
 | 2.2 | Build a graded test set of real (consented, anonymised) photos; re-measure accuracy per category each time the model or prompt changes | M |
-| 2.3 | Show the accuracy tally to the user per category, not one number | S |
-| 2.4 | Pin model ids and prompt versions in `analyze-inspection`; record them on the report audit trail | S |
+| 2.3 | Show the accuracy tally to the user per category, not one number. **Done in v123**: Saved reports shows each section worst first, flags any section under 70% kept ("check these closely"), and does not judge a section on fewer than 5 answers | S |
+| 2.4 | Pin model ids and prompt versions in `analyze-inspection`; record them on the report audit trail. **Done in v123**: `AI_MODEL` and `PROMPT_VERSIONS` in one place; every answer carries `ai: { model, promptVersion }`; the report keeps each run (`aiDraft.runs`), the audit trail says "AI suggestions prepared ... from claude-sonnet-5 (draft-report@2026-10-13)", and the accuracy tally is split by model and prompt | S |
 Exit: published accuracy per category; no category presented as reliable that is not.
 
 ## 5. Phase 3 - No lost work

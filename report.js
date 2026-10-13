@@ -437,6 +437,16 @@
 
     const review = currentReport.aiReview || { kept: 0, corrected: 0, fields: {} };
     review.fields = review.fields || {};
+    // Which model and prompt these suggestions came from: the latest pass that
+    // covered this section. Accuracy is about a model and a prompt, so a
+    // change to either is counted as a new thing being measured (v123).
+    const runs = ((currentReport.aiDraft && currentReport.aiDraft.runs) || [])
+      .filter((r) => !r.sections || !r.sections.length || r.sections.includes(currentSectionId));
+    const lastRun = runs[runs.length - 1];
+    const versionKey = lastRun ? `${lastRun.model} · ${lastRun.promptVersion}` : 'before v123 (not recorded)';
+    review.versions = review.versions || {};
+    const perVersion = review.versions[versionKey] || { kept: 0, corrected: 0 };
+    const countVersion = (kept) => { if (kept) perVersion.kept += 1; else perVersion.corrected += 1; };
     for (const fieldId of suggestedIds) {
       const finalValue = pendingSectionValues[fieldId];
       const wasKept = valuesEqual(finalValue, aiSuggestedValues[fieldId]);
@@ -444,6 +454,7 @@
       const perField = review.fields[key] || { kept: 0, corrected: 0 };
       if (wasKept) { review.kept += 1; perField.kept += 1; }
       else { review.corrected += 1; perField.corrected += 1; }
+      countVersion(wasKept);
       review.fields[key] = perField;
     }
     for (const fieldId of rejectedIds) {
@@ -453,7 +464,9 @@
       review.corrected += 1;
       perField.corrected += 1;
       review.fields[key] = perField;
+      countVersion(false);
     }
+    review.versions[versionKey] = perVersion;
     review.updatedAt = Date.now();
     currentReport.aiReview = review;
     // Cleared so re-saving the same section cannot count one suggestion
@@ -473,6 +486,7 @@
     let corrected = 0;
     let reportsWithAi = 0;
     const fields = {};
+    const versions = {};
     for (const report of reports || []) {
       const review = report && report.aiReview;
       if (!review || (!review.kept && !review.corrected)) continue;
@@ -485,6 +499,29 @@
         acc.corrected += counts.corrected || 0;
         fields[key] = acc;
       }
+      for (const [key, counts] of Object.entries(review.versions || {})) {
+        const acc = versions[key] || { kept: 0, corrected: 0 };
+        acc.kept += counts.kept || 0;
+        acc.corrected += counts.corrected || 0;
+        versions[key] = acc;
+      }
+    }
+    // By section (v123): "the AI is 80% right" hides that it is reliable about
+    // the property and unreliable about damage. A section is only judged once
+    // there are enough answers to judge it on.
+    const bySection = {};
+    for (const [key, counts] of Object.entries(fields)) {
+      const sectionId = key.split('.')[0];
+      const acc = bySection[sectionId] || { kept: 0, corrected: 0 };
+      acc.kept += counts.kept;
+      acc.corrected += counts.corrected;
+      bySection[sectionId] = acc;
+    }
+    for (const acc of Object.values(bySection)) {
+      acc.total = acc.kept + acc.corrected;
+      acc.keptPercent = acc.total ? Math.round((acc.kept / acc.total) * 100) : null;
+      acc.enough = acc.total >= AI_MIN_ANSWERS;
+      acc.weak = acc.enough && acc.keptPercent < AI_WEAK_PERCENT;
     }
     const total = kept + corrected;
     return {
@@ -494,7 +531,26 @@
       reportsWithAi,
       keptPercent: total ? Math.round((kept / total) * 100) : null,
       fields,
+      bySection,
+      versions,
     };
+  }
+
+  // Below this many answers a section's figure says "not enough yet" rather
+  // than a percentage that one bad photo can swing by 20 points.
+  const AI_MIN_ANSWERS = 5;
+  // A section where fewer than this share of suggestions survive is flagged:
+  // its suggestions should be checked closely, every time.
+  const AI_WEAK_PERCENT = 70;
+
+  function sectionTitleFor(sectionId) {
+    const schemas = [window.REPORT_SCHEMA, window.PEST_TREATMENT_SCHEMA, window.TERMITE_ACTION_PLAN_SCHEMA,
+      window.TERMITE_CERTIFICATE_SCHEMA, window.TERMITE_MONITORING_SCHEMA];
+    for (const schema of schemas) {
+      const s = (schema || []).find((x) => x.id === sectionId);
+      if (s) return s.title;
+    }
+    return sectionId;
   }
 
   function auditActor() {
@@ -1012,7 +1068,27 @@
         // re-derive from scratch, which costs more time than a blank field.
         fieldReasons,
         frameNotes: (result.frameNotes && result.frameNotes.length) ? result.frameNotes : prev.frameNotes,
+        // Every pass that contributed, with the model and prompt that made it
+        // (v123, the `ai` stamp from analyze-inspection). Id'd entries, so two
+        // phones' passes merge rather than one replacing the other.
+        runs: [...(prev.runs || []), {
+          id: DB.uid(),
+          at: Date.now(),
+          action: (result.ai && result.ai.action) || 'draft-report',
+          model: (result.ai && result.ai.model) || 'unknown',
+          promptVersion: (result.ai && result.ai.promptVersion) || 'unknown',
+          sections: Object.keys(result.draftFields || {}),
+          suggestions: Object.values(result.draftFields || {}).reduce((n, f) => n + Object.keys(f || {}).length, 0),
+        }],
       };
+      // On the record of the document too: which AI offered suggestions for it,
+      // and when. The suggestions themselves still change nothing until a
+      // person accepts them, and each acceptance is its own audit entry.
+      const run = report.aiDraft.runs[report.aiDraft.runs.length - 1];
+      appendAudit(report, {
+        event: 'ai-draft-prepared',
+        to: `${run.suggestions} suggestion${run.suggestions === 1 ? '' : 's'} from ${run.model} (${run.promptVersion})`,
+      });
       await DB.saveReport(report);
       if (currentJobId === jobId) {
         currentReport = report;
@@ -1301,10 +1377,23 @@
     const summary = aiAccuracySummary(reports);
     if (!summary.total) { aiAccuracyEl.classList.add('hidden'); return; }
     const reportWord = summary.reportsWithAi === 1 ? 'report' : 'reports';
-    aiAccuracyEl.textContent =
-      `AI suggestions: ${summary.kept} of ${summary.total} kept as written (${summary.keptPercent}%) `
+    const head = `AI suggestions: ${summary.kept} of ${summary.total} kept as written (${summary.keptPercent}%) `
       + `across ${summary.reportsWithAi} ${reportWord}. `
       + `${summary.corrected} needed correcting.`;
+    // Worst first, so the section to be careful with is the one read first.
+    const sections = Object.entries(summary.bySection).filter(([, s]) => s.total > 0)
+      .sort(([, a], [, b]) => (a.enough === b.enough ? (a.keptPercent - b.keptPercent) : (a.enough ? -1 : 1)));
+    const rows = sections.map(([id, s]) => {
+      const figure = s.enough
+        ? `${s.kept} of ${s.total} kept (${s.keptPercent}%)`
+        : `${s.total} so far, not enough to judge yet`;
+      return `<li class="${s.weak ? 'ai-weak' : ''}"><span class="ai-sec">${escapeHtml(sectionTitleFor(id))}</span>`
+        + `<span class="ai-fig">${escapeHtml(figure)}${s.weak ? ' · check these closely' : ''}</span></li>`;
+    }).join('');
+    const versions = Object.keys(summary.versions || {}).filter((v) => !/before v123/.test(v));
+    aiAccuracyEl.innerHTML = `<span class="ai-head">${escapeHtml(head)}</span>`
+      + (rows ? `<ul class="ai-sections">${rows}</ul>` : '')
+      + (versions.length ? `<span class="ai-versions">Measured on: ${escapeHtml(versions.join('; '))}</span>` : '');
     aiAccuracyEl.classList.remove('hidden');
   }
 
@@ -1401,6 +1490,11 @@
     const when = fmtAuditTime(entry.at);
     if (entry.event === 'created') return `<strong>Report created</strong> — ${when} by ${who}`;
     if (entry.event === 'finalized') return `<strong>Report finalized</strong> — ${when} by ${who}`;
+    if (entry.event === 'ai-draft-prepared') {
+      return `<strong>AI suggestions prepared</strong><br>`
+        + `<span class="audit-change">${escapeHtml(entry.to || '')}</span><br>`
+        + `<span class="audit-meta">${when} by ${who}. Nothing changes until a person accepts it.</span>`;
+    }
     if (entry.event === 'client-agreement-applied' || entry.event === 'client-acceptance-applied') {
       const what = entry.event === 'client-agreement-applied' ? 'Inspection agreement signed by the client' : 'Quote accepted by the client';
       return `<strong>${what}</strong><br>`

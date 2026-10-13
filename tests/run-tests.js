@@ -6785,6 +6785,56 @@
     assertEqual(summary.fields['conducive.moisture'].corrected, 3);
   });
 
+  test('AI accuracy: shown by section, worst first, and a section is only judged on enough answers', async () => {
+    const win = frame.contentWindow;
+    const summary = win.ReportUI.aiAccuracySummary([
+      { jobId: 'a', aiReview: { kept: 12, corrected: 3, fields: {
+        'property.wallConstruction': { kept: 9, corrected: 1 }, 'property.floorType': { kept: 3, corrected: 2 },
+        'findings.workingsFound': { kept: 2, corrected: 4 },
+        'conducive.weepHolesClear': { kept: 1, corrected: 0 },
+      }, versions: { 'claude-sonnet-5 · draft-report@2026-10-13': { kept: 12, corrected: 3 } } } },
+    ]);
+    assertEqual(summary.bySection.property.keptPercent, 80, 'property: 12 of 15');
+    assertEqual(summary.bySection.findings.keptPercent, 33, 'findings: 2 of 6');
+    assert(summary.bySection.findings.weak, 'a section the AI gets wrong most of the time is flagged');
+    assert(!summary.bySection.property.weak, 'a reliable one is not');
+    assert(!summary.bySection.conducive.enough, 'one answer is not enough to judge a section on');
+    assert(summary.versions['claude-sonnet-5 · draft-report@2026-10-13'], 'and it says which model and prompt it measured');
+
+    const doc = frame.contentDocument;
+    const accJob = await win.DB.addJob({ name: 'AI Accuracy Job', jobType: 'termite' });
+    await win.DB.saveReport({ jobId: accJob.id, sections: {}, aiReview: {
+      kept: 2, corrected: 4, fields: { 'findings.workingsFound': { kept: 2, corrected: 4 } } } });
+    await win.ReportUI.openArchive();
+    await wait(300);
+    const box = doc.getElementById('ai-accuracy');
+    const first = box.querySelector('.ai-sections li');
+    assert(first && /check these closely/.test(first.textContent), 'the screen names the section to be careful with');
+  });
+
+  test('AI: every answer says which model and prompt produced it, and the report records it', async () => {
+    const win = frame.contentWindow;
+    const src = await (await fetch('../supabase/functions/analyze-inspection/index.ts', { cache: 'reload' })).text();
+    assert(/const AI_MODEL = 'claude-[a-z0-9-]+';/.test(src), 'one place for the model');
+    for (const action of ['draft-report', 'identify-pest', 'identify-tree', 'sort-photos', 'trace-building']) {
+      assert(new RegExp(`'${action}': '${action}@\\d{4}-\\d{2}-\\d{2}'`).test(src), `${action} has a prompt version`);
+      assert(new RegExp(`aiStamp\\('${action}', servedModel\\)`).test(src), `and stamps its answer with it`);
+    }
+    assert(!/model: 'claude-/.test(src), 'no model is named anywhere but AI_MODEL');
+    const job = await win.DB.addJob({ name: 'AI Stamp Job', jobType: 'termite' });
+    await win.ReportUI.applyAiDraft(job.id, {
+      draftFields: { property: { wallConstruction: 'Brick Veneer', floorType: 'Concrete Slab' } },
+      fieldReasons: {}, frameNotes: [],
+      ai: { action: 'draft-report', model: 'claude-sonnet-5', promptVersion: 'draft-report@2026-10-13' },
+    });
+    const r = await win.DB.getReport(job.id);
+    const run = r.aiDraft.runs[r.aiDraft.runs.length - 1];
+    assertEqual(run.model, 'claude-sonnet-5', 'the model is kept with the draft');
+    assertEqual(run.promptVersion, 'draft-report@2026-10-13', 'and the prompt version');
+    assertEqual(run.suggestions, 2, 'and how many suggestions it made');
+    assert(r.auditLog.some((e) => e.event === 'ai-draft-prepared' && /claude-sonnet-5/.test(e.to)), 'and it is on the report’s audit trail');
+  });
+
   test('AI accuracy: a technician editing an AI-filled field is recorded as a correction', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
