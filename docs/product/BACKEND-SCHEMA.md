@@ -1,6 +1,6 @@
 # Backend Schema - Scope
 
-Source of truth: `supabase-schema.sql` then `supabase-migration-002 ... 034`,
+Source of truth: `supabase-schema.sql` then `supabase-migration-002 ... 035`,
 applied in order to the live project (all applied as of 8 Oct 2026). This file is
 a reader's map. If it disagrees with the SQL, the SQL wins.
 
@@ -100,6 +100,14 @@ timestamps, `created_by`, `org_id`.
 job per kind. `client_access.agreement_requested_at` marks a link that asks
 for the inspection agreement.
 
+### referrals (migration 035)
+`id`, `referrer_client_id` (FK clients, set null), `referrer_name`, `referred_client_id`,
+`referred_lead_id`, `referred_job_id`, `referred_name`, `status` (`pending | earned |
+credited | void`), `amount_cents` (5000), `earned_at`, `earned_invoice_id`,
+`credited_invoice_id`, `credited_at`, `void_reason`, `notes`, timestamps, `org_id`.
+Voided, never deleted: `authenticated` has select/insert/update only, `service_role`
+nothing. `invoices.paid_at` (035) records a payment marked by hand.
+
 ### client_messages (send log)
 `id`, `job_id`, `kind` (`booking_confirmation | day_before | report_ready |
 due_reminder`), `recipient`, `subject`, `channel` (`email | sms`), `segments`,
@@ -133,7 +141,7 @@ Bucket `inspection-media` (private). Paths: `<job_id>/...` for photos and audio,
 clients get 5-minute signed URLs from `client-portal`. **Not included in any
 database backup**; see `../BACKUP-RUNBOOK.md`.
 
-## 4. Local store (IndexedDB `field-inspect-db`, version 10)
+## 4. Local store (IndexedDB `field-inspect-db`, version 11)
 `jobs`, `captures`, `reports` (key `jobId`), `swms`, `leads`, `clients`,
 `invoices`, `sectionDrafts`, `deletions`, `syncBase` (key `"table:id"`, the last
 copy this phone and the cloud agreed on, photos stripped; local only, never
@@ -195,6 +203,7 @@ at the end of migration 033, or query `information_schema.role_table_grants`.)
 | 031-032 | Client error log, inbound SMS |
 | 033 | Privilege audit |
 | 034 | Inspection agreement signed before the visit (`client_acceptances.kind`, `client_access.agreement_requested_at`) |
+| 035 | Referral register (`referrals`), `invoices.paid_at` |
 (023 is not present in the repository; confirm it was intentionally skipped.)
 
 ## 8. Schema debt and risks

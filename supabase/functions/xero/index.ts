@@ -17,7 +17,7 @@
 //                          https://arcadianpestsolutions-a11y.github.io/field-inspect/
 //   SUPABASE_SERVICE_ROLE_KEY — provided by the platform
 //
-// Actions: 'status' | 'exchange-code' | 'create-invoice' | 'disconnect'
+// Actions: 'status' | 'exchange-code' | 'create-invoice' | 'invoice-statuses' | 'disconnect'
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -216,6 +216,46 @@ async function createInvoice(invoice: any) {
   };
 }
 
+// Where invoices this app sent are up to now: DRAFT, AUTHORISED, PAID, VOIDED.
+// Read only. Scope only ever knew the status at the moment it sent an
+// invoice (always DRAFT), so it never found out anything was paid; this is
+// how it does (v121: the referral credit is earned on payment, and the
+// business figures and the client portal show paid too).
+//
+// Up to 50 at a time, and only well-formed Xero ids: they go into a URL.
+const XERO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function invoiceStatuses(ids: unknown) {
+  const list = Array.from(new Set((Array.isArray(ids) ? ids : []).map((v) => String(v || '').trim())))
+    .filter((v) => XERO_ID.test(v))
+    .slice(0, 50);
+  if (!list.length) return { invoices: [] };
+  const { token, tenantId } = await validAccessToken();
+  const res = await fetch(`https://api.xero.com/api.xro/2.0/Invoices?IDs=${list.join(',')}&summaryOnly=true`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Xero-tenant-id': tenantId,
+      Accept: 'application/json',
+    },
+  });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`Xero would not say where those invoices are up to (${res.status}): ${body.slice(0, 300)}`);
+  const parsed = JSON.parse(body);
+  return {
+    invoices: (parsed.Invoices || []).map((i: any) => ({
+      xeroInvoiceId: i.InvoiceID,
+      xeroStatus: i.Status,
+      amountDue: i.AmountDue,
+      amountPaid: i.AmountPaid,
+      // Xero's "/Date(1700000000000+0000)/" form, as epoch ms, or null.
+      fullyPaidAt: (() => {
+        const m = /\/Date\((\d+)/.exec(String(i.FullyPaidOnDate || ''));
+        return m ? Number(m[1]) : null;
+      })(),
+    })),
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
@@ -267,6 +307,16 @@ Deno.serve(async (req) => {
         if (msg === 'NOT_CONNECTED') {
           return json({ error: 'Xero is not connected yet. Connect it from Settings first.' }, 409);
         }
+        throw err;
+      }
+    }
+
+    if (body.action === 'invoice-statuses') {
+      try {
+        return json({ success: true, ...(await invoiceStatuses(body.ids)) });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === 'NOT_CONNECTED') return json({ error: 'Xero is not connected yet.', notConnected: true }, 409);
         throw err;
       }
     }

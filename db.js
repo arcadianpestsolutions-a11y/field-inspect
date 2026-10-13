@@ -45,7 +45,8 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // cloud agreed on. It is what lets sync tell "I changed this field" from "they
 // did" and merge two people's offline edits instead of keeping only the later one
 // (see sync-merge.js). Local only; never synced.
-const DB_VERSION = 10;
+// v11 adds `referrals`: the referral register (referrals.js, migration 035).
+const DB_VERSION = 11;
 
 // Whether a value can be used to look something up BY KEY.
 //
@@ -134,6 +135,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('syncBase')) {
         db.createObjectStore('syncBase', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('referrals')) {
+        db.createObjectStore('referrals', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('deletions')) {
         // What was deleted, so the next sync can say so out loud. Keyed
@@ -886,6 +890,63 @@ const DB = {
     return { created, linked };
   },
 
+  // ---------- Referrals (v11, migration 035) ----------
+  // Never deleted: a referral is money owed to somebody, so it is voided with
+  // a reason instead (see referrals.js).
+  async addReferral({ referrerClientId, referrerName, referredClientId, referredLeadId, referredJobId, referredName, notes }) {
+    const store = await tx('referrals', 'readwrite');
+    const now = Date.now();
+    const record = {
+      id: uid(),
+      referrerClientId: referrerClientId || null,
+      referrerName: referrerName || '',
+      referredClientId: referredClientId || null,
+      referredLeadId: referredLeadId || null,
+      referredJobId: referredJobId || null,
+      referredName: referredName || '',
+      status: 'pending',
+      amountCents: window.Referrals ? window.Referrals.AMOUNT_CENTS : 5000,
+      earnedAt: null,
+      earnedInvoiceId: null,
+      creditedInvoiceId: null,
+      creditedAt: null,
+      voidReason: '',
+      notes: notes || '',
+      createdAt: now,
+      updatedAt: now,
+    };
+    await reqToPromise(store.put(record));
+    if (window.Sync && window.Sync.pushReferral) window.Sync.pushReferral(record);
+    return record;
+  },
+
+  async saveReferral(referral) {
+    const store = await tx('referrals', 'readwrite');
+    const toSave = { ...referral, updatedAt: Date.now() };
+    await reqToPromise(store.put(toSave));
+    if (window.Sync && window.Sync.pushReferral) window.Sync.pushReferral(toSave);
+    return toSave;
+  },
+
+  // Low-level put used only by the sync layer and restore; never pushes.
+  async putReferralRaw(referral) {
+    const store = await tx('referrals', 'readwrite');
+    await reqToPromise(store.put(referral));
+    return referral;
+  },
+
+  async getReferral(id) {
+    if (!hasKey(id)) return undefined;
+    const store = await tx('referrals', 'readonly');
+    return reqToPromise(store.get(id));
+  },
+
+  async getReferrals() {
+    const store = await tx('referrals', 'readonly');
+    const all = await reqToPromise(store.getAll());
+    return all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  },
+
   // ---------- Leads ----------
   async addLead({ name, phone, email, address, addressLat, addressLng, jobType, source, notes, quotedCents }) {
     const store = await tx('leads', 'readwrite');
@@ -1044,13 +1105,14 @@ const DB = {
     // were added after this was written and were silently left out, so a "backup"
     // restored from it would have had every job and none of the people they were
     // for. Photos are deliberately still not here (see the test beside this).
-    const [jobs, reports, invoices, clients, leads, swms] = await Promise.all([
+    const [jobs, reports, invoices, clients, leads, swms, referrals] = await Promise.all([
       this.getJobs(),
       this.getAllReports(),
       this.getAllInvoices(),
       this.getClients(),
       this.getLeads(),
       this.getAllSwms(),
+      this.getReferrals(),
     ]);
     return {
       // Which shape of file this is, so whatever reads it later can tell a file
@@ -1061,6 +1123,7 @@ const DB = {
       counts: {
         jobs: jobs.length, reports: reports.length, invoices: invoices.length,
         clients: clients.length, leads: leads.length, swms: swms.length,
+        referrals: referrals.length,
       },
       jobs,
       reports,
@@ -1068,6 +1131,8 @@ const DB = {
       clients,
       leads,
       swms,
+      // v121. A file written before has none, which restore reads as none.
+      referrals,
     };
   },
 

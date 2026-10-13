@@ -267,11 +267,15 @@
         blank.value = '';
         blank.textContent = '— Select —';
         select.appendChild(blank);
+        // An option is a string (shown and stored as itself) or, since v121,
+        // { value, label } where what is stored is not what is shown: a
+        // client's id behind their name.
         for (const opt of field.options) {
           const optEl = document.createElement('option');
-          optEl.value = opt;
-          optEl.textContent = opt;
-          if (values[field.id] === opt) optEl.selected = true;
+          const v = opt && typeof opt === 'object' ? String(opt.value) : opt;
+          optEl.value = v;
+          optEl.textContent = opt && typeof opt === 'object' ? String(opt.label) : opt;
+          if (values[field.id] === v) optEl.selected = true;
           select.appendChild(optEl);
         }
         select.addEventListener('change', () => {

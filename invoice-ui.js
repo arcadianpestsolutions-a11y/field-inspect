@@ -35,6 +35,13 @@
   const emailStatusRow = el('invoice-email-status-row');
   const emailStatusText = el('invoice-email-status-text');
   const emailStatusCheckBtn = el('invoice-email-status-check-btn');
+  // v121: referral credit and paid. Absent on a stale cached page, so checked before use.
+  const referralRow = el('invoice-referral-row');
+  const referralText = el('invoice-referral-text');
+  const referralBtn = el('invoice-referral-btn');
+  const paidRow = el('invoice-paid-row');
+  const paidText = el('invoice-paid-text');
+  const paidBtn = el('invoice-paid-btn');
 
   let current = null;   // the invoice being edited
   let returnToJobId = null;
@@ -72,7 +79,7 @@
 
       const head = document.createElement('div');
       head.className = 'invoice-line-head';
-      head.appendChild(Object.assign(document.createElement('span'), { textContent: `Line ${idx + 1}` }));
+      head.appendChild(Object.assign(document.createElement('span'), { textContent: line.referralId ? `Line ${idx + 1} · referral credit` : `Line ${idx + 1}` }));
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'product-card-remove';
@@ -205,6 +212,8 @@
     renderTotals();
     renderXeroState();
     renderEmailStatus();
+    renderPaid();
+    renderReferral();
   }
 
   // Mirrors report.js's renderEmailStatus/EMAIL_STATUS_LABELS exactly —
@@ -224,6 +233,90 @@
     const when = current.emailedAt ? new Date(current.emailedAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' }) : '';
     const label = EMAIL_STATUS_LABELS[current.emailStatus] || (current.emailStatus || 'Sent');
     emailStatusText.textContent = `📧 ${label}${when ? ' · ' + when : ''}`;
+  }
+
+  // ---------- paid (v121) ----------
+  // Xero's word first. Marking paid by hand is for money that never went
+  // through Xero (cash, a transfer recorded nowhere else), and says so.
+  const fmtDay = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  function renderPaid() {
+    if (!paidRow || !paidText || !paidBtn) return;
+    const xeroPaid = String(current.xeroStatus || '').toUpperCase() === 'PAID';
+    if (xeroPaid) {
+      paidText.textContent = `✓ Paid in Xero${current.paidAt ? `, ${fmtDay(current.paidAt)}` : ''}`;
+      paidBtn.classList.add('hidden');
+    } else if (current.paidAt) {
+      paidText.textContent = `✓ Marked paid on ${fmtDay(current.paidAt)}`;
+      paidBtn.textContent = 'Undo: not paid';
+      paidBtn.classList.remove('hidden');
+    } else {
+      paidText.textContent = 'Not paid yet';
+      paidBtn.textContent = 'Mark as paid';
+      paidBtn.classList.remove('hidden');
+    }
+  }
+
+  if (paidBtn) {
+    paidBtn.addEventListener('click', async () => {
+      if (!current) return;
+      if (!current.paidAt) {
+        const totals = I.computeTotals(current);
+        const ok = await askConfirm(
+          `${current.number} · ${I.formatMoney(totals.totalCents)}\n\nOnly for money received outside Xero. `
+          + 'An invoice paid in Xero shows as paid by itself.',
+          { title: 'Mark this invoice paid?', okLabel: 'Mark paid' },
+        );
+        if (!ok) return;
+        current.paidAt = Date.now();
+      } else {
+        current.paidAt = null;
+      }
+      await save();
+      renderPaid();
+      if (window.ReferralsUI) {
+        const { newlyEarned } = await window.ReferralsUI.evaluate();
+        if (newlyEarned.length) {
+          toast(`Marked paid. ${newlyEarned[0].referrerName || 'The client who referred them'} has earned a $50 referral credit.`);
+          return;
+        }
+      }
+      toast(current.paidAt ? 'Marked paid' : 'Marked not paid');
+    });
+  }
+
+  // ---------- referral credit (v121) ----------
+  // Only on an invoice still being written: once it is in Xero, emailed or
+  // paid, changing what it says is a job for Xero, not this screen.
+  const stillDraft = (inv) => !inv.xeroInvoiceId && !inv.emailedAt && !inv.paidAt;
+
+  async function renderReferral() {
+    if (!referralRow || !referralText || !referralBtn || !window.ReferralsUI) return;
+    const owed = stillDraft(current) ? await window.ReferralsUI.availableFor(current).catch(() => []) : [];
+    referralRow.classList.toggle('hidden', !owed.length);
+    if (!owed.length) return;
+    const names = owed.map((r) => r.referredName || 'someone').join(', ');
+    const total = owed.reduce((s, r) => s + (Number(r.amountCents) || 0), 0);
+    referralText.textContent = `This client has ${owed.length === 1 ? 'a referral credit' : `${owed.length} referral credits`} `
+      + `owed (for referring ${names}).`;
+    referralBtn.textContent = `Take ${I.formatMoney(total)} off this invoice`;
+  }
+
+  if (referralBtn) {
+    referralBtn.addEventListener('click', async () => {
+      if (!current || !window.ReferralsUI) return;
+      referralBtn.disabled = true;
+      try {
+        const applied = await window.ReferralsUI.applyTo(current);
+        await save();
+        renderLines();
+        renderTotals();
+        if (applied.length) toast('Referral credit added');
+      } finally {
+        referralBtn.disabled = false;
+        renderReferral();
+      }
+    });
   }
 
   if (emailStatusCheckBtn) {
@@ -256,7 +349,20 @@
   propertyInput.addEventListener('input', () => { current.propertyAddress = propertyInput.value; });
   issueDateInput.addEventListener('input', () => { current.issueDate = issueDateInput.value; });
   dueDateInput.addEventListener('input', () => { current.dueDate = dueDateInput.value; });
-  gstCheckbox.addEventListener('change', () => { current.gstRegistered = gstCheckbox.checked; renderTotals(); });
+  gstCheckbox.addEventListener('change', () => {
+    current.gstRegistered = gstCheckbox.checked;
+    // A referral credit is $50 off the bill either way, so its line is
+    // re-worked for the new GST setting rather than left at the old one.
+    if (window.Referrals) {
+      for (const line of current.lineItems) {
+        if (!line.referralId) continue;
+        line.unitAmountCents = window.Referrals.creditLine({ id: line.referralId, amountCents: window.Referrals.AMOUNT_CENTS },
+          { gstRegistered: current.gstRegistered }).unitAmountCents;
+      }
+      renderLines();
+    }
+    renderTotals();
+  });
 
   addLineBtn.addEventListener('click', () => {
     current.lineItems.push({ id: DB.uid(), description: '', quantity: 1, unitAmountCents: 0, taxExempt: false });
@@ -266,6 +372,8 @@
 
   async function save() {
     current = await DB.saveInvoice(current);
+    // A credit line taken off goes back to being owed; see referrals-ui.js.
+    if (window.ReferralsUI) await window.ReferralsUI.reconcileInvoice(current).catch((e) => console.warn('[invoice-ui] referral check failed:', e.message || e));
     // Remember what was charged so the next invoice of this kind starts close
     // to done — the second one should be nearly a single tap.
     const job = await DB.getJob(current.jobId);
@@ -496,6 +604,21 @@
         const report = await DB.getReport(jobId);
         current = I.buildDraftInvoice(job, report, await DB.getAllInvoices());
         current = await DB.saveInvoice(current);
+        // "Credit to their next service": a referral credit this client has
+        // earned goes on the first invoice made for them after it was earned.
+        if (window.ReferralsUI) {
+          try {
+            const applied = await window.ReferralsUI.applyTo(current);
+            if (applied.length) {
+              current = await DB.saveInvoice(current);
+              toast(applied.length === 1
+                ? `Referral credit added: $50 off for referring ${applied[0].referredName || 'someone'}.`
+                : `${applied.length} referral credits added.`);
+            }
+          } catch (e) {
+            if (window.ErrorLog) window.ErrorLog.note(e, 'invoice: referral credit');
+          }
+        }
       }
       renderAll();
       if (window.hideAllAppViews) window.hideAllAppViews();

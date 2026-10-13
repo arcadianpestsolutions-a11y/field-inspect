@@ -170,3 +170,10 @@ Section 3 of the timber pest inspection report (About Our Agreement) can now be 
 - A signature already taken on the day is never replaced. A finalized report is not changed.
 - Already booked, or no email at the time? **Client link** on the job has **"Ask the client to sign the inspection agreement on this page"**; copy the link and send it yourself.
 - Only for a timber pest inspection: never for a monitoring visit, certificate, action plan or general pest job.
+
+## 16. Referral register and $50 credit (v121)
+More > **Referrals**. The rule, as on the screen: $50 off their next service for every person a client refers, once that person has paid for their first job.
+1. **Recording one.** An enquiry whose "How they found you" is **Referral** shows **Who referred them** (your clients). Choose one and the referral is on the register. Or tap **+ Record a referral** on the register and pick who made it and who they referred (an enquiry or a client). Nobody can refer themselves, and nobody is on the register twice.
+2. **Waiting for payment.** The referral is pending until the referred person's first invoice is paid: paid in Xero, or **Mark as paid** on the invoice for money received outside Xero. After each sync Scope asks Xero which sent invoices are now paid (at most every half hour), so this happens by itself. A message says "Margaret Chen earned a $50 referral credit: Tom Okafor has paid."
+3. **The credit.** The next invoice made for the referrer starts with a line "Referral credit: thank you for referring Tom Okafor", $50.00 off including GST (-$45.45 + -$4.55 GST). An invoice already drafted for them shows **Take $50 off this invoice** instead. Removing the line puts the $50 back to owed, so it is never lost and never given twice. Once an invoice is in Xero, emailed or paid, nothing is added to it.
+4. **The register** shows how many are waiting, what is owed and what has been credited, and each referral's status. **Cancel this referral** asks why and keeps it on the register, marked cancelled: referrals are never deleted. The register is in the Export backup file.

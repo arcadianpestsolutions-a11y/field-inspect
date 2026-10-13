@@ -5,8 +5,8 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈10,700 lines, 525 tests, all
-passing), 11 Edge Function folders, 34 SQL migrations, 1 stylesheet, 4 vendored
+~49 app JS files (≈21,900 lines), 4 test files (≈10,900 lines, 532 tests, all
+passing), 11 Edge Function folders, 35 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
 ## Checked and clean
@@ -62,6 +62,8 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 32 | The Export file could not be read back by anything | Archive screen: "Restore from a backup file" (`restore.js`). Shows what it will add or update first, never deletes, never replaces a newer copy, leaves deliberate deletes deleted, keeps original timestamps so a sync cannot be fooled |
 | 33 | Two people editing the same record offline: whichever device synced last replaced the whole record, so the other person's edit vanished without a word, even if they had changed a different field | `sync-merge.js`: each device remembers the last copy both sides agreed on (`syncBase` store, DB v10) and merges field by field against it. Different fields: both kept. Photo lists and the audit trail: combined. Same field changed on both: the later save wins and the other value is listed under More > Saved reports, "Changes that clashed" (`sync-conflicts.js`) |
 | 34 | On a narrow phone a long toast message wrapped into a ball half the screen wide | The toast sizes to its text, up to the screen width, with a rounded box instead of a pill |
+| 35 | Scope never learned an invoice was paid. It stored the Xero status once, at sending (always DRAFT), and never asked again, so the business figures and the client portal could not show paid | The xero function answers `invoice-statuses` (read only, up to 50 well-formed ids); the app asks after each sync, at most every half hour, and records PAID. Invoices can also be marked paid by hand for money outside Xero (`paid_at`, migration 035). Found building the referral credit, which is earned on payment |
+| 36 | A credit line rounded to $49.99: GST on a negative line rounded half a cent towards zero, Xero rounds it away | `lineGstCents` rounds half away from zero both ways; positive lines unchanged |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
 

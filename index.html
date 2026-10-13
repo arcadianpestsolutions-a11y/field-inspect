@@ -52,6 +52,7 @@
   <div id="more-sheet" class="more-sheet hidden">
     <div class="more-sheet-panel">
       <button id="open-clients-btn" class="more-item"><span>👥</span> Clients</button>
+      <button id="open-referrals-btn" class="more-item"><span>🤝</span> Referrals</button>
       <button id="open-swms-btn" class="more-item"><span>🦺</span> Safety statements</button>
       <button id="open-assets-btn" class="more-item"><span>🏷</span> Station register</button>
       <button id="open-business-btn" class="more-item"><span>📊</span> Business figures</button>
@@ -393,6 +394,37 @@
   </main>
   <div class="action-bar">
     <button id="client-new-btn" class="btn btn-primary full">+ New client</button>
+  </div>
+</section>
+
+<!-- Referral register (referrals-ui.js, v121). -->
+<section id="view-referrals" class="view hidden">
+  <header class="topbar">
+    <button id="referrals-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Referrals</h1>
+      <span id="referrals-subtitle" class="subtitle"></span>
+    </div>
+  </header>
+  <main class="content">
+    <p class="empty-hint referrals-rule">$50 off their next service for every person a client refers, once that person has paid for their first job.</p>
+    <div id="referrals-summary" class="referrals-summary"></div>
+    <div id="referral-form" class="card referral-form hidden">
+      <label class="field-label" for="referral-referrer">Who made the referral</label>
+      <select id="referral-referrer"></select>
+      <label class="field-label" for="referral-referred">Who they referred</label>
+      <select id="referral-referred"></select>
+      <input id="referral-notes" type="text" maxlength="300" placeholder="Notes (optional)" autocomplete="off" />
+      <p id="referral-form-err" class="referral-form-err" hidden></p>
+      <div class="row gap">
+        <button id="referral-cancel-btn" class="btn btn-secondary flex1">Cancel</button>
+        <button id="referral-save-btn" class="btn btn-primary flex1">Record it</button>
+      </div>
+    </div>
+    <ul id="referrals-list" class="referrals-list"></ul>
+  </main>
+  <div class="action-bar">
+    <button id="referral-new-btn" class="btn btn-primary full">+ Record a referral</button>
   </div>
 </section>
 
@@ -784,7 +816,19 @@
       </label>
     </div>
 
+    <!-- Referral credit owed to this client (referrals-ui.js). -->
+    <div id="invoice-referral-row" class="invoice-referral-row hidden">
+      <p id="invoice-referral-text"></p>
+      <button id="invoice-referral-btn" class="btn btn-outline full">Take $50 off this invoice</button>
+    </div>
+
     <div id="invoice-xero-state" class="invoice-xero-state"></div>
+
+    <!-- Paid: from Xero, or marked by hand for money received outside it. -->
+    <div id="invoice-paid-row" class="invoice-paid-row">
+      <span id="invoice-paid-text" class="invoice-paid-text"></span>
+      <button id="invoice-paid-btn" class="link-btn">Mark as paid</button>
+    </div>
 
     <button id="invoice-save-btn" class="btn btn-secondary full">Save invoice</button>
     <button id="invoice-xero-btn" class="btn btn-primary full">Send to Xero as draft</button>
@@ -880,6 +924,8 @@
 <script src="assets-ui.js"></script>
 <script src="leads-ui.js"></script>
 <script src="clients-ui.js"></script>
+<script src="referrals.js"></script>
+<script src="referrals-ui.js"></script>
 <script src="job-details.js"></script>
 <script src="job-layout.js"></script>
 <script src="today.js"></script>

@@ -38,6 +38,7 @@
     { key: 'invoices', label: ['invoice', 'invoices'], table: 'invoices', id: (r) => r.id, needsJob: (r) => r.jobId, put: (r) => window.DB.putInvoiceRaw(r) },
     { key: 'leads', label: ['enquiry', 'enquiries'], table: 'leads', id: (r) => r.id, put: (r) => window.DB.putLeadRaw(r) },
     { key: 'swms', label: ['safety statement', 'safety statements'], table: 'swms', id: (r) => r.id, put: (r) => window.DB.putSwmsRaw(r) },
+    { key: 'referrals', label: ['referral', 'referrals'], table: 'referrals', id: (r) => r.id, put: (r) => window.DB.putReferralRaw(r) },
   ];
 
   const isId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
@@ -65,10 +66,11 @@
   // ---------- What is on this phone now ----------
   async function readLocal() {
     const DB = window.DB;
-    const [jobs, reports, invoices, clients, leads, swms, deletions] = await Promise.all([
-      DB.getJobs(), DB.getAllReports(), DB.getAllInvoices(), DB.getClients(), DB.getLeads(), DB.getAllSwms(), DB.getDeletions(),
+    const [jobs, reports, invoices, clients, leads, swms, referrals, deletions] = await Promise.all([
+      DB.getJobs(), DB.getAllReports(), DB.getAllInvoices(), DB.getClients(), DB.getLeads(), DB.getAllSwms(),
+      DB.getReferrals ? DB.getReferrals() : [], DB.getDeletions(),
     ]);
-    return { jobs, reports, invoices, clients, leads, swms, deleted: new Set((deletions || []).map((d) => d.key)) };
+    return { jobs, reports, invoices, clients, leads, swms, referrals, deleted: new Set((deletions || []).map((d) => d.key)) };
   }
 
   // ---------- Deciding, without writing anything ----------

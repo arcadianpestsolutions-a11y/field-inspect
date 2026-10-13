@@ -28,6 +28,7 @@
     'view-scheduler': 'diary',
     'view-leads': 'leads',
     'view-clients': 'more',
+    'view-referrals': 'more',
     'view-swms-list': 'more',
     'view-assets': 'more',
     'view-business': 'more',

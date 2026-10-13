@@ -51,6 +51,13 @@
         // keep paying for it.
         options: ['Google', 'Facebook', 'Referral', 'Repeat client', 'Sign or vehicle', 'Walk-up', 'Other'],
       },
+      // Who referred them (v121). A client, so the $50 credit they earn once
+      // this person pays has somebody to go to. Options are filled in from the
+      // clients each time an enquiry opens; see openLead.
+      {
+        id: 'referredByClientId', label: 'Who referred them', type: 'select', options: [],
+        showIf: { field: 'source', equals: 'Referral' },
+      },
       { id: 'quotedText', label: 'Quoted amount', type: 'text', placeholder: 'e.g. 450' },
       { id: 'notes', label: 'Notes', type: 'textarea' },
     ],
@@ -146,6 +153,9 @@
     };
     renderer.setValues(values);
     renderer.renderSection(LEAD_SECTION);
+    // Drawn first, filled in after: the form must be there to type into the
+    // moment it opens, and the client list takes a moment to read.
+    fillReferredBy(current.id);
 
     titleEl.textContent = current.name || 'Enquiry';
     leadSubtitleEl.textContent = stageLabel(current.stage);
@@ -160,6 +170,30 @@
     renderStages();
     el('lead-convert-btn').classList.toggle('hidden', !window.Pipeline.isOpen(current.stage));
     show(leadView);
+  }
+
+  // "Who referred them": the clients, and whoever the referral register
+  // already says referred this enquiry (v121). The register is the record;
+  // the enquiry only shows it.
+  async function fillReferredBy(leadId) {
+    try {
+      const refField = LEAD_SECTION.fields.find((f) => f.id === 'referredByClientId');
+      refField.options = (await DB.getClients()).map((c) => ({ value: c.id, label: c.name || c.phone || c.email || 'Unnamed client' }));
+      const ref = (await DB.getReferrals()).find((r) => r.referredLeadId === leadId && r.status !== 'void');
+      if (!current || current.id !== leadId) return;
+      if (!values.referredByClientId && ref && ref.referrerClientId) values.referredByClientId = ref.referrerClientId;
+      const select = fieldsEl.querySelector('[data-field-row="referredByClientId"] select');
+      if (!select) return;
+      const keep = values.referredByClientId || '';
+      while (select.options.length > 1) select.remove(1);
+      for (const o of refField.options) {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        if (o.value === keep) opt.selected = true;
+        select.appendChild(opt);
+      }
+    } catch (e) { /* no referrals store yet: the field just stays empty */ }
   }
 
   function renderStages() {
@@ -189,6 +223,11 @@
       notes: values.notes || '',
       quotedCents: Number.isFinite(cents) ? cents : null,
     }, extra || {}));
+    if (values.source === 'Referral' && values.referredByClientId && window.ReferralsUI) {
+      try { await window.ReferralsUI.recordForLead(current, values.referredByClientId); } catch (e) {
+        if (window.ErrorLog) window.ErrorLog.note(e, 'enquiry: record referral');
+      }
+    }
     return current;
   }
 
@@ -231,6 +270,7 @@
     await DB.saveLead(Object.assign({}, current, {
       stage: 'won', stageChangedAt: Date.now(), convertedJobId: job.id,
     }));
+    if (window.ReferralsUI) await window.ReferralsUI.onLeadConverted(current, job).catch(() => {});
     toast('Job created — book it a time in the scheduler');
     if (window.showJobViewById) await window.showJobViewById(job.id);
   }

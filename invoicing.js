@@ -47,9 +47,14 @@
     return Math.round(clamp(qty, -MAX_QUANTITY, MAX_QUANTITY) * clamp(unit, -MAX_UNIT_CENTS, MAX_UNIT_CENTS));
   }
 
+  // Half a cent rounds AWAY from zero, both ways, as Xero does. Math.round
+  // rounds -0.5 up to 0, so a credit line of -$45.45 got -$4.54 GST here and
+  // -$4.55 in Xero: a "$50 off" that came to $49.99 (found writing the
+  // referral credit, v121). Positive lines round exactly as before.
   function lineGstCents(line, gstRegistered) {
     if (!gstRegistered || line.taxExempt) return 0;
-    return Math.round(lineSubtotalCents(line) * GST_RATE);
+    const raw = lineSubtotalCents(line) * GST_RATE;
+    return Math.sign(raw) * Math.round(Math.abs(raw));
   }
 
   function computeTotals(invoice) {
@@ -78,7 +83,9 @@
   function rememberRates(jobType, lineItems) {
     try {
       const all = JSON.parse(localStorage.getItem(RATE_MEMORY_KEY) || '{}');
-      all[jobType || 'termite'] = (lineItems || []).map((l) => ({
+      // A referral credit belongs to one invoice for one client. Remembered, it
+      // would start every later invoice of this kind with $50 off.
+      all[jobType || 'termite'] = (lineItems || []).filter((l) => !l.referralId).map((l) => ({
         description: l.description,
         quantity: l.quantity,
         unitAmountCents: l.unitAmountCents,

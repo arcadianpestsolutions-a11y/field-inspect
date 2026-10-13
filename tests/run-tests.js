@@ -11125,7 +11125,146 @@
     const src = await (await fetch('../db.js', { cache: 'reload' })).text();
     assert(/db\.onversionchange = \(\) => \{\s*\n\s*db\.close\(\);/.test(src), 'an old copy closes its connection when a newer version needs the database');
     assert(/req\.onblocked = \(\) => \{/.test(src), 'and a blocked upgrade tells the person what to do');
-    assert(/const DB_VERSION = 10;/.test(src), 'version 10 is the one with the merge bases');
+    assert(/const DB_VERSION = 11;/.test(src), 'version 11 is the one with the referral register');
+  });
+
+  // ---------- Referral register (v121, migration 035) ----------
+  test('Referrals: only a paid invoice earns the credit, through the enquiry or the client', () => {
+    const R = frame.contentWindow.Referrals;
+    assert(R.isPaid({ xeroStatus: 'PAID' }) && R.isPaid({ paidAt: 1 }), 'paid in Xero, or marked paid by hand');
+    assert(!R.isPaid({ xeroStatus: 'AUTHORISED' }) && !R.isPaid({ xeroStatus: 'DRAFT' }) && !R.isPaid({}), 'sent or drafted is not paid');
+    const jobs = [{ id: 'j1' }, { id: 'j2', clientId: 'c2' }, { id: 'j3', clientId: 'c3' }];
+    const leads = [{ id: 'l1', convertedJobId: 'j1' }];
+    const viaLead = { id: 'r1', status: 'pending', referredLeadId: 'l1' };
+    assertEqual(R.earningInvoice(viaLead, { jobs, leads, invoices: [{ id: 'i1', jobId: 'j1', xeroStatus: 'AUTHORISED' }] }), null, 'an unpaid invoice earns nothing');
+    assertEqual(R.earningInvoice(viaLead, { jobs, leads, invoices: [{ id: 'i1', jobId: 'j1', xeroStatus: 'PAID' }] }).id, 'i1', 'the booked enquiry’s paid invoice earns it');
+    const viaClient = { id: 'r2', status: 'pending', referredClientId: 'c2' };
+    assertEqual(R.earningInvoice(viaClient, { jobs, leads, invoices: [
+      { id: 'i3', jobId: 'j3', paidAt: 5 }, { id: 'i2', jobId: 'j2', paidAt: 9 },
+    ] }).id, 'i2', 'any of the referred client’s jobs, and only theirs');
+    assertEqual(R.earningInvoice({ ...viaClient, status: 'earned' }, { jobs, leads, invoices: [{ id: 'i2', jobId: 'j2', paidAt: 9 }] }), null, 'never earned twice');
+  });
+
+  test('Referrals: the credit is exactly $50.00 off, with GST or without, and matches Xero’s rounding', () => {
+    const win = frame.contentWindow;
+    const R = win.Referrals; const I = win.Invoicing;
+    const ref = { id: 'r1', amountCents: 5000, referredName: 'Bob Jones' };
+    const withGst = { gstRegistered: true, lineItems: [R.creditLine(ref, { gstRegistered: true })] };
+    assertEqual(I.computeTotals(withGst).totalCents, -5000, '$50.00 off a GST invoice');
+    const noGst = { gstRegistered: false, lineItems: [R.creditLine(ref, { gstRegistered: false })] };
+    assertEqual(I.computeTotals(noGst).totalCents, -5000, '$50.00 off without GST');
+    const line = R.creditLine(ref, { gstRegistered: true });
+    assert(/thank you for referring Bob Jones/.test(line.description) && line.referralId === 'r1', 'says what it is for, and which referral');
+    assertEqual(I.lineGstCents({ quantity: 1, unitAmountCents: 18150 }, true), 1815, 'an ordinary line rounds as before');
+    assertEqual(I.lineGstCents({ quantity: 1, unitAmountCents: -4545 }, true), -455, 'half a cent rounds away from zero both ways');
+    const bill = { gstRegistered: true, lineItems: [{ quantity: 1, unitAmountCents: 30000 }, line] };
+    assertEqual(I.computeTotals(bill).totalCents, 33000 - 5000, 'a $330 inspection becomes $280');
+  });
+
+  test('Referrals: nobody refers themselves, and nobody is referred twice', () => {
+    const R = frame.contentWindow.Referrals;
+    assert(/who made/i.test(R.problemWith({ referredClientId: 'b' })), 'needs a referrer');
+    assert(/who they referred/i.test(R.problemWith({ referrerClientId: 'a' })), 'needs somebody referred');
+    assert(/themselves/.test(R.problemWith({ referrerClientId: 'a', referredClientId: 'a' })), 'no self-referral');
+    const existing = [{ status: 'pending', referredClientId: 'b' }, { status: 'void', referredLeadId: 'l9' }];
+    assert(/already/.test(R.problemWith({ referrerClientId: 'a', referredClientId: 'b' }, existing)), 'one referral per person');
+    assertEqual(R.problemWith({ referrerClientId: 'a', referredLeadId: 'l9' }, existing), null, 'a cancelled one does not block a new one');
+  });
+
+  test('Referrals: enquiry to paid job to credit on the referrer’s next invoice, and a removed credit is owed again', async () => {
+    const win = frame.contentWindow;
+    const DB = win.DB; const UI = win.ReferralsUI; const I = win.Invoicing;
+    const alice = await DB.addClient({ name: 'Alice Referrer', phone: '0400 111 222' });
+    const lead = await DB.addLead({ name: 'Bob Referred', source: 'Referral' });
+    const ref = await UI.recordForLead(lead, alice.id);
+    assertEqual(ref.status, 'pending', 'recorded from the enquiry, pending');
+    assertEqual(ref.referrerName, 'Alice Referrer', 'with the referrer’s name kept on it');
+    assertEqual((await UI.recordForLead(lead, alice.id)).id, ref.id, 'saving the enquiry again does not record it twice');
+
+    const bobJob = await DB.addJob({ name: 'Bob Referred', jobType: 'termite' });
+    await DB.saveLead({ ...(await DB.getLead(lead.id)), stage: 'won', convertedJobId: bobJob.id });
+    await UI.onLeadConverted(await DB.getLead(lead.id), bobJob);
+    const bobInv = await DB.saveInvoice(I.buildDraftInvoice(bobJob, null, await DB.getAllInvoices()));
+    await UI.evaluate();
+    assertEqual((await DB.getReferral(ref.id)).status, 'pending', 'an invoice that is only drafted earns nothing');
+
+    await DB.saveInvoice({ ...bobInv, paidAt: Date.now() });
+    const { newlyEarned } = await UI.evaluate();
+    assertEqual(newlyEarned.length, 1, 'paying earns it');
+    assertEqual((await DB.getReferral(ref.id)).status, 'earned', 'and it is owed');
+
+    const aliceJob = await DB.addJob({ name: 'Alice Referrer', jobType: 'termite', clientId: alice.id });
+    const aliceInv = I.buildDraftInvoice(aliceJob, null, await DB.getAllInvoices());
+    aliceInv.lineItems = [{ id: 'x', description: 'Inspection', quantity: 1, unitAmountCents: 30000 }];
+    const applied = await UI.applyTo(aliceInv);
+    await DB.saveInvoice(aliceInv);
+    assertEqual(applied.length, 1, 'the credit goes on Alice’s next invoice');
+    assertEqual(I.computeTotals(aliceInv).totalCents, 28000, '$330 less $50');
+    let after = await DB.getReferral(ref.id);
+    assertEqual(after.status, 'credited', 'credited');
+    assertEqual(after.creditedInvoiceId, aliceInv.id, 'on that invoice');
+    assertEqual((await UI.applyTo(aliceInv)).length, 0, 'and never twice');
+
+    aliceInv.lineItems = aliceInv.lineItems.filter((l) => !l.referralId);
+    await DB.saveInvoice(aliceInv);
+    await UI.reconcileInvoice(aliceInv);
+    after = await DB.getReferral(ref.id);
+    assertEqual(after.status, 'earned', 'a credit taken off the invoice is owed again, not lost');
+    assertEqual(after.creditedInvoiceId, null, 'and points at no invoice');
+
+    I.rememberRates('termite', [{ description: 'Inspection', quantity: 1, unitAmountCents: 30000 }, win.Referrals.creditLine(after, {})]);
+    assert(!(I.recallRates('termite') || []).some((l) => /Referral credit/.test(l.description)), 'a credit is never remembered as a usual line');
+
+    const exported = await DB.exportAllData();
+    assert(Array.isArray(exported.referrals) && exported.referrals.some((r) => r.id === ref.id), 'the register is in the backup file');
+  });
+
+  test('Referrals: a new invoice for the referrer gets the credit by itself, and can be marked paid by hand', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const DB = win.DB;
+    const carol = await DB.addClient({ name: 'Carol Referrer' });
+    const dave = await DB.addClient({ name: 'Dave Referred' });
+    const ref = await DB.addReferral({ referrerClientId: carol.id, referrerName: 'Carol Referrer', referredClientId: dave.id, referredName: 'Dave Referred' });
+    await DB.saveReferral({ ...ref, status: 'earned', earnedAt: Date.now() });
+    const job = await DB.addJob({ name: 'Carol Referrer', jobType: 'termite', clientId: carol.id });
+    await win.InvoiceUI.open(job.id);
+    await wait(300);
+    const inv = (await DB.getInvoicesForJob(job.id))[0];
+    assert(inv.lineItems.some((l) => l.referralId === ref.id), 'the credit line is already on the new invoice');
+    assertEqual((await DB.getReferral(ref.id)).status, 'credited', 'and the referral says so');
+    const paidBtn = doc.getElementById('invoice-paid-btn');
+    assert(paidBtn && /Mark as paid/.test(paidBtn.textContent), 'the invoice offers Mark as paid');
+    assert(/Not paid yet/.test(doc.getElementById('invoice-paid-text').textContent), 'and says it is not paid');
+    doc.getElementById('invoice-back-btn').click();
+    await wait(300);
+  });
+
+  test('Referrals: the enquiry asks who referred them, only when it came by referral', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.DB.addClient({ name: 'Erin Referrer' });
+    const lead = await win.DB.addLead({ name: 'Frank', source: 'Google' });
+    await win.LeadsUI.openLead(lead.id);
+    await wait(250);
+    const sel = Array.from(doc.querySelectorAll('#view-lead select')).find((s) => Array.from(s.options).some((o) => o.textContent === 'Erin Referrer'));
+    assert(sel, 'the clients are offered as who referred them');
+    const row = sel.closest('.form-field, .field-row, label, div');
+    const visible = (n) => !!(n && n.offsetParent !== null);
+    assert(!visible(sel), 'hidden while the source is Google');
+  });
+
+  test('Referrals: the server side keeps the register and asks Xero read-only', async () => {
+    const sql = await (await fetch('../supabase-migration-035-referrals.sql', { cache: 'reload' })).text();
+    assert(/create table if not exists public\.referrals/.test(sql), 'a referrals table');
+    assert(/grant select, insert, update on public\.referrals to authenticated;/.test(sql), 'staff can record and update referrals');
+    assert(/revoke delete, truncate, trigger, references on public\.referrals from authenticated;/.test(sql), 'but never delete one');
+    assert(/add column if not exists paid_at bigint/.test(sql), 'invoices can be marked paid by hand');
+    const xero = await (await fetch('../supabase/functions/xero/index.ts', { cache: 'reload' })).text();
+    assert(/body\.action === 'invoice-statuses'/.test(xero), 'Xero can be asked what is paid');
+    assert(/const XERO_ID = \/\^\[0-9a-f\]\{8\}/.test(xero), 'only well-formed Xero ids go into the request');
+    const fn = /async function invoiceStatuses[\s\S]*?\n\}/.exec(xero)[0];
+    assert(!/method:\s*'(POST|PUT|DELETE)'/.test(fn), 'and it only reads');
   });
 
   // ---------- Inspection agreement signed before the visit (v120, migration 034) ----------

@@ -834,6 +834,7 @@
   // migration 014's email_provider_id/emailed_at/email_status columns may
   // not exist on this project yet.
   let invoiceExtraColumnsMissing = false;
+  let invoicePaidColumnMissing = false;
 
   function localInvoiceToRemote(invoice) {
     const row = {
@@ -860,6 +861,8 @@
       row.emailed_at = invoice.emailedAt || null;
       row.email_status = invoice.emailStatus || null;
     }
+    // Migration 035. Left off until it exists, like the columns above.
+    if (!invoicePaidColumnMissing) row.paid_at = invoice.paidAt || null;
     return row;
   }
 
@@ -867,6 +870,11 @@
     if (!isReady()) return;
     try {
       let { error } = await supabaseClient.from('invoices').upsert(localInvoiceToRemote(invoice));
+      if (error && !invoicePaidColumnMissing && isMissingColumnError(error) && /paid_at/.test(String(error.message || ''))) {
+        invoicePaidColumnMissing = true;
+        console.warn('[sync] invoices.paid_at not in the database yet — run supabase-migration-035-referrals.sql. Invoice sync continues without it.');
+        ({ error } = await supabaseClient.from('invoices').upsert(localInvoiceToRemote(invoice)));
+      }
       if (error && !invoiceExtraColumnsMissing && isMissingColumnError(error)) {
         invoiceExtraColumnsMissing = true;
         console.warn('[sync] invoices.email_provider_id / emailed_at / email_status not in the database yet — run supabase-migration-014-email-delivery-tracking.sql. Invoice sync continues without them.');
@@ -897,9 +905,72 @@
       emailProviderId: ri.email_provider_id || (existingLocal ? existingLocal.emailProviderId : null),
       emailedAt: ri.emailed_at || (existingLocal ? existingLocal.emailedAt : null),
       emailStatus: ri.email_status || (existingLocal ? existingLocal.emailStatus : null),
+      paidAt: ri.paid_at || (existingLocal ? existingLocal.paidAt || null : null),
       createdAt: ri.created_at,
       updatedAt: ri.updated_at,
     };
+  }
+
+  // ---------- Referrals (migration 035) ----------
+  function localReferralToRemote(r) {
+    return {
+      id: r.id,
+      referrer_client_id: r.referrerClientId || null,
+      referrer_name: r.referrerName || '',
+      referred_client_id: r.referredClientId || null,
+      referred_lead_id: r.referredLeadId || null,
+      referred_job_id: r.referredJobId || null,
+      referred_name: r.referredName || '',
+      status: r.status || 'pending',
+      amount_cents: Number.isFinite(Number(r.amountCents)) ? Math.round(Number(r.amountCents)) : 5000,
+      earned_at: r.earnedAt || null,
+      earned_invoice_id: r.earnedInvoiceId || null,
+      credited_invoice_id: r.creditedInvoiceId || null,
+      credited_at: r.creditedAt || null,
+      void_reason: r.voidReason || '',
+      notes: r.notes || '',
+      created_by: currentUserId(),
+      created_at: r.createdAt,
+      updated_at: r.updatedAt || r.createdAt,
+    };
+  }
+
+  function remoteReferralToLocal(rr) {
+    return {
+      id: rr.id,
+      referrerClientId: rr.referrer_client_id || null,
+      referrerName: rr.referrer_name || '',
+      referredClientId: rr.referred_client_id || null,
+      referredLeadId: rr.referred_lead_id || null,
+      referredJobId: rr.referred_job_id || null,
+      referredName: rr.referred_name || '',
+      status: rr.status || 'pending',
+      amountCents: Number.isFinite(Number(rr.amount_cents)) ? Number(rr.amount_cents) : 5000,
+      earnedAt: rr.earned_at || null,
+      earnedInvoiceId: rr.earned_invoice_id || null,
+      creditedInvoiceId: rr.credited_invoice_id || null,
+      creditedAt: rr.credited_at || null,
+      voidReason: rr.void_reason || '',
+      notes: rr.notes || '',
+      createdAt: rr.created_at,
+      updatedAt: rr.updated_at,
+    };
+  }
+
+  async function pushReferral(referral) {
+    if (!isReady()) return;
+    try {
+      const { data, error } = await supabaseClient
+        .from('referrals').upsert(localReferralToRemote(referral)).select('id');
+      if (error) throw error;
+      if (refusedByPolicy(data)) reportPolicyRefusal('referral', referral.id);
+    } catch (e) {
+      if (isMissingTableError(e)) {
+        console.warn('[sync] the referrals table is not in the database yet — run supabase-migration-035-referrals.sql. Referrals stay on this device until then.');
+        return;
+      }
+      console.warn('[sync] push referral failed, will retry on next sync:', e.message || e);
+    }
   }
 
   // ---------- Clients ----------
@@ -1296,6 +1367,15 @@
           push: pushLead,
           label: (l) => l.name || 'An enquiry',
         },
+        {
+          // After clients and leads, which it points at.
+          table: 'referrals',
+          localAll: () => DB.getReferrals(),
+          toLocal: remoteReferralToLocal,
+          putRaw: (rec) => DB.putReferralRaw(rec),
+          push: pushReferral,
+          label: (r) => `Referral of ${r.referredName || 'someone'}`,
+        },
       ];
 
       for (const c of collections) {
@@ -1318,6 +1398,12 @@
       // their reports (client-agreement.js). Never holds up or fails a sync.
       if (window.ClientAgreement && window.ClientAgreement.applyPending) {
         window.ClientAgreement.applyPending().catch((e) => console.warn('[sync] agreements not filed:', e.message || e));
+      }
+
+      // Which invoices have been paid in Xero since, and so which referrals
+      // that earns (referrals-ui.js). Same rule: never holds up a sync.
+      if (window.ReferralsUI && window.ReferralsUI.afterSync) {
+        window.ReferralsUI.afterSync().catch((e) => console.warn('[sync] referrals not checked:', e.message || e));
       }
 
       if (failed.length) {
@@ -1379,6 +1465,7 @@
     pushSwms,
     pushLead,
     pushClient,
+    pushReferral,
     deleteJobRemote,
     deleteCaptureRemote,
     deleteInvoiceRemote,

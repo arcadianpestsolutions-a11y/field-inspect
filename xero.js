@@ -61,5 +61,40 @@
     }
   }
 
-  window.Xero = { status, exchangeCode, disconnect, createInvoice, captureAuthCodeFromUrl };
+  const invoiceStatuses = (ids) => invoke({ action: 'invoice-statuses', ids });
+
+  // Asks Xero where every invoice this phone sent is up to, and writes down
+  // what changed (v121). Until now Scope only ever knew the status at the
+  // moment of sending, always DRAFT, so it never learned anything was paid.
+  // Only invoices that can still change are asked about. Returns how many
+  // changed, or { notConnected: true } quietly when Xero is not set up.
+  async function refreshStatuses() {
+    const settled = new Set(['PAID', 'VOIDED', 'DELETED']);
+    const open = (await DB.getAllInvoices())
+      .filter((i) => i.xeroInvoiceId && !settled.has(String(i.xeroStatus || '').toUpperCase()));
+    if (!open.length) return { changed: 0, asked: 0 };
+    let changed = 0;
+    for (let k = 0; k < open.length; k += 50) {
+      const batch = open.slice(k, k + 50);
+      let result;
+      try {
+        result = await invoiceStatuses(batch.map((i) => i.xeroInvoiceId));
+      } catch (e) {
+        if (/not connected|not configured/i.test(String(e && e.message))) return { changed, notConnected: true };
+        throw e;
+      }
+      const byId = new Map((result.invoices || []).map((r) => [r.xeroInvoiceId, r]));
+      for (const inv of batch) {
+        const r = byId.get(inv.xeroInvoiceId);
+        if (!r || !r.xeroStatus || r.xeroStatus === inv.xeroStatus) continue;
+        const next = { ...inv, xeroStatus: r.xeroStatus };
+        if (String(r.xeroStatus).toUpperCase() === 'PAID' && !next.paidAt) next.paidAt = r.fullyPaidAt || Date.now();
+        await DB.saveInvoice(next);
+        changed += 1;
+      }
+    }
+    return { changed, asked: open.length };
+  }
+
+  window.Xero = { status, exchangeCode, disconnect, createInvoice, invoiceStatuses, refreshStatuses, captureAuthCodeFromUrl };
 })();
