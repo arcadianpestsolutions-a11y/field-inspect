@@ -53,6 +53,7 @@
     <div class="more-sheet-panel">
       <button id="open-clients-btn" class="more-item"><span>👥</span> Clients</button>
       <button id="open-referrals-btn" class="more-item"><span>🤝</span> Referrals</button>
+      <button id="open-sops-btn" class="more-item"><span>📘</span> SOP library</button>
       <button id="open-swms-btn" class="more-item"><span>🦺</span> Safety statements</button>
       <button id="open-assets-btn" class="more-item"><span>🏷</span> Station register</button>
       <button id="open-business-btn" class="more-item"><span>📊</span> Business figures</button>
@@ -425,6 +426,100 @@
   </main>
   <div class="action-bar">
     <button id="referral-new-btn" class="btn btn-primary full">+ Record a referral</button>
+  </div>
+</section>
+
+<!-- SOP library (sops-ui.js, v122). -->
+<section id="view-sops" class="view hidden">
+  <header class="topbar">
+    <button id="sops-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>SOP library</h1>
+      <span id="sops-subtitle" class="subtitle"></span>
+    </div>
+    <button id="sops-print-btn" class="icon-btn" aria-label="Print the SOP register" title="Print the register">⤓</button>
+  </header>
+  <main class="content">
+    <p class="empty-hint sops-rule">Each procedure is approved, reviewed on schedule and signed as read, and every version is kept: the record an ISO 9001 auditor asks to see.</p>
+    <input id="sops-search" type="search" class="search-input" placeholder="Search procedures…" autocomplete="off" />
+    <div id="sops-lists"></div>
+    <div id="sops-starters" class="card sops-starters hidden">
+      <p>Starter drafts, written from how Scope already works: inspections, chemicals, roof and subfloor safety, records, complaints, document control, equipment checks. Read, change and approve each one.</p>
+      <button id="sops-starters-btn" class="btn btn-outline full">Add starter drafts</button>
+    </div>
+  </main>
+  <div class="action-bar">
+    <button id="sop-new-btn" class="btn btn-primary full">+ New SOP</button>
+  </div>
+</section>
+
+<section id="view-sop" class="view hidden">
+  <header class="topbar">
+    <button id="sop-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1 id="sop-code">SOP</h1>
+      <span id="sop-state" class="subtitle"></span>
+    </div>
+  </header>
+  <main class="content">
+    <h2 id="sop-title" class="sop-title"></h2>
+    <dl id="sop-meta" class="sop-meta"></dl>
+    <p id="sop-draft-banner" class="sop-draft-banner hidden"></p>
+    <article id="sop-body" class="card sop-body"></article>
+    <div class="sop-actions">
+      <button id="sop-sign-btn" class="btn btn-primary full">I have read this</button>
+      <button id="sop-edit-btn" class="btn btn-outline full">Edit</button>
+      <button id="sop-approve-btn" class="btn btn-primary full">Approve</button>
+      <button id="sop-discard-btn" class="btn btn-secondary full">Discard the draft</button>
+      <button id="sop-reviewed-btn" class="btn btn-outline full">Reviewed: no changes needed</button>
+      <button id="sop-print-btn" class="btn btn-outline full">Print / save as PDF</button>
+      <p id="sop-admin-note" class="empty-hint sop-admin-note hidden">Only an admin can approve changes.</p>
+    </div>
+    <h2 id="sop-signed-title" class="business-heading">Read and signed</h2>
+    <ul id="sop-signed" class="sop-small-list"></ul>
+    <h2 class="business-heading">History</h2>
+    <ul id="sop-history" class="sop-small-list"></ul>
+    <button id="sop-retire-btn" class="btn btn-secondary full sop-retire">Retire this SOP</button>
+  </main>
+</section>
+
+<section id="view-sop-edit" class="view hidden">
+  <header class="topbar">
+    <button id="sop-edit-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Edit SOP</h1>
+      <span id="sop-edit-heading" class="subtitle"></span>
+    </div>
+  </header>
+  <main class="content sop-edit">
+    <label class="field-label" for="sop-edit-title">Title</label>
+    <input id="sop-edit-title" type="text" maxlength="160" autocomplete="off" />
+    <div class="row gap">
+      <div class="flex1">
+        <label class="field-label" for="sop-edit-category">Category</label>
+        <select id="sop-edit-category"></select>
+      </div>
+      <div class="flex1">
+        <label class="field-label" for="sop-edit-review">Review every</label>
+        <select id="sop-edit-review">
+          <option value="6">6 months</option>
+          <option value="12">12 months</option>
+          <option value="24">24 months</option>
+        </select>
+      </div>
+    </div>
+    <label class="field-label" for="sop-edit-owner">Owner (who keeps it up to date)</label>
+    <input id="sop-edit-owner" type="text" maxlength="120" autocomplete="off" />
+    <label class="field-label" for="sop-edit-body">The procedure</label>
+    <textarea id="sop-edit-body" rows="16" placeholder="## Heading&#10;1. A numbered step&#10;- A bullet point"></textarea>
+    <p class="empty-hint sop-format-hint">## starts a heading, 1. a numbered step, - a bullet.</p>
+    <div id="sop-edit-note-row">
+      <label class="field-label" for="sop-edit-note">What changed in this version</label>
+      <input id="sop-edit-note" type="text" maxlength="300" autocomplete="off" placeholder="e.g. Added the roof void heat limit" />
+    </div>
+  </main>
+  <div class="action-bar">
+    <button id="sop-edit-save" class="btn btn-primary full">Save draft</button>
   </div>
 </section>
 
@@ -926,6 +1021,9 @@
 <script src="clients-ui.js"></script>
 <script src="referrals.js"></script>
 <script src="referrals-ui.js"></script>
+<script src="sop-rules.js"></script>
+<script src="sop-templates.js"></script>
+<script src="sops-ui.js"></script>
 <script src="job-details.js"></script>
 <script src="job-layout.js"></script>
 <script src="today.js"></script>

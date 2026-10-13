@@ -29,6 +29,7 @@
     'view-leads': 'leads',
     'view-clients': 'more',
     'view-referrals': 'more',
+    'view-sops': 'more',
     'view-swms-list': 'more',
     'view-assets': 'more',
     'view-business': 'more',

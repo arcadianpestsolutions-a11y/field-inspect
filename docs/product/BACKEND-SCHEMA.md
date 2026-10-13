@@ -1,6 +1,6 @@
 # Backend Schema - Scope
 
-Source of truth: `supabase-schema.sql` then `supabase-migration-002 ... 035`,
+Source of truth: `supabase-schema.sql` then `supabase-migration-002 ... 036`,
 applied in order to the live project (all applied as of 8 Oct 2026). This file is
 a reader's map. If it disagrees with the SQL, the SQL wins.
 
@@ -100,6 +100,14 @@ timestamps, `created_by`, `org_id`.
 job per kind. `client_access.agreement_requested_at` marks a link that asks
 for the inspection agreement.
 
+### sops (migration 036)
+`id`, `code`, `title`, `category`, `owner`, `status` (`draft | approved | retired`),
+`version`, `body`, `change_note`, `review_interval_months`, `approved_at/_by`,
+`last_reviewed_at/_by`, `next_review_at`, `draft jsonb` (changes waiting; the approved
+text stays in force), `history jsonb` (every approved version word for word, reviews,
+retirement; id'd entries), `acknowledgements jsonb` (who signed which version),
+`retired_at`, `retired_reason`, `template_key`, timestamps, `org_id`. No DELETE grant.
+
 ### referrals (migration 035)
 `id`, `referrer_client_id` (FK clients, set null), `referrer_name`, `referred_client_id`,
 `referred_lead_id`, `referred_job_id`, `referred_name`, `status` (`pending | earned |
@@ -141,7 +149,7 @@ Bucket `inspection-media` (private). Paths: `<job_id>/...` for photos and audio,
 clients get 5-minute signed URLs from `client-portal`. **Not included in any
 database backup**; see `../BACKUP-RUNBOOK.md`.
 
-## 4. Local store (IndexedDB `field-inspect-db`, version 11)
+## 4. Local store (IndexedDB `field-inspect-db`, version 12)
 `jobs`, `captures`, `reports` (key `jobId`), `swms`, `leads`, `clients`,
 `invoices`, `sectionDrafts`, `deletions`, `syncBase` (key `"table:id"`, the last
 copy this phone and the cloud agreed on, photos stripped; local only, never
@@ -204,6 +212,7 @@ at the end of migration 033, or query `information_schema.role_table_grants`.)
 | 033 | Privilege audit |
 | 034 | Inspection agreement signed before the visit (`client_acceptances.kind`, `client_access.agreement_requested_at`) |
 | 035 | Referral register (`referrals`), `invoices.paid_at` |
+| 036 | SOP library (`sops`: versioned, approved, reviewed, signed; retired never deleted) |
 (023 is not present in the repository; confirm it was intentionally skipped.)
 
 ## 8. Schema debt and risks

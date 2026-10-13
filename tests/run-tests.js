@@ -3470,16 +3470,22 @@
     await win.ReportUI.openReview(job.id);
     await wait(200);
 
+    // Waits for each save to finish (the section closes) rather than a fixed
+    // time: on a busy machine the first save's audit entries could land after
+    // `first` was read, and the test then blamed the second save for them.
+    const saveAndWait = async () => {
+      doc.getElementById('section-save-btn').click();
+      await waitFor(() => doc.getElementById('view-report-section').classList.contains('hidden'), 'the section saves and closes', 4000);
+      await wait(150);
+    };
     openReportSection(doc, 'Client Details');
     await wait(200);
-    doc.getElementById('section-save-btn').click();
-    await wait(300);
+    await saveAndWait();
     const first = (await win.DB.getReport(job.id)).auditLog.length;
 
     openReportSection(doc, 'Client Details');
     await wait(200);
-    doc.getElementById('section-save-btn').click();
-    await wait(300);
+    await saveAndWait();
     const second = (await win.DB.getReport(job.id)).auditLog.length;
 
     assertEqual(second, first, 'saving an unchanged section adds no audit events');
@@ -11125,7 +11131,121 @@
     const src = await (await fetch('../db.js', { cache: 'reload' })).text();
     assert(/db\.onversionchange = \(\) => \{\s*\n\s*db\.close\(\);/.test(src), 'an old copy closes its connection when a newer version needs the database');
     assert(/req\.onblocked = \(\) => \{/.test(src), 'and a blocked upgrade tells the person what to do');
-    assert(/const DB_VERSION = 11;/.test(src), 'version 11 is the one with the referral register');
+    assert(/const DB_VERSION = 12;/.test(src), 'version 12 is the one with the SOP library');
+  });
+
+  // ---------- SOP library (v122, migration 036) ----------
+  test('SOPs: draft, approve, revise, approve again; every version kept word for word', () => {
+    const S = frame.contentWindow.SopRules;
+    const t0 = new Date(2031, 0, 31, 10).getTime();
+    let s = S.newSop({ code: 'SOP-001', title: 'Spill response', owner: 'Tal', body: '', actor: 'Tal', now: t0 });
+    assertEqual(s.status, 'draft', 'a new SOP is a draft');
+    assertEqual(s.version, 0, 'with no version yet');
+    assert(/write the procedure/i.test(S.approvalProblem(s)), 'an empty procedure cannot be approved');
+    s = S.edit(s, { body: '1. Stop the source.\n2. Contain it with the spill kit.' }, { actor: 'Tal', now: t0 });
+    const a1 = S.approve(s, { actor: 'Tal Admin', now: t0 });
+    assertEqual(a1.problem, null, 'approvable once written');
+    s = a1.sop;
+    assertEqual(s.version, 1, 'version 1');
+    assertEqual(s.approvedBy, 'Tal Admin', 'who approved it');
+    assertEqual(new Date(s.nextReviewAt).getMonth(), 0, 'review a year later...');
+    assertEqual(new Date(s.nextReviewAt).getFullYear(), 2032, '...in the next January');
+    assertEqual(new Date(S.addMonths(t0, 1)).getDate(), 28, '31 Jan plus a month is the end of February (2031 is not a leap year), not March');
+
+    const revised = S.edit(s, { body: '1. Stop the source.\n2. Contain.\n3. Record it.' }, { actor: 'Tal', now: t0 + 1000 });
+    assertEqual(revised.body, s.body, 'a revision does not change the approved text in force');
+    assert(revised.draft && /Record it/.test(revised.draft.body), 'it waits as a draft');
+    assert(/what changed/i.test(S.approvalProblem(revised)), 'a new version must say what changed');
+    const a2 = S.approve(S.edit(revised, { changeNote: 'Added recording' }, {}), { actor: 'Tal Admin', now: t0 + 2000 });
+    s = a2.sop;
+    assertEqual(s.version, 2, 'version 2');
+    const approvals = s.history.filter((h) => h.kind === 'approved');
+    assertEqual(approvals.length, 2, 'both versions are in the history');
+    assert(!/Record it/.test(approvals[0].body) && /Record it/.test(approvals[1].body), 'version 1 is kept exactly as it was');
+    assertEqual(S.nextCode([{ code: 'SOP-001' }, { code: 'SOP-007' }]), 'SOP-008', 'codes count on');
+  });
+
+  test('SOPs: reviews are recorded, signatures are per version, and retiring keeps everything', () => {
+    const S = frame.contentWindow.SopRules;
+    const now = Date.now();
+    let s = S.approve(S.newSop({ code: 'SOP-002', title: 'Ladders', body: 'Three points of contact, always.', actor: 'A', now }), { actor: 'A', now }).sop;
+    assertEqual(S.reviewState(s, now), 'ok', 'current');
+    assertEqual(S.reviewState(s, s.nextReviewAt - 5 * 86400000), 'due-soon', 'due soon in the last month');
+    assertEqual(S.reviewState(s, s.nextReviewAt + 1), 'overdue', 'overdue after the date');
+    const later = s.nextReviewAt + 1;
+    const r = S.markReviewed(s, { actor: 'B', now: later });
+    assertEqual(r.version, s.version, 'a review changes no version');
+    assert(r.nextReviewAt > later, 'and moves the next review on');
+    assert(r.history.some((h) => h.kind === 'reviewed' && h.by === 'B'), 'and is on the record');
+
+    s = S.acknowledge(s, { name: 'Sam', email: 'sam@example.com', now });
+    s = S.acknowledge(s, { name: 'Sam again', email: 'SAM@example.com', now });
+    assertEqual(S.signedCurrent(s).length, 1, 'one signature per person per version');
+    const v2 = S.approve(S.edit(s, { body: 'Three points of contact. Check the feet.', changeNote: 'Feet' }, {}), { actor: 'A', now }).sop;
+    assertEqual(S.signedCurrent(v2).length, 0, 'a new version needs signing again');
+    assert(!S.hasSigned(v2, { email: 'sam@example.com' }), 'Sam has not signed version 2');
+    assertEqual(v2.acknowledgements.length, 1, 'but Sam’s signature for version 1 is kept');
+
+    const gone = S.retire(v2, { actor: 'A', reason: 'Replaced by SOP-009' });
+    assertEqual(gone.status, 'retired', 'retired');
+    assertEqual(gone.history.filter((h) => h.kind === 'approved').length, 2, 'with its whole history');
+    assertEqual(S.edit(gone, { body: 'x' }, {}), gone, 'and no longer editable');
+  });
+
+  test('SOPs: the starter drafts are drafts, and say what an inspection follows', () => {
+    const win = frame.contentWindow;
+    const T = win.SopTemplates; const S = win.SopRules;
+    assert(Array.isArray(T) && T.length >= 6, 'there are starter drafts');
+    for (const t of T) {
+      assert(t.key && t.title && S.CATEGORIES.includes(t.category), `${t.title}: named and filed`);
+      assert(t.body.length > 300 && /## /.test(t.body), `${t.title}: has real content with headings`);
+    }
+    assert(/AS 4349\.3-2010/.test(T.find((t) => t.key === 'timber-pest-inspection').body), 'the inspection one names its Standard');
+    assert(T.some((t) => t.key === 'document-control'), 'and how the library itself works');
+    const s = S.newSop({ code: 'SOP-001', title: T[0].title, body: T[0].body, category: T[0].category });
+    assertEqual(s.status, 'draft', 'a starter lands as a draft');
+    assertEqual(S.approvalProblem(s), null, 'which can be approved once read');
+  });
+
+  test('SOPs: the screen lists, adds the starters once, shows a procedure, and keeps them through a backup', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realConfirm = win.Dialog.confirm;
+    win.Dialog.confirm = () => Promise.resolve(true);
+    try {
+      await win.SopsUI.open();
+      await wait(200);
+      assert(!doc.getElementById('view-sops').classList.contains('hidden'), 'the library opens');
+      const before = (await win.DB.getSops()).length;
+      if (!doc.getElementById('sops-starters').classList.contains('hidden')) {
+        doc.getElementById('sops-starters-btn').click();
+        await waitFor(async () => (await win.DB.getSops()).length > before, 'starters added', 3000);
+      }
+      const sops = await win.DB.getSops();
+      assert(sops.filter((s) => s.templateKey).length >= win.SopTemplates.length, 'every starter is in');
+      assert(doc.getElementById('sops-starters').classList.contains('hidden'), 'and the offer goes away');
+      assert(/Needs attention/.test(doc.getElementById('sops-lists').textContent), 'drafts are listed as needing attention');
+      const first = doc.querySelector('#sops-lists .sop-row');
+      first.click();
+      await wait(200);
+      assert(!doc.getElementById('view-sop').classList.contains('hidden'), 'a procedure opens');
+      assert(doc.querySelector('#sop-body h3'), 'its text is laid out with headings');
+      assert(!doc.getElementById('sop-approve-btn').classList.contains('hidden'), 'a draft offers Approve');
+      assert(doc.getElementById('sop-sign-btn').classList.contains('hidden'), 'and cannot be signed until approved');
+      const exported = await win.DB.exportAllData();
+      assert(Array.isArray(exported.sops) && exported.sops.length === sops.length, 'the library is in the backup file');
+      assert(win.Restore.KINDS.some((k) => k.key === 'sops'), 'and restore reads it back');
+    } finally {
+      win.Dialog.confirm = realConfirm;
+    }
+  });
+
+  test('SOPs: the database keeps them, and nobody can delete one', async () => {
+    const sql = await (await fetch('../supabase-migration-036-sop-library.sql', { cache: 'reload' })).text();
+    assert(/create table if not exists public\.sops/.test(sql), 'a sops table');
+    assert(/grant select, insert, update on public\.sops to authenticated;/.test(sql), 'staff can write');
+    assert(/revoke delete, truncate, trigger, references on public\.sops from authenticated;/.test(sql), 'but never delete');
+    assert(/history\s+jsonb not null default '\[\]'::jsonb/.test(sql), 'every version is kept');
   });
 
   // ---------- Referral register (v121, migration 035) ----------

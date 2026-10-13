@@ -6,7 +6,7 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 | Layer | Choice | Constraint |
 |---|---|---|
 | Front end | Vanilla JS (IIFEs, `window.X` globals), HTML, one CSS file | **No build step.** No npm, bundler or TypeScript in the front end |
-| Local data | IndexedDB `field-inspect-db`, DB_VERSION 11 | Never rename the DB or the `/field-inspect/` Pages path |
+| Local data | IndexedDB `field-inspect-db`, DB_VERSION 12 | Never rename the DB or the `/field-inspect/` Pages path |
 | Offline | Service worker, cache-first app shell, versioned `CACHE_NAME` | Must equal `APP_VERSION`; precache uses `cache: 'reload'` |
 | Hosting | GitHub Pages (static) | Cannot set response headers (affects CSP) |
 | Back end | Supabase: Postgres 17, Auth, Storage (`inspection-media`, private), Edge Functions (Deno) | Free plan today |
@@ -56,7 +56,7 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 | Privacy | Client data only to the business, the client, and listed processors; opt-out honoured within one send cycle |
 
 ## 5. Testing requirements
-* Browser suite `tests/run-tests.html`: 532 tests, no framework, about 70 s, own
+* Browser suite `tests/run-tests.html`: 537 tests, no framework, about 70 s, own
   IndexedDB. **Two clean back-to-back runs before any release.**
 * Use `waitFor(predicate)`, never fixed waits. Tests must not depend on today's date.
 * New behaviour needs a test that fails when the fix is reverted.

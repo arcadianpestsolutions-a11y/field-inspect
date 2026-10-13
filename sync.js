@@ -973,6 +973,79 @@
     }
   }
 
+  // ---------- SOP library (migration 036) ----------
+  function localSopToRemote(s) {
+    return {
+      id: s.id,
+      code: s.code || '',
+      title: s.title || '',
+      category: s.category || '',
+      owner: s.owner || '',
+      status: s.status || 'draft',
+      version: Number(s.version) || 0,
+      body: s.body || '',
+      change_note: s.changeNote || '',
+      review_interval_months: Number(s.reviewIntervalMonths) || 12,
+      approved_at: s.approvedAt || null,
+      approved_by: s.approvedBy || '',
+      last_reviewed_at: s.lastReviewedAt || null,
+      last_reviewed_by: s.lastReviewedBy || '',
+      next_review_at: s.nextReviewAt || null,
+      draft: s.draft || null,
+      history: Array.isArray(s.history) ? s.history : [],
+      acknowledgements: Array.isArray(s.acknowledgements) ? s.acknowledgements : [],
+      retired_at: s.retiredAt || null,
+      retired_reason: s.retiredReason || '',
+      template_key: s.templateKey || '',
+      created_by: currentUserId(),
+      created_at: s.createdAt,
+      updated_at: s.updatedAt || s.createdAt,
+    };
+  }
+
+  function remoteSopToLocal(rs) {
+    return {
+      id: rs.id,
+      code: rs.code || '',
+      title: rs.title || '',
+      category: rs.category || '',
+      owner: rs.owner || '',
+      status: rs.status || 'draft',
+      version: Number(rs.version) || 0,
+      body: rs.body || '',
+      changeNote: rs.change_note || '',
+      reviewIntervalMonths: Number(rs.review_interval_months) || 12,
+      approvedAt: rs.approved_at || null,
+      approvedBy: rs.approved_by || '',
+      lastReviewedAt: rs.last_reviewed_at || null,
+      lastReviewedBy: rs.last_reviewed_by || '',
+      nextReviewAt: rs.next_review_at || null,
+      draft: rs.draft || null,
+      history: Array.isArray(rs.history) ? rs.history : [],
+      acknowledgements: Array.isArray(rs.acknowledgements) ? rs.acknowledgements : [],
+      retiredAt: rs.retired_at || null,
+      retiredReason: rs.retired_reason || '',
+      templateKey: rs.template_key || '',
+      createdAt: rs.created_at,
+      updatedAt: rs.updated_at,
+    };
+  }
+
+  async function pushSop(sop) {
+    if (!isReady()) return;
+    try {
+      const { data, error } = await supabaseClient.from('sops').upsert(localSopToRemote(sop)).select('id');
+      if (error) throw error;
+      if (refusedByPolicy(data)) reportPolicyRefusal('SOP', sop.id);
+    } catch (e) {
+      if (isMissingTableError(e)) {
+        console.warn('[sync] the sops table is not in the database yet — run supabase-migration-036-sop-library.sql. SOPs stay on this device until then.');
+        return;
+      }
+      console.warn('[sync] push SOP failed, will retry on next sync:', e.message || e);
+    }
+  }
+
   // ---------- Clients ----------
   function localClientToRemote(client) {
     return {
@@ -1376,6 +1449,14 @@
           push: pushReferral,
           label: (r) => `Referral of ${r.referredName || 'someone'}`,
         },
+        {
+          table: 'sops',
+          localAll: () => DB.getSops(),
+          toLocal: remoteSopToLocal,
+          putRaw: (rec) => DB.putSopRaw(rec),
+          push: pushSop,
+          label: (s) => `${s.code || 'SOP'} ${s.title || (s.draft && s.draft.title) || ''}`.trim(),
+        },
       ];
 
       for (const c of collections) {
@@ -1466,6 +1547,7 @@
     pushLead,
     pushClient,
     pushReferral,
+    pushSop,
     deleteJobRemote,
     deleteCaptureRemote,
     deleteInvoiceRemote,

@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v121 · **532 tests passing** (as of 13 Oct 2026)
+**Current build:** v122 · **537 tests passing** (as of 13 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
@@ -34,7 +34,7 @@ plain-English orientation; those are the detail.
 | | |
 |---|---|
 | Front end | Vanilla JS, **zero build step**, plain `<script src>` tags |
-| Offline | IndexedDB (`field-inspect-db`), DB_VERSION **11** |
+| Offline | IndexedDB (`field-inspect-db`), DB_VERSION **12** |
 | Shell | Service worker, cache-first, versioned by `CACHE_NAME` in `sw.js` |
 | Back end | Supabase — Postgres, Auth, Storage, Edge Functions (Deno) |
 | Hosting | GitHub Pages |
@@ -105,7 +105,7 @@ and `report.js` open with a table of contents.
 
 ### Tests and tools
 
-`tests/run-tests.html` (532 tests), `tests/chaos.js` + `chaos-scenarios.js`
+`tests/run-tests.html` (537 tests), `tests/chaos.js` + `chaos-scenarios.js`
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
 
@@ -213,7 +213,7 @@ write that live termites *were* found without that framing being handled.
 ## Outstanding
 
 **Waiting on the operator (not code):**
-- Migrations 002–035 are all applied to the live project (034 and 035 on 13 Oct 2026).
+- Migrations 002–036 are all applied to the live project (034–036 on 13 Oct 2026).
 - Set `CLICKSEND_USERNAME` / `CLICKSEND_API_KEY` in Supabase secrets — until
   then day-before reminders go by email instead of SMS
 - Set `SMS_INBOUND_TOKEN` and add the ClickSend inbound rule pointing at

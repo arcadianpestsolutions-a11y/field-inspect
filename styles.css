@@ -3384,3 +3384,48 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .invoice-referral-row p { margin: 0; font-size: .9rem; line-height: 1.45; }
 .invoice-paid-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; font-size: .9rem; }
 .invoice-paid-text { color: var(--text-dim); }
+
+/* ---------- SOP library (sops-ui.js, v122) ---------- */
+.sops-rule { margin: 0 0 12px; text-align: left; padding: 0; }
+.sop-list { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sop-list-retired { opacity: .7; }
+.sop-row {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 3px;
+  background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; color: var(--text); font: inherit; cursor: pointer;
+}
+.sop-row.sop-overdue { border-left-color: var(--danger); }
+.sop-row.sop-due-soon, .sop-row.sop-draft { border-left-color: var(--warning); }
+.sop-row.sop-ok { border-left-color: var(--accent); }
+.sop-row-code { font-family: var(--font-readout); font-size: .76rem; color: var(--text-dim); }
+.sop-row-title { font-weight: 650; font-size: .96rem; overflow-wrap: anywhere; }
+.sop-row-meta { font-size: .8rem; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sop-pill { border-radius: 999px; padding: 1px 8px; font-size: .72rem; font-weight: 650; border: 1px solid currentColor; }
+.sop-pill-overdue { color: var(--danger); }
+.sop-pill-due-soon, .sop-pill-draft { color: var(--warning); }
+.sop-pill-ok { color: var(--accent); }
+.sop-pill-retired { color: var(--text-dim); }
+.sops-starters { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.sops-starters.hidden { display: none; }
+.sops-starters p { margin: 0; font-size: .9rem; line-height: 1.45; }
+.sop-title { margin: 0 0 8px; font-size: 1.15rem; overflow-wrap: anywhere; }
+.sop-meta { margin: 0 0 12px; display: flex; flex-direction: column; gap: 4px; font-size: .86rem; }
+.sop-meta .row { display: flex; gap: 10px; }
+.sop-meta dt { color: var(--text-dim); flex: 0 0 104px; }
+.sop-meta dd { margin: 0; overflow-wrap: anywhere; }
+.sop-draft-banner { margin: 0 0 12px; border-left: 3px solid var(--warning); padding-left: 10px; font-size: .88rem; line-height: 1.45; }
+.sop-draft-banner.hidden { display: none; }
+.sop-body { font-size: .92rem; line-height: 1.55; overflow-wrap: anywhere; }
+.sop-body h3 { font-size: .98rem; margin: 14px 0 4px; }
+.sop-body h3:first-child { margin-top: 0; }
+.sop-body p { margin: 0 0 8px; }
+.sop-body ol, .sop-body ul { margin: 0 0 8px; padding-left: 22px; }
+.sop-body li { margin: 2px 0; }
+.sop-actions { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.sop-admin-note { margin: 0; text-align: left; padding: 0; }
+.sop-small-list { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .88rem; line-height: 1.45; overflow-wrap: anywhere; }
+.sop-when { color: var(--text-dim); font-size: .8rem; }
+.sop-note { color: var(--text-dim); }
+.sop-retire { margin-top: 8px; }
+.sop-edit textarea#sop-edit-body { font-family: var(--font-readout); font-size: .86rem; line-height: 1.5; min-height: 300px; }
+.sop-format-hint { margin: 4px 0 10px; text-align: left; padding: 0; }

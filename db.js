@@ -46,7 +46,8 @@ const DB_NAME = window.IS_TEST ? 'field-inspect-db-test'
 // did" and merge two people's offline edits instead of keeping only the later one
 // (see sync-merge.js). Local only; never synced.
 // v11 adds `referrals`: the referral register (referrals.js, migration 035).
-const DB_VERSION = 11;
+// v12 adds `sops`: the SOP library (sop-rules.js, migration 036).
+const DB_VERSION = 12;
 
 // Whether a value can be used to look something up BY KEY.
 //
@@ -138,6 +139,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('referrals')) {
         db.createObjectStore('referrals', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('sops')) {
+        db.createObjectStore('sops', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('deletions')) {
         // What was deleted, so the next sync can say so out loud. Keyed
@@ -947,6 +951,34 @@ const DB = {
     return all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   },
 
+  // ---------- SOP library (v12, migration 036) ----------
+  // Controlled documents: retired, never deleted (see sop-rules.js).
+  async saveSop(sop) {
+    const store = await tx('sops', 'readwrite');
+    const toSave = { ...sop, updatedAt: Date.now() };
+    await reqToPromise(store.put(toSave));
+    if (window.Sync && window.Sync.pushSop) window.Sync.pushSop(toSave);
+    return toSave;
+  },
+
+  async putSopRaw(sop) {
+    const store = await tx('sops', 'readwrite');
+    await reqToPromise(store.put(sop));
+    return sop;
+  },
+
+  async getSop(id) {
+    if (!hasKey(id)) return undefined;
+    const store = await tx('sops', 'readonly');
+    return reqToPromise(store.get(id));
+  },
+
+  async getSops() {
+    const store = await tx('sops', 'readonly');
+    const all = await reqToPromise(store.getAll());
+    return all.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')));
+  },
+
   // ---------- Leads ----------
   async addLead({ name, phone, email, address, addressLat, addressLng, jobType, source, notes, quotedCents }) {
     const store = await tx('leads', 'readwrite');
@@ -1105,7 +1137,7 @@ const DB = {
     // were added after this was written and were silently left out, so a "backup"
     // restored from it would have had every job and none of the people they were
     // for. Photos are deliberately still not here (see the test beside this).
-    const [jobs, reports, invoices, clients, leads, swms, referrals] = await Promise.all([
+    const [jobs, reports, invoices, clients, leads, swms, referrals, sops] = await Promise.all([
       this.getJobs(),
       this.getAllReports(),
       this.getAllInvoices(),
@@ -1113,6 +1145,7 @@ const DB = {
       this.getLeads(),
       this.getAllSwms(),
       this.getReferrals(),
+      this.getSops(),
     ]);
     return {
       // Which shape of file this is, so whatever reads it later can tell a file
@@ -1124,6 +1157,7 @@ const DB = {
         jobs: jobs.length, reports: reports.length, invoices: invoices.length,
         clients: clients.length, leads: leads.length, swms: swms.length,
         referrals: referrals.length,
+        sops: sops.length,
       },
       jobs,
       reports,
@@ -1133,6 +1167,8 @@ const DB = {
       swms,
       // v121. A file written before has none, which restore reads as none.
       referrals,
+      // v122, the SOP library with every approved version and signature.
+      sops,
     };
   },
 
