@@ -1,0 +1,30 @@
+# Runs the whole browser test suite on every push, in headless Chromium.
+# See tests/ci-run.mjs. No secrets are used or needed: the suite runs against
+# its own test database in the browser and never reaches the live backend.
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.47.2
+          npx playwright install --with-deps chromium
+      - name: Run the suite
+        env:
+          TZ: Australia/Sydney
+        run: node tests/ci-run.mjs
