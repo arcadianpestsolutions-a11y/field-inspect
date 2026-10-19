@@ -56,9 +56,11 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 | Privacy | Client data only to the business, the client, and listed processors; opt-out honoured within one send cycle |
 
 ## 5. Testing requirements
-* Browser suite `tests/run-tests.html`: 544 tests, no framework, about 70 s, own
+* Browser suite `tests/run-tests.html`: 546 tests, no framework, about 70 s, own
   IndexedDB. **Two clean back-to-back runs before any release.**
-* Use `waitFor(predicate)`, never fixed waits. Tests must not depend on today's date.
+* Use `waitFor(predicate)`, never fixed waits. Tests must not depend on today's date:
+  since v126 the suite runs on a fixed clock (`test-clock.js`: Sunday 1 November 2026, 7am,
+  then running on), so "this month" and "today" are the same on every run.
 * New behaviour needs a test that fails when the fix is reverted.
 * Source-assertion tests guard cross-file contracts (registration in three
   places, version match, last-script rule, server error handling).

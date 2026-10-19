@@ -11186,6 +11186,29 @@
     assert(/const DB_VERSION = 12;/.test(src), 'version 12 is the one with the SOP library');
   });
 
+  // ---------- A fixed clock for the suite (test-clock.js, v126) ----------
+  test('Test clock: the app runs at the same moment on every run, and time still moves', async () => {
+    const win = frame.contentWindow;
+    const target = win.TestClock.TEST_NOW;
+    const now = win.Date.now();
+    assert(now >= target && now - target < 3 * 3600000, 'the app believes it is the test moment (or a little after)');
+    assert(Math.abs(Date.now() - now) < 60000, 'and this page agrees with it');
+    const a = win.Date.now();
+    await wait(30);
+    assert(win.Date.now() > a, 'time runs on from there');
+    assertEqual(new win.Date(2031, 2, 10).getFullYear(), 2031, 'an explicit date is still that date');
+    assertEqual(dayThisMonth(19).getMonth(), new Date(target).getMonth(), '"this month" is the test month');
+  });
+
+  test('Test clock: it can never switch on for someone using the app', async () => {
+    const src = await (await fetch('../test-clock.js', { cache: 'reload' })).text();
+    assert(/if \(!isTest\) return;/.test(src), 'outside a test page it stops at once');
+    assert(/sessionStorage\.getItem\(KEY\)/.test(src), 'and even in one, only when the test page has switched it on');
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+    assertEqual(scripts.slice(0, 2).join(','), 'error-log.js,test-clock.js', 'straight after the error log, before anything reads the time');
+  });
+
   // ---------- Shared helpers (common.js, v125) ----------
   test('Common: the shared helpers load before everything that uses them', async () => {
     const html = await (await fetch('../index.html', { cache: 'reload' })).text();
@@ -11656,6 +11679,9 @@
     results.length = 0;
     renderResults();
     try {
+      // The same moment on every run (test-clock.js), so a test about "the
+      // 19th of this month" means the same thing on the 1st and the 30th.
+      if (window.TestClock) window.TestClock.start();
       await blankFrame();
       await clearServiceWorkerState();
       await resetTestDb();
