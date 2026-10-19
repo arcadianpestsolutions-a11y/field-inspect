@@ -72,7 +72,7 @@ Exit: a tested, documented restore; no silent overwrites.
 | 5.2 | Shared `common.js`: consolidate `toast`, `askConfirm`, `el`, `fmtDate`, `pad`, `uid`, `money` **Done in v125** (61 copies across 21 files; the look-alikes that differ on purpose were left) | M |
 | 5.3 | Split `report.js` (form renderer, print view) and `app.js` | L |
 | 5.4 | Pin `@supabase/supabase-js` import version in every function. **Done in v124** (`@2.117.3`, test-guarded) | S |
-| 5.5 | Add a linter and a CI job that runs the browser suite headless | M |
+| 5.5 | Add a linter and a CI job that runs the browser suite headless. **CI done** (every push, GitHub Actions, headless Chromium in Sydney time); a linter is still to do | M |
 | 5.6 | Content-Security-Policy via `<meta>`; first remove `document.write` and inline `onclick` from print windows | M |
 | 5.7 | Checksums for vendored libraries; full licence texts | S |
 | 5.8 | Decide whether to keep or remove the gap at migration 023 (document it) | S |

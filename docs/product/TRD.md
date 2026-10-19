@@ -57,7 +57,8 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 
 ## 5. Testing requirements
 * Browser suite `tests/run-tests.html`: 546 tests, no framework, about 70 s, own
-  IndexedDB. **Two clean back-to-back runs before any release.**
+  IndexedDB. **Two clean back-to-back runs before any release.** GitHub Actions also
+  runs it headless on every push (`.github/workflows/tests.yml`).
 * Use `waitFor(predicate)`, never fixed waits. Tests must not depend on today's date:
   since v126 the suite runs on a fixed clock (`test-clock.js`: Sunday 1 November 2026, 7am,
   then running on), so "this month" and "today" are the same on every run.

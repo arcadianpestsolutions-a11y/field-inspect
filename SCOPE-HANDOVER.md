@@ -106,6 +106,7 @@ and `report.js` open with a table of contents.
 ### Tests and tools
 
 `tests/run-tests.html` (546 tests), `tests/chaos.js` + `chaos-scenarios.js`
+(GitHub Actions runs the suite on every push: `.github/workflows/tests.yml`),
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
 

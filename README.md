@@ -18,6 +18,8 @@ contact. **Do not exercise live mode against real client data.**
 Open `/tests/run-tests.html` and press Run (or `window.runAllTests()`). 546 tests,
 no framework, about 70 seconds. It uses its own `field-inspect-db-test` database, and a
 fixed clock (`test-clock.js`) so results do not depend on the date it is run.
+GitHub runs the same suite headless on every push (`.github/workflows/tests.yml`); the
+result is the green tick or red cross beside each commit.
 A stale second tab on the same origin can hang IndexedDB; close idle tabs first.
 `tests/chaos.js` + `chaos-scenarios.js` are a random-tapper for demo mode only;
 they refuse to run otherwise.

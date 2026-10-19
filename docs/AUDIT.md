@@ -81,8 +81,9 @@ and no console error in ~2,400 random steps after the fixes.
    print "never" or follow the phone's locale, the three `plural()` signatures, and the
    `el(tag, ...)` element builders. `technicianDisplayName` was defined twice in
    `report.js`; the stray copy outside its closure is gone.
-3. **No build tooling**: no package.json, linter, formatter, type checking, or CI.
-   Tests are a browser page run by hand (plus a demo-only random tapper).
+3. **No build tooling**: no package.json, linter, formatter or type checking. **CI since
+   v126**: GitHub Actions runs the whole browser suite headless on every push
+   (`.github/workflows/tests.yml`, `tests/ci-run.mjs`); a failing test fails the push's check.
 4. **Two-folder workflow**: development happens in one folder and is copied into
    the git checkout that deploys. It works but a single repository would be safer.
 5. **No Content-Security-Policy.** GitHub Pages cannot set headers; a `<meta>` CSP
