@@ -25,8 +25,8 @@
 //
 // "WHAT WOULD TAPPING BACK DO" IS DELIBERATELY NOT RE-IMPLEMENTED. This clicks
 // the button a person would have tapped. Every screen's Back already does the
-// right thing for that screen — asks before discarding typed text, stops a
-// recording, releases the camera — and all of it comes along for free.
+// right thing for that screen — asks before discarding typed text, closes the
+// scanner, puts a photo away — and all of it comes along for free.
 (() => {
   'use strict';
 
@@ -40,13 +40,13 @@
   // every one of them already has a working close or cancel button and that is
   // the thing to press.
   const OVERLAY_CLOSERS = [
-    'detail-close', 'bulk-zone-cancel', 'qr-cancel-btn', 'slot-picker-cancel', 'record-cancel',
+    'detail-close', 'bulk-zone-cancel', 'qr-cancel-btn', 'slot-picker-cancel',
     'client-link-close', 'agent-close', 'calendar-feed-close', 'reminders-close',
     'selection-cancel-btn', 'more-close-btn', 'job-form-cancel',
   ];
 
-  // The live camera. Back does NOT close this: it would end an inspection with a
-  // reflex, and the photographs and recording in progress are not recoverable.
+  // The inspection screen. Back does NOT close this: it would end an inspection with a
+  // reflex, halfway through the photo walk.
   // Swallowed with a word of explanation instead.
   const GUARDED_MODALS = ['inspection-modal'];
 

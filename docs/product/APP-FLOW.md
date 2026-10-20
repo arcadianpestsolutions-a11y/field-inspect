@@ -48,7 +48,7 @@ Enquiry -> Lead (optional) -> Job created -> Booked in diary
    - **Inside, no photos:** tick what blocked the view (furniture against walls, built-in fixtures, floor coverings, belongings against walls or in cupboards; all ticked to start), plus anything typed. Saved into Areas We Were Unable to Inspect. Photograph inside only for damage or damp.
    - **Done:** says so and points at Generate Form.
    Each step says what to capture. "Not here, skip" moves on; after a photo it becomes "Next". Back goes back, the chips along the bottom jump to any step, and a zone can still be typed by hand. Every photo flashes and buzzes. Where the walk is up to is remembered on that phone, per job. Other job types keep the chip checklist.
-2. Take photos by zone; add voice notes; annotate. Everything is stored locally;
+2. Take photos by zone; annotate. (Voice notes were removed in v131; old ones still play.) Everything is stored locally;
    upload to private storage happens when online.
 3. Finish Inspection stamps start/end times. Status moves to Inspection In Progress.
 

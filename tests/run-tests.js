@@ -8326,132 +8326,31 @@
     void stuck;
   });
 
-  // The recorder is stubbed, because what is worth testing is the ORDER of
-  // events around the microphone, not whether this machine has one.
-  function stubRecorder(win, opts) {
-    const o = opts || {};
-    const log = { constructed: 0, started: 0, tracksStopped: 0, streams: [] };
-    const makeStream = () => {
-      const tracks = [{ stop: () => { log.tracksStopped++; } }];
-      const s = { getTracks: () => tracks };
-      log.streams.push(s);
-      return s;
-    };
-    const realGum = win.navigator.mediaDevices && win.navigator.mediaDevices.getUserMedia;
-    const RealRecorder = win.MediaRecorder;
-    const pending = [];
-    Object.defineProperty(win.navigator, 'mediaDevices', {
-      configurable: true,
-      value: {
-        getUserMedia: () => new Promise((resolve, reject) => {
-          if (o.denied) { reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })); return; }
-          pending.push(() => resolve(makeStream()));
-        }),
-      },
-    });
-    win.MediaRecorder = class {
-      constructor() {
-        log.constructed++;
-        this.state = 'inactive'; this.mimeType = 'audio/webm'; this._l = {};
-        if (o.constructorThrows) throw Object.assign(new Error('unsupported format'), { name: 'NotSupportedError' });
-      }
-      addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); }
-      removeEventListener(t, fn) { this._l[t] = (this._l[t] || []).filter((x) => x !== fn); }
-      start() {
-        if (o.startThrows) throw Object.assign(new Error('could not start'), { name: 'NotSupportedError' });
-        log.started++; this.state = 'recording';
-      }
-      stop() { this.state = 'inactive'; (this._l.stop || []).slice().forEach((fn) => fn()); }
-    };
-    return {
-      log,
-      grantNext: () => { const f = pending.shift(); if (f) f(); },
-      restore: () => {
-        win.MediaRecorder = RealRecorder;
-        try { Object.defineProperty(win.navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: realGum } }); } catch (e) { /* ignore */ }
-      },
-    };
-  }
-
-  test('Voice note: cancelling while the microphone is still being asked for really cancels', async () => {
+  test('Voice notes: none can be recorded any more, and old ones still play (v131)', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
-    const rig = stubRecorder(win);
+    assert(!doc.getElementById('record-modal'), 'there is no recording screen');
+    assert(!doc.getElementById('detail-add-memo'), 'and no Attach Voice Note button');
+    assertEqual(win.VoiceNotes, undefined, 'the recorder is gone');
+    const src = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(!/MediaRecorder|getUserMedia/.test(src), 'nothing in app.js reaches for the microphone');
+
+    // A voice note made before v131 is part of that job's record, so it plays.
+    const job = await win.DB.addJob({ name: 'Old Voice Note Job' });
+    const photo = await fakePhoto(win);
+    await win.DB.addCapture({ jobId: job.id, zone: 'Laundry', type: 'photo', photoBlob: photo,
+      audioBlob: new win.Blob(['old note'], { type: 'audio/webm' }) });
     try {
-      const starting = win.VoiceNotes.start({ mode: 'attach', captureId: 'nope' });
-      assert(!doc.getElementById('record-modal').classList.contains('hidden'), 'the recording screen is up while it waits');
-
-      // Change of mind: Cancel BEFORE the permission is answered.
-      doc.getElementById('record-cancel').click();
-      assert(doc.getElementById('record-modal').classList.contains('hidden'), 'Cancel closes the screen');
-
-      // Now the microphone is granted, a moment too late.
-      rig.grantNext();
-      await starting;
-      await wait(30);
-
-      assertEqual(rig.log.started, 0,
-        'nothing may start recording after Cancel — it used to, with the screen hidden, the microphone live and no way to stop it');
-      assertEqual(rig.log.constructed, 0, 'not even a recorder was built');
-      assertEqual(rig.log.tracksStopped, 1, 'and the microphone that was handed over is let go');
-      assert(!win.VoiceNotes.micIsOpen(), 'no stream is being held');
-      assert(doc.getElementById('record-modal').classList.contains('hidden'), 'the screen stays closed');
-    } finally { rig.restore(); win.VoiceNotes.cancel(); }
-  });
-
-  test('Voice note: tapping Record twice does not leave a microphone open that nothing will release', async () => {
-    const win = frame.contentWindow;
-    const rig = stubRecorder(win);
-    try {
-      const a = win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
-      const b = win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
-      rig.grantNext(); rig.grantNext();
-      await Promise.all([a, b]);
-      await wait(30);
-      assertEqual(rig.log.started, 1, 'exactly one recording starts');
-      assertEqual(rig.log.tracksStopped, 1, 'and the stream from the superseded attempt is released');
-      assertEqual(win.VoiceNotes.state(), 'recording', 'the later attempt is the live one');
-    } finally { win.VoiceNotes.cancel(); rig.restore(); }
-  });
-
-  test('Voice note: a phone that refuses to record is told so, and the microphone is let go', async () => {
-    const win = frame.contentWindow;
-    const doc = frame.contentDocument;
-    // This screen calls its own toast() rather than window.appToast, so what the
-    // person actually sees is read from the toast element itself.
-    const toastEl = doc.getElementById('toast');
-    for (const how of [{ startThrows: true }, { constructorThrows: true }]) {
-      const rig = stubRecorder(win, how);
-      toastEl.textContent = '';
-      const before = win.ErrorLog.count();
-      try {
-        const starting = win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
-        rig.grantNext();
-        await starting;
-        await wait(30);
-        const toasted = toastEl.textContent;
-        const label = JSON.stringify(how);
-        assert(doc.getElementById('record-modal').classList.contains('hidden'),
-          `${label}: the Recording screen must not stay up with a timer at 0:00`);
-        assertEqual(rig.log.tracksStopped, 1, `${label}: the microphone must be switched off`);
-        assert(!win.VoiceNotes.micIsOpen(), `${label}: no stream is held`);
-        assert(/could not start recording/i.test(toasted), `${label}: it says so, got: ${toasted}`);
-        assert(win.ErrorLog.count() > before, `${label}: and the reason is on record`);
-      } finally { rig.restore(); win.VoiceNotes.cancel(); win.ErrorLog.clear(); }
+      win.showJobViewById(job.id);
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 1, 'the photo shows');
+      doc.querySelector('.capture-tile').click();
+      await waitFor(() => !doc.getElementById('detail-modal').classList.contains('hidden'), 'the photo opens');
+      assert(!doc.getElementById('detail-audio-wrap').classList.contains('hidden'), 'its old voice note can be played');
+      doc.getElementById('detail-close').click();
+    } finally {
+      await win.DB.deleteJob(job.id);
+      win.showJobListView();
     }
-  });
-
-  test('Voice note: a refused microphone says so and closes the screen', async () => {
-    const win = frame.contentWindow;
-    const doc = frame.contentDocument;
-    const rig = stubRecorder(win, { denied: true });
-    const toastEl = doc.getElementById('toast');
-    toastEl.textContent = '';
-    try {
-      await win.VoiceNotes.start({ mode: 'attach', captureId: 'x' });
-      assert(doc.getElementById('record-modal').classList.contains('hidden'), 'screen closed');
-      assert(/microphone access denied/i.test(toastEl.textContent), `got: ${toastEl.textContent}`);
-    } finally { rig.restore(); }
   });
 
   test('Chaos harness: it will not run outside demo mode', async () => {
@@ -8567,7 +8466,7 @@
       // The site sketch pad moved to its own file in v128.
       'report-sketch.js': ['site sketch: trace outline', 'site sketch: GPS'],
       'qr-scan.js': ['QR scan: read the photo'],
-      'app.js': ['business details: save', 'starting a voice note'],
+      'app.js': ['business details: save'],
     };
     for (const [file, labels] of Object.entries(expect)) {
       const src = await (await fetch('../' + file, { cache: 'reload' })).text();
@@ -9408,10 +9307,9 @@
     assert(!/undefined|\[object/.test(d(null, 'That photo')), 'even a missing error reads as a sentence');
   });
 
-  test('Camera and voice: a failed save is reported, never silent', async () => {
+  test('Photos: a failed save is reported, never silent', async () => {
     const src = await (await fetch('../app.js', { cache: 'reload' })).text();
     assert(/describeSaveFailure\(err, 'That photo'\)/.test(src), 'the shutter reports a failed save');
-    assert(/describeSaveFailure\(err, 'That voice note'\)/.test(src), 'a voice note reports a failed save');
     assert(/storage\.persist\(\)/.test(src), 'the app asks the browser not to evict its data');
   });
 

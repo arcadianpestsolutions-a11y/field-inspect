@@ -1,5 +1,5 @@
 // ===========================================================================
-// app.js - the shell: login, job list, one job's screen, photos and voice.
+// app.js - the shell: login, job list, one job's screen, photos.
 //
 // This is the last application script to load (only nav-history.js follows).
 // It owns the top-level screens and wires every other module together.
@@ -16,18 +16,17 @@
 //   Address autocomplete .... OpenStreetMap Nominatim (AU/NZ only)
 //   Gallery / captures ...... the photo grid for the current job
 //   Multi-select + bulk ..... select several photos, move / tag / delete
-//   Voice recording ......... MediaRecorder notes; pickMimeType is shared
 //   Start / Finish Inspection continuous capture with live preview
 //   Business details ........ opens business-ui.js
 //   Which document .......... inspection vs termite certificate etc.
 //   View Report ............. hands over to report.js (window.ReportUI)
-//   Capture detail .......... full-screen photo, annotate, voice note
+//   Capture detail .......... full-screen photo, annotate, play an old voice note
 //   Pinch-zoom / pan / swipe  gestures on the detail photo
 //   Init .................... boot order; demo-mode shortcut
 //
 // EXPOSES (window): appToast, toastDurationFor, showJobListView, showJobViewById,
 //   showLoginView, renderJobListPublic, hideAllAppViews, refreshJobViewStatus,
-//   currentJobForSwms, pickAudioMimeType, technicianDisplayName.
+//   currentJobForSwms, technicianDisplayName.
 // DEPENDS ON: DB, HtmlSafe, Dialog, Sync, Org, ReportUI, InvoiceUI, PhotoPrep,
 //   Clients, CommsService, Geo, AI, Scheduler (all optional-guarded).
 // STORAGE: IndexedDB via DB.* only (never opens IndexedDB itself).
@@ -130,19 +129,12 @@
   const inspectionFinishBtn = document.getElementById('inspection-finish-btn');
 
 
-  const recordModal = document.getElementById('record-modal');
-  const recordTargetLabel = document.getElementById('record-target-label');
-  const recordTimerEl = document.getElementById('record-timer');
-  const recordCancelBtn = document.getElementById('record-cancel');
-  const recordStopBtn = document.getElementById('record-stop');
-
   const detailModal = document.getElementById('detail-modal');
   const detailClose = document.getElementById('detail-close');
   const detailZoneEl = document.getElementById('detail-zone');
   const detailPhoto = document.getElementById('detail-photo');
   const detailAudioWrap = document.getElementById('detail-audio-wrap');
   const detailAudio = document.getElementById('detail-audio');
-  const detailAddMemoBtn = document.getElementById('detail-add-memo');
   const detailApplySuggestedZoneBtn = document.getElementById('detail-apply-suggested-zone');
   const detailDeleteBtn = document.getElementById('detail-delete');
   const detailBody = document.getElementById('detail-body');
@@ -158,13 +150,6 @@
   const objectUrls = [];
 
   let facingMode = 'environment';
-
-  let mediaRecorder = null;
-  let recordedChunks = [];
-  let recordingStream = null;
-  let recordingTimerInterval = null;
-  let recordingStartedAt = 0;
-  let recordingTarget = null; // { mode: 'new' } | { mode: 'attach', captureId }
 
   let currentDetailCaptureId = null;
   let currentDetailIndex = -1;
@@ -333,16 +318,6 @@
       osc.start();
       osc.stop(audioCtx.currentTime + duration);
     } catch (e) { /* Web Audio unsupported, ignore */ }
-  }
-
-  function recordStartFeedback() {
-    haptic([12, 40, 12]);
-    playClick(880, 0.07);
-  }
-
-  function recordStopFeedback() {
-    haptic(18);
-    playClick(440, 0.09);
   }
 
   // ---------- View routing ----------
@@ -1758,179 +1733,6 @@
   // safe inside attribute values as well as between tags.
   const { escapeHtml } = window.Common;
 
-  // ---------- Voice recording ----------
-  function pickMimeType() {
-    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
-    for (const c of candidates) {
-      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
-    }
-    return '';
-  }
-  window.pickAudioMimeType = pickMimeType; // shared with report.js's voice-guided room subdivision
-
-  // Which attempt to start a recording is the current one. Bumped every time one
-  // begins and every time one is cancelled, so an attempt that is still waiting
-  // on the microphone can tell, when it finally gets an answer, that nobody
-  // wants it any more.
-  let recordingAttempt = 0;
-
-  async function startRecording(target) {
-    const attempt = ++recordingAttempt;
-    recordingTarget = target;
-    recordTargetLabel.textContent = target.mode === 'attach'
-      ? 'Attaching voice note to photo'
-      : 'Zone note: Untagged'; // zoneInput was removed; the standalone zone-memo entry point is currently unreachable anyway
-    recordTimerEl.textContent = '0:00';
-    show(recordModal);
-
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      // Only speak for the attempt that is still current. A cancelled one has
-      // already closed the screen, and a later attempt owns it now.
-      if (attempt === recordingAttempt) {
-        hide(recordModal);
-        toast('Microphone access denied');
-      }
-      return;
-    }
-
-    // THE ANSWER ARRIVED AFTER THE PERSON GAVE UP. Tapping Cancel while the
-    // microphone was still being asked for closed the screen and cleared the
-    // state — and then this carried on regardless: it started recording with the
-    // screen hidden, the microphone live and no button to stop it, in somebody's
-    // house. Second Record taps before the first answer had the same effect with
-    // a stream nothing would ever release. So: if this is no longer the current
-    // attempt, let go of what was just handed over and do nothing else.
-    if (attempt !== recordingAttempt) {
-      stream.getTracks().forEach((t) => t.stop());
-      return;
-    }
-    recordingStream = stream;
-
-    try {
-      recordedChunks = [];
-      const mimeType = pickMimeType();
-      // A format the browser claims and then will not use is real on iOS, so a
-      // refusal with a chosen format falls back to whatever the browser picks.
-      try {
-        mediaRecorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
-      } catch (formatError) {
-        mediaRecorder = new MediaRecorder(recordingStream);
-      }
-
-      mediaRecorder.addEventListener('dataavailable', (e) => {
-        if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-      });
-      mediaRecorder.addEventListener('stop', onRecordingStopped);
-      mediaRecorder.start();
-    } catch (err) {
-      // The phone would not record: the microphone is in use by a call, the
-      // format is unsupported. This used to be an uncaught error that left the
-      // Recording screen up with its timer at 0:00 and the microphone switched
-      // on, and nothing said why.
-      stopRecordingStream();
-      mediaRecorder = null;
-      recordingTarget = null;
-      hide(recordModal);
-      if (window.ErrorLog) window.ErrorLog.note(err, 'starting a voice note');
-      toast('Could not start recording. Is another app using the microphone?');
-      return;
-    }
-
-    recordingStartedAt = Date.now();
-    recordStartFeedback();
-    recordingTimerInterval = setInterval(() => {
-      recordTimerEl.textContent = fmtTimer(Date.now() - recordingStartedAt);
-    }, 250);
-  }
-
-  function stopRecordingStream() {
-    if (recordingStream) {
-      recordingStream.getTracks().forEach((t) => t.stop());
-      recordingStream = null;
-    }
-    clearInterval(recordingTimerInterval);
-  }
-
-  async function onRecordingStopped() {
-    stopRecordingStream();
-    recordStopFeedback();
-    hide(recordModal);
-
-    if (!recordedChunks.length) {
-      toast('No audio recorded');
-      recordingTarget = null;
-      return;
-    }
-
-    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-    recordedChunks = [];
-
-    try {
-      if (recordingTarget && recordingTarget.mode === 'attach') {
-        await DB.updateCapture(recordingTarget.captureId, { audioBlob: blob });
-        toast('Voice note attached');
-        if (!detailModal.classList.contains('hidden') && currentDetailCaptureId === recordingTarget.captureId) {
-          await openDetail(recordingTarget.captureId);
-        }
-      } else {
-        await DB.addCapture({
-          jobId: currentJobId,
-          zone: '', // zoneInput was removed; the standalone zone-memo entry point is currently unreachable anyway
-          type: 'memo',
-          audioBlob: blob,
-        });
-        toast('Zone note saved');
-      }
-    } catch (err) {
-      if (window.ErrorLog) window.ErrorLog.note(err, 'voice: save note');
-      toast(DB.describeSaveFailure(err, 'That voice note'));
-      recordingTarget = null;
-      return;
-    }
-
-    recordingTarget = null;
-    await renderGallery();
-  }
-
-  function cancelRecording() {
-    // Invalidates any attempt still waiting on the microphone, so that if it is
-    // granted a moment from now nothing starts. Without this, cancelling did
-    // nothing at all to a request that had not been answered yet.
-    recordingAttempt++;
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.removeEventListener('stop', onRecordingStopped);
-      mediaRecorder.addEventListener('stop', () => { stopRecordingStream(); });
-      mediaRecorder.stop();
-    } else {
-      stopRecordingStream();
-    }
-    recordedChunks = [];
-    recordingTarget = null;
-    hide(recordModal);
-  }
-
-  recordStopBtn.addEventListener('click', () => {
-    if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
-  });
-
-  recordCancelBtn.addEventListener('click', cancelRecording);
-
-  // Narrow handle for the suite: the recorder is only reachable through a photo's
-  // detail screen, and the races worth testing are in what happens around it.
-  window.VoiceNotes = {
-    start: startRecording,
-    cancel: cancelRecording,
-    state: () => (mediaRecorder ? mediaRecorder.state : 'none'),
-    micIsOpen: () => !!recordingStream,
-  };
-
-  // The standalone "Zone Note" button (bottom action bar) was removed;
-  // startRecording({mode:'attach'}) below is still used by the capture
-  // detail modal's "Attach Voice Note" flow, so that stays intact.
-
   // ---------- Start / Finish Inspection (photos through the phone's camera app) ----------
   // Mirrors the defensive treatment finishInspection already has. Every exit
   // path below must either open the inspection or say plainly why it couldn't:
@@ -2619,6 +2421,8 @@
       hide(detailPhoto);
     }
 
+    // Voice notes can no longer be recorded (removed in v131), but ones made
+    // before then are part of the job's record, so they still play here.
     if (capture.audioBlob) {
       const url = trackUrl(URL.createObjectURL(capture.audioBlob));
       detailAudio.src = url;
@@ -2626,13 +2430,6 @@
     } else {
       detailAudio.removeAttribute('src');
       hide(detailAudioWrap);
-    }
-
-    // Only offer "attach memo" for photo captures without audio yet
-    if (capture.photoBlob && !capture.audioBlob) {
-      show(detailAddMemoBtn);
-    } else {
-      hide(detailAddMemoBtn);
     }
 
     if (!capture.zone && capture.suggestedZone) {
@@ -2770,12 +2567,6 @@
   detailClose.addEventListener('click', () => {
     hide(detailModal);
     currentDetailCaptureId = null;
-  });
-
-  detailAddMemoBtn.addEventListener('click', () => {
-    if (!currentDetailCaptureId) return;
-    hide(detailModal);
-    startRecording({ mode: 'attach', captureId: currentDetailCaptureId });
   });
 
   detailDeleteBtn.addEventListener('click', async () => {

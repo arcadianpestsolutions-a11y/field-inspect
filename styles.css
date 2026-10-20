@@ -895,69 +895,6 @@ body.dialog-open { overflow: hidden; }
 
 
 
-/* ---------- Record modal ---------- */
-.record-wrap {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  color: #fff;
-}
-
-.record-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--danger);
-  animation: pulse 1.1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.8); }
-}
-
-.record-target {
-  font-size: 1rem;
-  color: var(--text-dim);
-  text-align: center;
-  padding: 0 24px;
-}
-
-.record-timer {
-  font-size: 2.2rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.record-hint { color: var(--text-dim); font-size: 0.9rem; }
-
-.record-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 32px calc(24px + var(--safe-bottom));
-}
-
-.stop-btn {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  background: var(--danger);
-  border: 4px solid rgba(255,255,255,0.25);
-  position: relative;
-}
-
-.stop-btn::after {
-  content: '';
-  position: absolute;
-  inset: 26px;
-  background: #fff;
-  border-radius: 3px;
-}
-
 /* ---------- Detail modal ---------- */
 .detail-header {
   display: flex;

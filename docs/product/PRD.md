@@ -3,7 +3,7 @@
 ## 1. Summary
 Scope is an offline-first mobile web app that lets a one-person (growing to a
 small team) pest-control business run a job from first call to paid invoice:
-book it, inspect the property with photos and voice notes, produce the legally
+book it, inspect the property with photos, produce the legally
 required compliance document, send it to the client, invoice it, and remind the
 client when the next inspection is due.
 
@@ -54,7 +54,7 @@ Priority: **M** must, **S** should, **C** could.
 | ID | Requirement | P | Status |
 |---|---|---|---|
 | C1 | Photo capture by zone/room, with checklists per job type; a guided step-by-step walk for the timber pest inspection (v118) | M | Built |
-| C2 | Voice notes attached to captures; feed the AI draft | S | Built |
+| C2 | Voice notes attached to captures | S | Removed in v131 (not a good feature in the field); old notes still play |
 | C3 | Start/finish inspection with continuous capture and live preview | S | Built |
 | C4 | Annotate and zoom photos; bulk select, move, delete | S | Built |
 | C5 | Photos upload to private storage when online; queued offline | M | Built |
