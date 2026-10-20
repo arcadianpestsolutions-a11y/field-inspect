@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v133 · **549 tests passing** (as of 20 Oct 2026)
+**Current build:** v134 · **560 tests passing** (as of 20 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
@@ -104,7 +104,7 @@ and `report.js` open with a table of contents.
 
 ### Tests and tools
 
-`tests/run-tests.html` (549 tests), `tests/chaos.js` + `chaos-scenarios.js`
+`tests/run-tests.html` (560 tests), `tests/chaos.js` + `chaos-scenarios.js`
 (GitHub Actions runs the suite on every push: `.github/workflows/tests.yml`),
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
@@ -112,13 +112,13 @@ run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
 ### Client-facing (outside the app)
 
 `portal.html` + `portal-config.js` — a standalone page. No Scope code, no
-database client, no key. It can only call the `client-portal` Edge Function.
+database client, no key. It can only call the `client-portal` Edge Function, and `portal-chat` for the assistant (no chat card if that is off or failing).
 
 ---
 
 ## Edge Functions
 
-All require a signed-in user's bearer token **except** the three noted (JWT
+All require a signed-in user's bearer token **except** the four noted (JWT
 verification OFF is recorded in `supabase/config.toml`).
 
 | Function | Notes |
@@ -129,6 +129,7 @@ verification OFF is recorded in `supabase/config.toml`).
 | `send-due-reminders` | **Retired** — answers 410. `send-client-message` `{"sweep":"due_reminder"}` replaced it (it had no org filter). |
 | `calendar-feed` | **JWT verification OFF.** Token in query = credential. |
 | `client-portal` | **JWT verification OFF.** Token in query = credential. |
+| `portal-chat` | **JWT verification OFF.** Token in query = credential. The client page assistant (migration 037). Off unless `organisations.portal_assistant_enabled`. Writes only `portal_messages` and `portal_requests`; never the referral register. Needs `ANTHROPIC_API_KEY`. |
 | `sms-inbound` | **JWT verification OFF.** Secret `?k=` (`SMS_INBOUND_TOKEN`) = credential. Records STOP by phone number. Answers 503 until the secret is set. |
 | `schedule-agent` | Tool-using assistant over the diary |
 | `check-email-status`, `xero` | |

@@ -2299,6 +2299,45 @@
       card.appendChild(wrap);
     }
 
+    // The client page assistant (migration 037, portal-chat). Only offered
+    // once the server has somewhere to keep the setting.
+    let assistantToggle = null;
+    let assistantNotes = null;
+    if (current.assistantSupported) {
+      const head = document.createElement('h3');
+      head.className = 'business-subhead';
+      head.textContent = 'Client page assistant';
+      card.appendChild(head);
+      const about = document.createElement('p');
+      about.className = 'business-hint';
+      about.textContent = 'Lets clients ask questions on the page their report link opens, and get an answer straight away. '
+        + 'It only knows what that page shows them (visit dates, whether the report and invoice are done) plus what you write below. '
+        + 'It never describes report findings and never books anything: call backs, bookings and referrals come to you to action, '
+        + 'under the 🔔 in the Diary. Each message costs a small amount of AI usage.';
+      card.appendChild(about);
+      const toggleWrap = document.createElement('label');
+      toggleWrap.className = 'business-toggle';
+      assistantToggle = document.createElement('input');
+      assistantToggle.type = 'checkbox';
+      assistantToggle.id = 'business-assistantEnabled';
+      assistantToggle.checked = !!current.assistantEnabled;
+      toggleWrap.append(assistantToggle, document.createTextNode(' Answer client questions on their client page'));
+      card.appendChild(toggleWrap);
+      const notesWrap = document.createElement('label');
+      notesWrap.className = 'business-field';
+      notesWrap.appendChild(Object.assign(document.createElement('span'), {
+        className: 'business-label',
+        textContent: 'What the assistant may tell clients (hours, service area, what to expect, anything you are happy to quote)',
+      }));
+      assistantNotes = document.createElement('textarea');
+      assistantNotes.id = 'business-assistantNotes';
+      assistantNotes.rows = 5;
+      assistantNotes.maxLength = 3000;
+      assistantNotes.value = current.assistantNotes || '';
+      notesWrap.appendChild(assistantNotes);
+      card.appendChild(notesWrap);
+    }
+
     const actions = document.createElement('div');
     actions.className = 'row gap';
     const cancel = document.createElement('button');
@@ -2315,6 +2354,10 @@
       save.disabled = true;
       const changes = {};
       for (const f of BUSINESS_FIELDS) changes[f.key] = inputs[f.key].value.trim();
+      if (assistantToggle) {
+        changes.assistantEnabled = assistantToggle.checked;
+        changes.assistantNotes = assistantNotes.value.trim();
+      }
       if (!changes.name) { toast('A registered business name is required.'); save.disabled = false; return; }
       try {
         await window.Org.save(changes);

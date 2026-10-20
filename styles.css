@@ -2388,6 +2388,27 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   font: inherit;
   font-size: 0.92rem;
 }
+.business-field textarea {
+  padding: 11px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  resize: vertical;
+}
+.business-subhead { margin: 22px 0 6px; font-size: 0.95rem; }
+.business-toggle { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 0.92rem; }
+.business-toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+/* ---- Client page assistant: what clients asked for (portal-inbox.js) --- */
+.portal-chat-log { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.portal-bubble { max-width: 88%; padding: 7px 10px; border-radius: 10px; font-size: 0.86rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.portal-bubble.client { align-self: flex-end; background: var(--accent-dim, rgba(52, 211, 120, 0.18)); }
+.portal-bubble.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); }
+.portal-request-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.portal-request-actions .btn { flex: 1 1 auto; }
 
 /* ---- Tomorrow's reminders ---------------------------------------------
    Lives in the scheduler beside the calendar feed and the booking

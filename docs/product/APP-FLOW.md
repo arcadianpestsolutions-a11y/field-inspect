@@ -83,6 +83,7 @@ Xero (if connected); status read back..
 | Other reply | Stored for a person to read | Never auto-answered |
 | Report link | `portal.html?t=<token>`: report, quote, accept form | Expiring, revocable, one job |
 | Accept quote | Type name, draw signature, submit | Records name, time, IP, user agent; superseded if report changes |
+| Ask a question (v134) | Chat card on the report page, when the business has switched it on | Answers only from what the page shows plus the business's own notes; never report findings, never books. Call backs, bookings, referrals go to the bell in the Diary. 30 messages a day per job |
 
 ## 4. Error and edge flows
 | Situation | Behaviour |

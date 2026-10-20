@@ -97,6 +97,7 @@ Rules learned the hard way:
 | `xero` | signed-in user | on | OAuth + draft invoices; tokens only server-side |
 | `send-client-message` | signed-in user, or service key (schedule) | on | Booking/report/day-before/reminder messages; recipient read from the job row |
 | `client-portal` | anyone with a valid link token | **off** | Client report page and quote acceptance |
+| `portal-chat` | anyone with a valid link token | **off** | Client page assistant (v134): answers from that page's facts only, passes call backs, bookings and referrals to the team. Does nothing unless switched on in Business details |
 | `sms-inbound` | ClickSend, secret `?k=` | **off** | STOP handling and replies |
 | `calendar-feed` | calendar apps, token | **off** | .ics feed |
 | `send-due-reminders` | retired (410) | off | Kept so old schedules fail loudly |

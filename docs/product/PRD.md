@@ -89,6 +89,7 @@ Priority: **M** must, **S** should, **C** could.
 | M4 | Sweeps are previewed, counted and confirmed before a live send | M | Built |
 | M5 | A send that cannot be recorded halts the sweep (no duplicate texts) | M | Built (v106) |
 | M6 | Client portal: one link per job; view report; accept quote with typed name and signature; revocable, expiring | S | Built |
+| M7 | Client page assistant (chatbot): answers questions from that client's own page and the business's notes; passes call backs, bookings, complaints and referrals to the team; never states report findings or books anything. Off until switched on in Business details | M | Built (v134); needs migration 037, the portal-chat function and a real-client trial |
 
 ### 4.6 Money
 | ID | Requirement | P | Status |

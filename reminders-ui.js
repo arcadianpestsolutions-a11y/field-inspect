@@ -234,7 +234,7 @@
   function setBadge(count) {
     openBtn.classList.toggle('has-unread', count > 0);
     openBtn.title = count > 0
-      ? `Tomorrow's reminders — ${count} unread ${count === 1 ? 'reply' : 'replies'}`
+      ? `Tomorrow's reminders — ${count} waiting on you`
       : "Tomorrow's reminders";
   }
 
@@ -249,7 +249,13 @@
     if (!repliesEl) return;
     repliesEl.innerHTML = '';
     const unread = await fetchUnread();
-    setBadge(unread.length);
+    // Requests from the client page assistant (portal-inbox.js) share the
+    // bell: both are a client waiting on an answer.
+    let portalOpen = 0;
+    if (window.PortalInbox) {
+      try { portalOpen = await window.PortalInbox.render(); } catch (e) { /* never into the panel below */ }
+    }
+    setBadge(unread.length + portalOpen);
     if (!unread.length) return;
 
     let jobs = [];

@@ -6,3 +6,7 @@
 // each client's own link is the only thing that unlocks anything.
 window.PORTAL_ENDPOINT = (window.SUPABASE_URL || 'https://aleadvxqoqmfxtqpiikd.supabase.co')
   .replace(/\.supabase\.co\/?$/, '.supabase.co/functions/v1') + '/client-portal';
+
+// The assistant (migration 037) is its own function, so the page above keeps
+// working whatever state the chat is in.
+window.PORTAL_CHAT_ENDPOINT = window.PORTAL_ENDPOINT.replace(/\/client-portal$/, '/portal-chat');

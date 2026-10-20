@@ -98,6 +98,19 @@
   }
   .accepted strong { display: block; }
   .err { color: #a4262c; font-size: .86rem; margin: 10px 0 0; }
+  /* The assistant. Plain bubbles, the client's on the right. */
+  .chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; margin: 12px 0 4px; }
+  .chat-log[hidden] { display: none; }
+  .bubble { max-width: 85%; padding: 9px 12px; border-radius: 12px; font-size: .92rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .bubble.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .bubble.them { align-self: flex-start; background: #eef1ee; color: var(--ink); border-bottom-left-radius: 4px; }
+  .bubble.typing { color: var(--dim); }
+  .chat-logged { align-self: flex-start; margin: -2px 0 0; font-size: .8rem; color: var(--accent); font-weight: 600; }
+  textarea.chat-in {
+    width: 100%; padding: 12px; font-size: 1rem; font-family: inherit; line-height: 1.4;
+    border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
+    resize: vertical; min-height: 72px;
+  }
 </style>
 </head>
 <body>
@@ -502,7 +515,128 @@
     // canvas that actually exists to get a drawing context from.
     if (d.acceptance) wireAcceptance(token);
     if (d.agreement) wireAgreement(token);
+    loadChat(token);
   }
+
+  // -------------------------------------------------------------------------
+  // Asking a question (the assistant, migration 037).
+  //
+  // Its own request to its own function, after the page is drawn. If the
+  // business has not switched it on, or the function is missing or failing,
+  // there is simply no card: the report above must never wait on, or break
+  // because of, a chat.
+  // -------------------------------------------------------------------------
+
+  const LOGGED = {
+    callback: 'Call back requested', booking: 'Booking request passed on',
+    reschedule: 'Change of booking passed on', question: 'Question passed to the team',
+    complaint: 'Passed to the team', other: 'Passed to the team',
+    referral: 'Referral passed on — thank you', unanswered: 'Passed to the team',
+  };
+
+  async function loadChat(token) {
+    const base = window.PORTAL_CHAT_ENDPOINT;
+    if (!base) return;
+    let data;
+    try {
+      const res = await fetch(`${base}?t=${encodeURIComponent(token)}`, { headers: { accept: 'application/json' } });
+      if (!res.ok) return;
+      data = await res.json();
+    } catch (e) { return; }
+    if (!data || data.enabled !== true) return;
+    renderChat(data, token);
+  }
+
+  function bubble(role, text) {
+    const b = document.createElement('div');
+    b.className = `bubble ${role === 'client' ? 'me' : 'them'}`;
+    b.textContent = text; // text, never HTML: a reply is model output
+    return b;
+  }
+
+  function renderChat(data, token) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.id = 'chat-card';
+    const biz = (data.business && data.business.name) || 'us';
+    const phone = data.business && data.business.phone;
+    card.innerHTML = `<h2>Questions? Ask us</h2>
+      <p class="note" style="margin-top:0">This is ${esc(biz)}'s online assistant. It can answer
+        questions about your visit and pass a message to the team. It cannot see your report's
+        findings or book anything itself; the team will confirm.${phone ? ` For anything urgent, call
+        <a href="tel:${esc(phone.replace(/[^0-9+]/g, ''))}">${esc(phone)}</a>.` : ''}</p>
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+      <label class="f" for="chat-in">Your message</label>
+      <textarea class="t chat-in" id="chat-in" rows="3" maxlength="${Number(data.maxChars) || 1000}"
+        placeholder="e.g. When is my next inspection due?"></textarea>
+      <button class="btn" id="chat-go" style="margin-top:10px">Send</button>
+      <p class="note">What you write here is kept so the team can read it.</p>
+      <p class="err" id="chat-err" hidden></p>`;
+    const contact = wrap.querySelector('.contact');
+    wrap.insertBefore(card, contact || null);
+
+    const log = card.querySelector('#chat-log');
+    const input = card.querySelector('#chat-in');
+    const go = card.querySelector('#chat-go');
+    const err = card.querySelector('#chat-err');
+    for (const m of data.messages || []) log.appendChild(bubble(m.role, m.body));
+    log.hidden = !log.children.length;
+
+    let sending = false;
+    async function send() {
+      const message = (input.value || '').trim();
+      if (!message || sending) return;
+      sending = true;
+      go.disabled = true;
+      err.hidden = true;
+      log.hidden = false;
+      log.appendChild(bubble('client', message));
+      input.value = '';
+      const typing = bubble('assistant', '…');
+      typing.classList.add('typing');
+      log.appendChild(typing);
+      log.scrollTop = log.scrollHeight;
+      try {
+        const res = await fetch(`${window.PORTAL_CHAT_ENDPOINT}?t=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ message }),
+        });
+        const out = await res.json().catch(() => null);
+        typing.remove();
+        if (!res.ok || !out || !out.reply) {
+          err.textContent = (out && out.message) || 'That did not send. Please try again.';
+          err.hidden = false;
+          input.value = message;
+          log.lastChild && log.lastChild.remove();
+        } else {
+          log.appendChild(bubble('assistant', out.reply));
+          for (const l of out.logged || []) {
+            const n = document.createElement('p');
+            n.className = 'chat-logged';
+            n.textContent = `✓ ${LOGGED[l.kind] || 'Passed to the team'}`;
+            log.appendChild(n);
+          }
+        }
+      } catch (e) {
+        typing.remove();
+        err.textContent = 'That did not send. Check your connection and try again.';
+        err.hidden = false;
+        input.value = message;
+        log.lastChild && log.lastChild.remove();
+      }
+      log.scrollTop = log.scrollHeight;
+      sending = false;
+      go.disabled = false;
+    }
+    go.addEventListener('click', send);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+  }
+
+  // Exposed for the suite, which draws the chat against a stubbed endpoint.
+  window.PortalChat = { renderChat, loadChat };
 
   load();
 })();

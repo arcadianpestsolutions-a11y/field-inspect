@@ -19,6 +19,10 @@
   const EMPTY_ORG = {
     id: '', name: '', tradingName: '', abn: '', licenceNumber: '',
     phone: '', email: '', address: '', website: '',
+    // The client page assistant (migration 037). assistantSupported is whether
+    // the server has the columns at all: saving them to a database without
+    // them would fail the whole save, ABN and all.
+    assistantSupported: false, assistantEnabled: false, assistantNotes: '',
   };
   const EMPTY_ME = { displayName: '', licenceNumber: '', phone: '', address: '' };
 
@@ -108,6 +112,9 @@
             email: orgRow.email || '',
             address: orgRow.address || '',
             website: orgRow.website || '',
+            assistantSupported: Object.prototype.hasOwnProperty.call(orgRow, 'portal_assistant_enabled'),
+            assistantEnabled: orgRow.portal_assistant_enabled === true,
+            assistantNotes: orgRow.portal_assistant_notes || '',
           };
           write(ORG_KEY, org);
         }
@@ -155,6 +162,10 @@
         email: changes.email, address: changes.address, website: changes.website,
         updated_at: new Date().toISOString(),
       };
+      if (org.assistantSupported && 'assistantEnabled' in changes) {
+        row.portal_assistant_enabled = changes.assistantEnabled === true;
+        row.portal_assistant_notes = String(changes.assistantNotes || '').slice(0, 3000);
+      }
       const { data, error } = await client
         .from('organisations').update(row).eq('id', org.id).select('id');
       if (error) throw error;

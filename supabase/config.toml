@@ -459,3 +459,12 @@ verify_jwt = false
 # reply bounce with a 401 before the function runs, and a STOP is silently lost.
 [functions.sms-inbound]
 verify_jwt = false
+
+# portal-chat answers a client's question on their own report page (the
+# assistant, migration 037). Same credential as client-portal: the token in
+# the client's link, checked for shape, expiry and revocation before anything
+# is read, and nothing happens at all unless the business has switched the
+# assistant on. Verification off for the same reason as client-portal: the
+# person asking has no account.
+[functions.portal-chat]
+verify_jwt = false
