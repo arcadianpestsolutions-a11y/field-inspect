@@ -1448,39 +1448,155 @@
     assertEqual(typeof win.QrScan.scanStation, 'function');
   });
 
-  test('Camera: opening one fails with a reason a technician can act on', async () => {
-    const win = frame.contentWindow;
-    assert(win.Camera, 'the camera module is shared by the inspection screen and the scanner');
-
-    // Each code has to produce a sentence that says what to DO. A camera that
-    // fails with "NotAllowedError" has told nobody anything.
-    for (const code of ['insecure', 'unsupported', 'denied', 'blocked', 'timeout', 'notfound', 'failed']) {
-      const msg = win.Camera.messageFor({ code });
-      assert(msg && msg.length > 20, `${code} needs a real message, got: ${msg}`);
+  // A photo of a station sticker as the phone's camera app hands one back:
+  // big, JPEG, with the sticker somewhere in the middle of a lot of
+  // something else (v130).
+  async function stickerPhoto(win, payload, { w = 3000, h = 2250, qr = 520 } = {}) {
+    const host = win.document.createElement('div');
+    win.document.body.appendChild(host);
+    try {
+      new win.QRCode(host, {
+        text: payload, width: qr, height: qr,
+        colorDark: '#000000', colorLight: '#ffffff',
+        correctLevel: win.QRCode.CorrectLevel.H,
+      });
+      await waitFor(() => { const c = host.querySelector('canvas'); return !!(c && c.width); }, 'the encoder should draw a canvas');
+      const code = host.querySelector('canvas');
+      const c = win.document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      g.fillStyle = '#5b4a3a'; g.fillRect(0, 0, w, h); // the inside of a bait station cap
+      const pad = Math.round(qr * 0.15);
+      const x = Math.round((w - qr) / 2), y = Math.round((h - qr) / 2);
+      g.fillStyle = '#fff'; g.fillRect(x - pad, y - pad, qr + pad * 2, qr + pad * 2);
+      g.drawImage(code, x, y, qr, qr);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
+      return new win.File([blob], 'IMG_0002.jpg', { type: 'image/jpeg' });
+    } finally {
+      host.remove();
     }
-    assert(/https/.test(win.Camera.messageFor({ code: 'insecure' })),
-      'the secure-context failure names the actual cause, since it looks like a broken camera');
-    assert(/settings/i.test(win.Camera.messageFor({ code: 'denied' })),
-      'a blocked camera says where to unblock it');
-    // Backing out is a choice, not an error, and must never produce error
-    // language at somebody who simply changed their mind.
-    assertEqual(win.Camera.messageFor({ code: 'cancelled' }), null);
+  }
+
+  // Taps Scan station without opening a real camera: the camera input's
+  // click is counted instead, and the "photo" is handed back through it.
+  function stubQrCamera(doc) {
+    const input = doc.getElementById('qr-camera-input');
+    const stub = { clicks: 0, input };
+    input.click = () => { stub.clicks++; };
+    stub.restore = () => { delete input.click; };
+    stub.send = (win, files) => {
+      const dt = new win.DataTransfer();
+      (files || []).forEach((f) => dt.items.add(f));
+      input.files = dt.files;
+      input.dispatchEvent(new win.Event('change', { bubbles: true }));
+    };
+    return stub;
+  }
+
+  test('QR: Scan station opens the phone’s own camera app, not a viewfinder of Scope’s (v130)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const input = doc.getElementById('qr-camera-input');
+    assert(input, 'there is a camera input for the scanner');
+    assertEqual(input.getAttribute('capture'), 'environment', 'it opens the back camera of the camera app');
+    assertEqual(input.getAttribute('accept'), 'image/*');
+    assert(!doc.querySelector('#qr-modal video'), 'the scanner has no live viewfinder any more');
+    assertEqual(win.Camera, undefined, 'camera.js is gone: nothing in Scope opens the camera itself');
+    assert(win.QrScan.isAvailable(), 'every phone can scan, permission or not');
+
+    const md = win.navigator.mediaDevices;
+    const realGum = md && md.getUserMedia;
+    let asked = 0;
+    if (md) md.getUserMedia = async () => { asked++; throw new Error('should not be called'); };
+    const cam = stubQrCamera(doc);
+    const logBefore = win.ErrorLog ? win.ErrorLog.count() : 0;
+    try {
+      const result = win.QrScan.scanStation();
+      assertEqual(cam.clicks, 1, 'one tap opens the camera app straight away, with no wait first');
+      assert(doc.getElementById('qr-modal').classList.contains('hidden'),
+        'nothing of Scope’s covers the screen while the camera app is open');
+      cam.send(win, []); // backed out of the camera without a photo
+      assertEqual(await result, null, 'backing out is a choice, not an error');
+      if (win.ErrorLog) assertEqual(win.ErrorLog.count(), logBefore, 'and nothing is logged for it');
+      assertEqual(asked, 0, 'camera permission was never asked for');
+    } finally {
+      cam.restore();
+      if (md) md.getUserMedia = realGum;
+    }
   });
 
-  test('Camera: a missing mediaDevices is reported as the http problem it usually is', async () => {
+  test('QR: a photo of a sticker reads back to its station', async () => {
     const win = frame.contentWindow;
-    const real = win.navigator.mediaDevices;
-    // Serving over plain http from a LAN address is exactly how somebody
-    // tests a build on their phone, and it leaves mediaDevices undefined.
+    const doc = frame.contentDocument;
+    const assetId = 'STATION-PHOTO-77';
+    const photo = await stickerPhoto(win, win.Assets.qrPayload(assetId));
+    assertEqual(await win.QrScan.decodeFile(photo), win.Assets.qrPayload(assetId),
+      'a 3000px phone photo with the sticker in the middle reads');
+    const small = await stickerPhoto(win, win.Assets.qrPayload(assetId), { qr: 260 });
+    assertEqual(await win.QrScan.decodeFile(small), win.Assets.qrPayload(assetId),
+      'and so does one taken from further back');
+
+    const cam = stubQrCamera(doc);
     try {
-      Object.defineProperty(win.navigator, 'mediaDevices', { value: undefined, configurable: true });
-      let caught = null;
-      try { await win.Camera.open({}); } catch (e) { caught = e; }
-      assert(caught, 'it must fail rather than throw a TypeError deep inside');
-      assert(caught.code === 'insecure' || caught.code === 'unsupported',
-        `expected a named cause, got ${caught.code}`);
+      const result = win.QrScan.scanStation();
+      cam.send(win, [photo]);
+      assertEqual(await result, assetId, 'the whole tap, photo, station round trip');
+      assert(doc.getElementById('qr-modal').classList.contains('hidden'), 'and the scanner screen is gone after');
     } finally {
-      Object.defineProperty(win.navigator, 'mediaDevices', { value: real, configurable: true });
+      cam.restore();
+    }
+  });
+
+  test('QR: a photo with no sticker in it says so and offers another go', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const modal = doc.getElementById('qr-modal');
+    const retry = doc.getElementById('qr-retry-btn');
+    assertEqual(await win.QrScan.decodeFile(await fakePhoto(win)), null, 'no code, no text');
+    assertEqual(await win.QrScan.decodeFile(new win.File(['not a photo'], 'x.jpg', { type: 'image/jpeg' })), null,
+      'a broken file is just a photo with no code, never an exception');
+
+    const cam = stubQrCamera(doc);
+    try {
+      const result = win.QrScan.scanStation();
+      cam.send(win, [await fakePhoto(win)]);
+      await waitFor(() => !modal.classList.contains('hidden') && !retry.classList.contains('hidden'),
+        '"I scanned it and nothing happened" is the worst outcome, so it says it could not read it', 6000);
+      assert(/try again/i.test(doc.getElementById('qr-hint').textContent), 'and what to do about it');
+      retry.click();
+      assertEqual(cam.clicks, 2, 'Try again opens the camera app again');
+
+      // The second go works: the same scan finishes with the station.
+      cam.send(win, [await stickerPhoto(win, win.Assets.qrPayload('STATION-RETRY-1'))]);
+      assertEqual(await result, 'STATION-RETRY-1', 'the retry finishes the scan that was waiting');
+
+      // And Cancel ends one for good.
+      const second = win.QrScan.scanStation();
+      cam.send(win, [await fakePhoto(win)]);
+      await waitFor(() => !retry.classList.contains('hidden'), 'the second photo fails too', 6000);
+      doc.getElementById('qr-cancel-btn').click();
+      assertEqual(await second, null, 'Cancel ends the scan with nothing');
+      assert(modal.classList.contains('hidden'), 'and closes the screen');
+    } finally {
+      cam.restore();
+    }
+  });
+
+  test('QR: a scan abandoned without the browser saying so does not lock the scanner', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // Some phones close the camera app without telling the page anything.
+    // The next tap on Scan station has to work regardless.
+    const cam = stubQrCamera(doc);
+    try {
+      const lost = win.QrScan.scanStation();
+      const next = win.QrScan.scanStation();
+      assertEqual(await lost, null, 'the abandoned one ends quietly');
+      assertEqual(cam.clicks, 2, 'and the new tap still opened the camera');
+      cam.send(win, [await stickerPhoto(win, win.Assets.qrPayload('STATION-AFTER-LOST'))]);
+      assertEqual(await next, 'STATION-AFTER-LOST');
+    } finally {
+      cam.restore();
     }
   });
 
@@ -8450,7 +8566,7 @@
       'report.js': ['backup export', 'report: email status check'],
       // The site sketch pad moved to its own file in v128.
       'report-sketch.js': ['site sketch: trace outline', 'site sketch: GPS'],
-      'qr-scan.js': ['QR scan: camera'],
+      'qr-scan.js': ['QR scan: read the photo'],
       'app.js': ['business details: save', 'starting a voice note'],
     };
     for (const [file, labels] of Object.entries(expect)) {
@@ -8463,7 +8579,8 @@
       'all three returned-error paths in comms.js record the refusal, not just the thrown ones');
     // And a closed scanner is a decision, not a failure.
     const qr = await (await fetch('../qr-scan.js', { cache: 'reload' })).text();
-    assert(/code === 'cancelled'/.test(qr), 'closing the scanner must not be logged as an error');
+    assertEqual((qr.match(/ErrorLog\.note\(/g) || []).length, 2,
+      'only a photo that could not be opened or decoded is logged; closing the scanner is not an error (v130)');
   });
 
   // ---------- Backups (backup.js) ----------

@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v129 · **546 tests passing** (as of 20 Oct 2026)
+**Current build:** v130 · **548 tests passing** (as of 20 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
@@ -79,7 +79,6 @@ plain-English orientation; those are the detail.
 | File | What it owns |
 |---|---|
 | `form-render.js` | Turns a schema section into controls. Used by reports, SWMS and leads. Host supplies `customFields` and a `decorateRow` hook. |
-| `camera.js` | Opening a camera, and failing with a cause. Shared by the inspection screen and the QR scanner. |
 | `db.js` | IndexedDB. All stores, all CRUD, tombstones. |
 | `sync.js` | Two-way sync with Postgres + Storage. Paged reads (`max_rows = 1000`). |
 | `org.js` | Business identity and the signing technician. Never guesses — falls back to empty. |
@@ -105,7 +104,7 @@ and `report.js` open with a table of contents.
 
 ### Tests and tools
 
-`tests/run-tests.html` (546 tests), `tests/chaos.js` + `chaos-scenarios.js`
+`tests/run-tests.html` (548 tests), `tests/chaos.js` + `chaos-scenarios.js`
 (GitHub Actions runs the suite on every push: `.github/workflows/tests.yml`),
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
