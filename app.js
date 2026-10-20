@@ -93,6 +93,7 @@
   const selectionCountEl = document.getElementById('selection-count');
   const selectionZoneBtn = document.getElementById('selection-zone-btn');
   const selectionDeleteBtn = document.getElementById('selection-delete-btn');
+  const selectionSaveBtn = document.getElementById('selection-save-btn');
 
   const bulkZoneModal = document.getElementById('bulk-zone-modal');
   const bulkZoneHint = document.getElementById('bulk-zone-hint');
@@ -136,6 +137,7 @@
   const detailAudioWrap = document.getElementById('detail-audio-wrap');
   const detailAudio = document.getElementById('detail-audio');
   const detailApplySuggestedZoneBtn = document.getElementById('detail-apply-suggested-zone');
+  const detailSaveBtn = document.getElementById('detail-save-btn');
   const detailDeleteBtn = document.getElementById('detail-delete');
   const detailBody = document.getElementById('detail-body');
   const detailPhotoZoomWrap = document.getElementById('detail-photo-zoom-wrap');
@@ -1672,6 +1674,10 @@
   function updateSelectionCount() {
     selectionCountEl.textContent = `${selectedCaptureIds.size} selected`;
     selectionZoneBtn.disabled = selectedCaptureIds.size === 0;
+    if (selectionSaveBtn) {
+      selectionSaveBtn.classList.toggle('hidden', !window.SaveToPhone);
+      selectionSaveBtn.disabled = selectedCaptureIds.size === 0;
+    }
     // Deleting a capture takes the only copy of what was on site with it, so
     // it is admin-only (migration 016) — hidden rather than disabled, since a
     // disabled button with no explanation just reads as broken.
@@ -1694,6 +1700,39 @@
   });
 
   bulkZoneCancel.addEventListener('click', () => hide(bulkZoneModal));
+
+  // ---------- Save to phone (save-to-phone.js) ----------
+  // Uses the photos already in memory, never a database read first: the
+  // iPhone share sheet only opens straight from the tap.
+  async function savePhotosToPhone(captures) {
+    const photos = captures.filter((c) => c && c.photoBlob)
+      .map((c) => ({ blob: c.photoBlob, zone: c.zone, createdAt: c.createdAt }));
+    if (!photos.length) { toast('There is no photo to save.'); return null; }
+    const how = await window.SaveToPhone.save(photos, { jobLabel: jobTitleEl.textContent });
+    const n = photos.length;
+    // After the share sheet the phone has said what happened; after a
+    // download nothing on screen has, so this does.
+    if (how === 'downloaded') {
+      toast(`${n === 1 ? 'Photo' : `${n} photos`} saved to Downloads on this phone. ${n === 1 ? 'It shows' : 'They show'} in your Gallery or Photos app.`);
+    }
+    return how;
+  }
+
+  if (selectionSaveBtn) {
+    selectionSaveBtn.addEventListener('click', async () => {
+      if (!selectedCaptureIds.size || !window.SaveToPhone) return;
+      const chosen = currentCaptures.filter((c) => selectedCaptureIds.has(c.id));
+      const how = await savePhotosToPhone(chosen);
+      if (how && how !== 'cancelled') exitSelectMode();
+    });
+  }
+
+  if (detailSaveBtn) {
+    detailSaveBtn.addEventListener('click', () => {
+      if (!currentDetailCaptureId || !window.SaveToPhone) return;
+      savePhotosToPhone([currentCaptures.find((c) => c.id === currentDetailCaptureId)]);
+    });
+  }
 
   bulkZoneSave.addEventListener('click', async () => {
     const zone = bulkZoneInput.value.trim();
@@ -2420,6 +2459,7 @@
     } else {
       hide(detailPhoto);
     }
+    detailSaveBtn.classList.toggle('hidden', !(capture.photoBlob && window.SaveToPhone));
 
     // Voice notes can no longer be recorded (removed in v131), but ones made
     // before then are part of the job's record, so they still play here.

@@ -8326,6 +8326,136 @@
     void stuck;
   });
 
+  // ---------- Save to phone (v132) ----------
+  // Nothing may land on this machine's disk or open a real share sheet, so
+  // the link click and the share call are both caught.
+  function stubSaving(win, { apple = false, share = null } = {}) {
+    const io = win.SaveToPhone._io;
+    const real = { clickLink: io.clickLink, wait: io.wait };
+    const log = { links: [], shared: [] };
+    io.clickLink = (a) => { log.links.push({ name: a.download, href: a.href }); };
+    io.wait = async () => {};
+    const nav = win.navigator;
+    const ua = Object.getOwnPropertyDescriptor(nav, 'userAgent');
+    if (apple) Object.defineProperty(nav, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' });
+    nav.canShare = (data) => !!(data && data.files && data.files.length);
+    nav.share = async (data) => { log.shared.push(data.files.map((f) => f.name)); if (share) await share(data); };
+    log.restore = () => {
+      io.clickLink = real.clickLink; io.wait = real.wait;
+      if (ua) Object.defineProperty(nav, 'userAgent', ua); else delete nav.userAgent;
+      delete nav.share; delete nav.canShare; // own stubs only; the real ones are on the prototype
+    };
+    return log;
+  }
+
+  async function jobWithPhotos(win, name, zones) {
+    const job = await win.DB.addJob({ name });
+    for (const zone of zones) {
+      await win.DB.addCapture({ jobId: job.id, zone, type: 'photo', photoBlob: await fakePhoto(win) });
+    }
+    return job;
+  }
+
+  test('Save to phone: a saved photo is named so it can be found in a gallery later', () => {
+    const S = frame.contentWindow.SaveToPhone;
+    const at = new Date(2026, 9, 20, 9).getTime();
+    assertEqual(S.fileName('12 Smith St', 'Subfloor', at, 0), 'Scope 12 Smith St - Subfloor - 2026-10-20.jpg');
+    assertEqual(S.fileName('12 Smith St', '', at, 3), 'Scope 12 Smith St - 2026-10-20 (3).jpg', 'no zone, numbered');
+    assertEqual(S.fileName('A/B: "C"', 'Roof*void', at, 0), 'Scope A B C - Roof void - 2026-10-20.jpg',
+      'characters a phone will not put in a file name are taken out');
+  });
+
+  test('Save to phone: on Android, selected photos download with their names and it says where they went', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await jobWithPhotos(win, 'Save Test Job', ['Kitchen', 'Laundry']);
+    const log = stubSaving(win);
+    try {
+      win.showJobViewById(job.id);
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 2, 'two photos show');
+      doc.getElementById('gallery-select-toggle').click();
+      const save = doc.getElementById('selection-save-btn');
+      await waitFor(() => !save.classList.contains('hidden'), 'the selection bar offers Save');
+      assert(save.disabled, 'nothing selected, nothing to save');
+      doc.querySelectorAll('.capture-tile').forEach((t) => t.click());
+      assert(!save.disabled, 'two selected');
+      save.click();
+      await waitFor(() => log.links.length === 2, 'both photos are saved');
+      assertEqual(log.shared.length, 0, 'Android downloads rather than opening the share sheet');
+      const names = log.links.map((l) => l.name).sort();
+      assert(names.every((n) => /^Scope Save Test Job - (Kitchen|Laundry) - \d{4}-\d{2}-\d{2} \([12]\)\.jpg$/.test(n)), `names: ${names}`);
+      assert(log.links.every((l) => l.href.startsWith('blob:')), 'the photo itself is saved, from the phone, not fetched from anywhere');
+      await waitFor(() => /2 photos saved to Downloads/.test(doc.getElementById('toast').textContent), 'it says where they went');
+      assert(doc.getElementById('selection-bar').classList.contains('hidden'), 'and leaves select mode');
+    } finally {
+      log.restore();
+      await win.DB.deleteJob(job.id);
+      win.showJobListView();
+    }
+  });
+
+  test('Save to phone: on an iPhone the share sheet opens, so Save Image puts it in Photos', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await jobWithPhotos(win, 'Share Test Job', ['Garage']);
+    let mode = 'ok';
+    const log = stubSaving(win, {
+      apple: true,
+      share: async () => {
+        if (mode === 'closed') throw Object.assign(new Error('closed'), { name: 'AbortError' });
+        if (mode === 'refused') throw Object.assign(new Error('no gesture'), { name: 'NotAllowedError' });
+      },
+    });
+    try {
+      win.showJobViewById(job.id);
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 1, 'the photo shows');
+      doc.querySelector('.capture-tile').click();
+      const btn = doc.getElementById('detail-save-btn');
+      await waitFor(() => !doc.getElementById('detail-modal').classList.contains('hidden') && !btn.classList.contains('hidden'),
+        'an open photo offers Save to phone');
+
+      btn.click();
+      await waitFor(() => log.shared.length === 1, 'the share sheet opens');
+      assertEqual(log.shared[0].length, 1, 'with that one photo');
+      assert(/^Scope Share Test Job - Garage - /.test(log.shared[0][0]), `named: ${log.shared[0][0]}`);
+      assertEqual(log.links.length, 0, 'and nothing is downloaded to the Files app');
+
+      mode = 'closed';
+      btn.click();
+      await waitFor(() => log.shared.length === 2, 'the sheet opens again');
+      await wait(100);
+      assertEqual(log.links.length, 0, 'closing the sheet is a choice: no download behind it');
+
+      mode = 'refused';
+      btn.click();
+      await waitFor(() => log.links.length === 1, 'a sheet that will not open falls back to a download, never nothing');
+      doc.getElementById('detail-close').click();
+    } finally {
+      log.restore();
+      await win.DB.deleteJob(job.id);
+      win.showJobListView();
+    }
+  });
+
+  test('Save to phone: an old voice note with no photo has nothing to save', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Memo Only Job' });
+    await win.DB.addCapture({ jobId: job.id, zone: 'Roof', type: 'memo', audioBlob: new win.Blob(['x'], { type: 'audio/webm' }) });
+    try {
+      win.showJobViewById(job.id);
+      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 1, 'the note shows');
+      doc.querySelector('.capture-tile').click();
+      await waitFor(() => !doc.getElementById('detail-modal').classList.contains('hidden'), 'it opens');
+      assert(doc.getElementById('detail-save-btn').classList.contains('hidden'), 'no Save to phone on it');
+      doc.getElementById('detail-close').click();
+      assertEqual(await win.SaveToPhone.save([{ zone: 'x' }]), 'none', 'and nothing without a photo is ever saved');
+    } finally {
+      await win.DB.deleteJob(job.id);
+      win.showJobListView();
+    }
+  });
+
   test('Voice notes: none can be recorded any more, and old ones still play (v131)', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
