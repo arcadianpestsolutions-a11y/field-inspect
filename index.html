@@ -251,7 +251,13 @@
 <!-- ============ INSPECTION PHOTO CAPTURE (live camera preview) ============ -->
 <section id="inspection-modal" class="modal hidden">
   <div class="camera-wrap">
-    <video id="inspection-video" playsinline autoplay muted></video>
+    <!-- v129: no viewfinder here. Take photo opens the phone's own camera app
+         (better focus, flash and low light); the last photo taken shows here
+         so it is plain the shot landed. -->
+    <div class="inspection-stage">
+      <img id="inspection-last-photo" class="inspection-last-photo hidden" alt="The last photo taken" />
+      <p id="inspection-stage-hint" class="inspection-stage-hint">Tap <strong>Take photo</strong> and your phone's camera opens. Take the shot, tap the tick, and it comes straight back here.</p>
+    </div>
     <div id="inspection-prompt" class="inspection-prompt hidden">
       <span class="inspection-prompt-title">Photograph the front of the property</span>
       <!-- Landscape, and said first. The cover is a wide block on an A4 page,
@@ -266,8 +272,13 @@
     <div id="inspection-checklist-row" class="inspection-checklist-row hidden"></div>
     <input id="inspection-zone-input" list="zone-suggestions" type="text" placeholder="Zone / area you're in now…" autocomplete="off" />
   </div>
-  <div class="camera-controls">
-    <button id="inspection-still-btn" class="icon-btn light" aria-label="Take still photo">📷</button>
+  <div class="camera-controls inspection-controls">
+    <button id="inspection-still-btn" class="btn btn-primary inspection-take-btn" aria-label="Take photo">📷 Take photo</button>
+    <button id="inspection-gallery-btn" class="btn btn-secondary inspection-gallery-btn" aria-label="Add photos from the gallery">🖼 Gallery</button>
+    <!-- `capture` set as an attribute (see report.js): it is what makes a
+         phone open the camera instead of the photo library. -->
+    <input id="inspection-camera-input" type="file" accept="image/*" capture="environment" class="hidden" />
+    <input id="inspection-gallery-input" type="file" accept="image/*" multiple class="hidden" />
   </div>
   <button id="inspection-finish-btn" class="btn btn-primary generate-form-btn" aria-label="Generate form from these photos">✨ Generate Form</button>
 </section>
@@ -981,6 +992,7 @@
 <script src="undo-delete.js"></script>
 <script src="dialog.js"></script>
 <script src="common.js"></script>
+<script src="photo-prep.js"></script>
 <script src="ios-install.js"></script>
 <script src="db.js"></script>
 <script src="form-render.js"></script>

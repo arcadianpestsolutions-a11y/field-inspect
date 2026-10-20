@@ -56,6 +56,35 @@
     return 25;
   }
 
+  // A real JPEG, as a phone camera app hands one back (v129).
+  async function fakePhoto(win, w = 1200, h = 800, colour = '#2a6a4a') {
+    const c = win.document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    g.fillStyle = colour; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#fff'; g.fillRect(w / 4, h / 4, w / 2, h / 2);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+    return new win.File([blob], 'IMG_0001.jpg', { type: 'image/jpeg' });
+  }
+
+  // What happens on the inspection screen when the technician taps Take photo
+  // (or Gallery), shoots in the phone's camera app and taps the tick: the
+  // button is tapped, the file comes back through the input, and the photo
+  // shows where the viewfinder used to be once it is saved.
+  async function snap(win, doc, { gallery = false, files = null, w, h } = {}) {
+    const list = files || [await fakePhoto(win, w, h)];
+    const img = doc.getElementById('inspection-last-photo');
+    const before = img ? img.getAttribute('src') : null;
+    doc.getElementById(gallery ? 'inspection-gallery-btn' : 'inspection-still-btn').click();
+    const input = doc.getElementById(gallery ? 'inspection-gallery-input' : 'inspection-camera-input');
+    const dt = new win.DataTransfer();
+    list.forEach((f) => dt.items.add(f));
+    input.files = dt.files;
+    input.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await waitFor(() => img && img.getAttribute('src') && img.getAttribute('src') !== before, 'the photo came back and was saved', 6000);
+    await wait(150);
+  }
+
   function dayThisMonth(n, hour = 9) {
     const d = new Date();
     d.setDate(n);
@@ -2228,33 +2257,49 @@
     await wait(100);
   });
 
-  test('UI: Start Inspection reports a camera failure instead of doing nothing', async () => {
+  test('Start Inspection: opens the photo screen without ever asking for the camera (v129)', async () => {
+    // Photos come from the phone's own camera app now. Scope asks for no
+    // camera permission and holds no camera stream, so a blocked permission
+    // or a slow permission sheet can no longer stop an inspection starting.
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
-    const job = await win.DB.addJob({ name: 'Start Fail Job' });
-    win.showJobListView();
-    await wait(200);
-    const row = Array.from(doc.querySelectorAll('#job-list .job-item'))
-      .find((li) => li.textContent.includes('Start Fail Job'));
-    row.click();
+    const job = await win.DB.addJob({ name: 'Native Camera Job' });
+    await win.showJobViewById(job.id);
     await wait(250);
-
-    const btn = doc.getElementById('start-inspection-btn');
-    const original = win.navigator.mediaDevices.getUserMedia;
+    const origGum = win.navigator.mediaDevices.getUserMedia;
+    let asked = 0;
     try {
-      win.navigator.mediaDevices.getUserMedia = () =>
-        Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
-      // Clear it first, and wait for the RIGHT toast rather than whatever
-      // happens to be on screen. Report drafting fires autoPopulateSiteFields
-      // without awaiting it, on purpose, so its "Filled ..." toast can land
-      // here from a test that finished several steps ago.
-      doc.getElementById('toast').textContent = '';
-      btn.click();
-      await waitFor(() => /blocked|permission/i.test(doc.getElementById('toast').textContent),
-        'Start Inspection must say why the camera did not open');
-      assert(!btn.disabled, 'button must be usable again after a failed start');
+      win.navigator.mediaDevices.getUserMedia = async () => { asked += 1; throw new Error('should not be asked'); };
+      doc.getElementById('start-inspection-btn').click();
+      await waitFor(() => !doc.getElementById('inspection-modal').classList.contains('hidden'), 'the inspection screen opens', 3000);
+      assertEqual(asked, 0, 'no camera permission is asked for');
+      const cam = doc.getElementById('inspection-camera-input');
+      assertEqual(cam.getAttribute('capture'), 'environment', 'Take photo opens the phone’s rear camera app');
+      assertEqual(cam.getAttribute('accept'), 'image/*', 'and takes a photo');
+      assert(doc.getElementById('inspection-gallery-input').multiple, 'Gallery can bring in several at once');
+      assert(!doc.querySelector('#inspection-modal video'), 'there is no viewfinder');
+      await waitFor(() => !doc.getElementById('inspection-prompt').classList.contains('hidden'), 'it opens on the front photo', 3000);
+
+      // Backing out of the camera app without taking a shot changes nothing.
+      doc.getElementById('inspection-still-btn').click();
+      cam.dispatchEvent(new win.Event('change', { bubbles: true }));
+      await wait(300);
+      assertEqual((await win.DB.getCaptures(job.id)).length, 0, 'no photo is invented');
+      assert(!doc.getElementById('inspection-prompt').classList.contains('hidden'), 'and the front photo is still asked for');
+
+      // A big camera-app photo comes back a sensible size, still landscape.
+      await snap(win, doc, { w: 4000, h: 3000 });
+      const [front] = await win.DB.getCaptures(job.id);
+      assert(front && front.isFrontElevation, 'the first one is the cover');
+      const bmp = await win.createImageBitmap(front.photoBlob);
+      assert(Math.max(bmp.width, bmp.height) <= 2048, `shrunk to at most 2048 px (got ${bmp.width}x${bmp.height})`);
+      assert(bmp.width > bmp.height, 'and still the right way round');
+      bmp.close();
+
+      doc.getElementById('inspection-finish-btn').click();
+      await waitFor(() => doc.getElementById('inspection-modal').classList.contains('hidden'), 'Generate Form closes it', 6000);
     } finally {
-      win.navigator.mediaDevices.getUserMedia = original;
+      win.navigator.mediaDevices.getUserMedia = origGum;
     }
   });
 
@@ -2797,66 +2842,6 @@
     }
   });
 
-  test('Start Inspection: blocked camera permission is reported without asking', async () => {
-    const win = frame.contentWindow;
-    const doc = frame.contentDocument;
-    const job = await win.DB.addJob({ name: 'Perm Blocked Job' });
-    await win.showJobViewById(job.id);
-    await wait(300);
-
-    const origPerm = win.navigator.permissions.query;
-    const origGum = win.navigator.mediaDevices.getUserMedia;
-    let askedForCamera = false;
-    try {
-      win.navigator.permissions.query = async () => ({ state: 'denied' });
-      win.navigator.mediaDevices.getUserMedia = async () => { askedForCamera = true; return new win.MediaStream(); };
-
-      doc.getElementById('start-inspection-btn').click();
-      await wait(500);
-
-      assert(!askedForCamera, 'should not request a camera it already knows is blocked');
-      assert(/blocked|settings/i.test(doc.getElementById('toast').textContent),
-        `expected an actionable permission message, got: "${doc.getElementById('toast').textContent}"`);
-      assert(!doc.getElementById('start-inspection-btn').disabled, 'the button must stay usable');
-    } finally {
-      win.navigator.permissions.query = origPerm;
-      win.navigator.mediaDevices.getUserMedia = origGum;
-    }
-  });
-
-  test('Start Inspection: a slow permission prompt can be cancelled, not just endured', async () => {
-    const win = frame.contentWindow;
-    const doc = frame.contentDocument;
-    const job = await win.DB.addJob({ name: 'Slow Prompt Cancel Job' });
-    await win.showJobViewById(job.id);
-    await wait(300);
-
-    const origPerm = win.navigator.permissions.query;
-    const origGum = win.navigator.mediaDevices.getUserMedia;
-    const btn = doc.getElementById('start-inspection-btn');
-    try {
-      // The technician is still reading the OS permission sheet: the request
-      // never settles. A fixed 15s deadline used to fail a camera that was
-      // about to work, so the wait is now long AND escapable.
-      win.navigator.permissions.query = async () => ({ state: 'prompt' });
-      win.navigator.mediaDevices.getUserMedia = () => new Promise(() => {});
-
-      btn.click();
-      await wait(600);
-      assert(!btn.disabled, 'the button must stay tappable while waiting');
-      assert(/cancel/i.test(btn.textContent), `button should offer a way out, got: "${btn.textContent}"`);
-
-      btn.click(); // second tap cancels
-      await wait(700);
-      assertEqual(btn.textContent, '▶ Start Inspection', 'cancelling restores the button');
-      assert(!btn.disabled, 'button usable again after cancelling');
-      assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'no recording modal left open');
-    } finally {
-      win.navigator.permissions.query = origPerm;
-      win.navigator.mediaDevices.getUserMedia = origGum;
-    }
-  });
-
   test('Inspection: a full start-to-finish run captures photos and opens the report', async () => {
     // Inspections are photo-only: no video is recorded anywhere. What has
     // to hold is that the camera opens, each still is saved against the zone
@@ -2895,11 +2880,11 @@
 
       doc.getElementById('start-inspection-btn').click();
       await wait(2200);
-      assert(!doc.getElementById('inspection-modal').classList.contains('hidden'), 'camera modal should open');
+      assert(!doc.getElementById('inspection-modal').classList.contains('hidden'), 'the inspection screen opens');
       assertEqual((await win.DB.getJob(job.id)).status, 'in_progress', 'job goes in_progress');
-      // Photo capture has no use for the microphone, and not asking for it is
-      // one less permission prompt inside a client's home.
-      assertEqual(askedForAudio, false, 'the microphone is not requested');
+      // v129: photos come from the phone's own camera app, so Scope asks for
+      // neither the camera nor the microphone: no permission prompt at all.
+      assertEqual(askedForAudio, null, 'Scope never opens a camera or microphone itself');
       // Zone tagging for the photos taken after the cover shot.
       // Photograph two subjects, tagging the zone for each.
       const zoneInput = doc.getElementById('inspection-zone-input');
@@ -2914,18 +2899,15 @@
       // the zone box only matters from the second shot on.
       assert(!doc.getElementById('inspection-prompt').classList.contains('hidden'),
         'the front-of-property prompt is showing');
-      doc.getElementById('inspection-still-btn').click();
-      await wait(1200);
+      await snap(win, doc);
       assert(doc.getElementById('inspection-prompt').classList.contains('hidden'),
         'and it clears once that photo is taken');
 
       // Then photograph two subjects, tagging the zone for each.
       setValue(zoneInput, 'Subfloor');
-      doc.getElementById('inspection-still-btn').click();
-      await wait(1500);
+      await snap(win, doc);
       setValue(zoneInput, 'Roof Void');
-      doc.getElementById('inspection-still-btn').click();
-      await wait(1800);
+      await snap(win, doc);
 
       const shots = await win.DB.getCaptures(job.id);
       assertEqual(shots.length, 3, 'all three photos are saved');
@@ -2944,7 +2926,9 @@
       assert(after.inspectionEndedAt, 'the finish time is recorded');
       assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'modal closes');
       assert(!doc.getElementById('finish-inspection-btn').disabled, 'finish button is usable again');
-      assert(made.getTracks().every((t) => t.readyState === 'ended'), 'the camera is released, not left running');
+      assertEqual(made, null, 'and no camera stream was ever opened, so none can be left running');
+      const sizes = (await win.DB.getCaptures(job.id)).map((c) => c.photoBlob.size);
+      assert(sizes.every((s) => s > 0 && s < 5 * 1024 * 1024), 'every photo is kept at a size the AI and sync can take');
     } finally {
       if (made && made.__cleanup) made.__cleanup();
       win.navigator.permissions.query = origPerm;
@@ -2985,8 +2969,7 @@
       await wait(2200);
 
       // Front photo first, same as every inspection.
-      doc.getElementById('inspection-still-btn').click();
-      await wait(1200);
+      await snap(win, doc);
 
       const row = doc.getElementById('inspection-checklist-row');
       assert(!row.classList.contains('hidden'), 'the checklist row shows for a termite job');
@@ -2998,8 +2981,7 @@
       meterBoxChip.click();
       assertEqual(doc.getElementById('inspection-zone-input').value, 'Meter Box',
         'tapping a checklist chip fills the zone box exactly like typing it');
-      doc.getElementById('inspection-still-btn').click();
-      await wait(1500);
+      await snap(win, doc);
 
       const chipAfter = Array.from(row.querySelectorAll('.inspection-checklist-chip'))
         .find((c) => /Meter Box/.test(c.textContent));
@@ -4028,14 +4010,14 @@
       const walk = doc.getElementById('inspection-walk');
       assert(walk.classList.contains('hidden'), 'the walk waits until the front photo is taken');
 
-      doc.getElementById('inspection-still-btn').click();
+      await snap(win, doc);
       await waitFor(() => !walk.classList.contains('hidden') && /Front photo saved/.test(walk.textContent), 'walk step', 4000);
       assert(/Meter Box/.test(walk.textContent), 'and names the next shot');
       assertEqual(doc.getElementById('inspection-zone-input').value, 'Meter Box', 'photos now go to that step');
       const button = (re) => Array.from(walk.querySelectorAll('button')).find((b) => re.test(b.textContent));
       assert(button(/skip/i), 'before a photo, the step can be skipped');
 
-      doc.getElementById('inspection-still-btn').click();
+      await snap(win, doc);
       await waitFor(() => !!button(/Next/), 'walk step', 4000);
       button(/Next/).click();
       assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'Next moves to the following step');
@@ -9670,50 +9652,6 @@
     assert(idx.indexOf('today.js') < idx.indexOf('today-ui.js'), 'logic before screen');
     const app = await (await fetch('../app.js', { cache: 'reload' })).text();
     assert(/TodayUI\.render\(jobs\)/.test(app), 'the job list refresh redraws Today too');
-  });
-
-
-  test('Camera: leaving the job before the permission prompt answers starts nothing', async () => {
-    const win = frame.contentWindow;
-    const doc = frame.contentDocument;
-    const job = await win.DB.addJob({ name: 'Left Before Camera' });
-    await win.showJobViewById(job.id);
-    await wait(300);
-
-    const origPerm = win.navigator.permissions.query;
-    const origGum = win.navigator.mediaDevices.getUserMedia;
-    const stops = [];
-    let release;
-    const gate = new Promise((r) => { release = r; });
-    try {
-      win.navigator.permissions.query = async () => ({ state: 'granted' });
-      win.navigator.mediaDevices.getUserMedia = async () => {
-        await gate; // the person is still looking at the permission prompt
-        const c = win.document.createElement('canvas');
-        c.width = 160; c.height = 120;
-        c.getContext('2d').fillRect(0, 0, 160, 120);
-        const s = c.captureStream(5);
-        s.getTracks().forEach((t) => { const stop = t.stop.bind(t); t.stop = () => { stops.push(1); stop(); }; });
-        return s;
-      };
-
-      doc.getElementById('start-inspection-btn').click();
-      await wait(150);
-      win.showJobListView(); // they pressed Back while the prompt was up
-      await wait(150);
-      release(); // ...and then it was answered
-      await wait(1200);
-
-      assert(doc.getElementById('inspection-modal').classList.contains('hidden'), 'no camera screen opens over the job list');
-      assert(stops.length > 0, 'the camera that was granted is let go again');
-      assertEqual((await win.DB.getJob(job.id)).status, 'new', 'the job was not started behind their back');
-      assert(!/camera preview/i.test(doc.getElementById('toast').textContent), 'and no confusing error is shown');
-    } finally {
-      release();
-      win.navigator.permissions.query = origPerm;
-      win.navigator.mediaDevices.getUserMedia = origGum;
-      await win.DB.deleteJob(job.id);
-    }
   });
 
 

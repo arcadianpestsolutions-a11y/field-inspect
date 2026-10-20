@@ -28,7 +28,7 @@
 // EXPOSES (window): appToast, toastDurationFor, showJobListView, showJobViewById,
 //   showLoginView, renderJobListPublic, hideAllAppViews, refreshJobViewStatus,
 //   currentJobForSwms, pickAudioMimeType, technicianDisplayName.
-// DEPENDS ON: DB, HtmlSafe, Dialog, Sync, Org, ReportUI, InvoiceUI, Camera,
+// DEPENDS ON: DB, HtmlSafe, Dialog, Sync, Org, ReportUI, InvoiceUI, PhotoPrep,
 //   Clients, CommsService, Geo, AI, Scheduler (all optional-guarded).
 // STORAGE: IndexedDB via DB.* only (never opens IndexedDB itself).
 // NETWORK: Nominatim address lookup (one fetch); everything else goes through
@@ -114,7 +114,13 @@
 
 
   const inspectionModal = document.getElementById('inspection-modal');
-  const inspectionVideo = document.getElementById('inspection-video');
+  // v129: the phone's own camera app, through these two file inputs, instead
+  // of a viewfinder. The last photo taken shows where the viewfinder was.
+  const inspectionCameraInput = document.getElementById('inspection-camera-input');
+  const inspectionGalleryInput = document.getElementById('inspection-gallery-input');
+  const inspectionGalleryBtn = document.getElementById('inspection-gallery-btn');
+  const inspectionLastPhoto = document.getElementById('inspection-last-photo');
+  const inspectionStageHint = document.getElementById('inspection-stage-hint');
   const inspectionZonePill = document.getElementById('inspection-zone-pill');
   const inspectionZoneInput = document.getElementById('inspection-zone-input');
   const inspectionChecklistRow = document.getElementById('inspection-checklist-row');
@@ -173,11 +179,9 @@
   const selectedCaptureIds = new Set();
 
 
-  // Which job has the camera open right now. With no MediaRecorder to
-  // interrogate, this is what tells the UI a photo session is live — it drives
-  // whether Finish is shown and whether the camera reopens on return.
+  // Which job has the inspection screen open right now. This is what tells the
+  // UI a photo session is live: it drives whether Finish is shown.
   let inspectionActiveJobId = null;
-  let inspectionStream = null;
   // The typical-photos checklist for whatever job is currently open in the
   // camera — see photo-checklists.js. inspectionChecklistDone tracks zone
   // labels already covered by a saved capture (not counting Front Elevation,
@@ -1927,17 +1931,12 @@
   // startRecording({mode:'attach'}) below is still used by the capture
   // detail modal's "Attach Voice Note" flow, so that stays intact.
 
-  // ---------- Start / Finish Inspection (continuous video+audio, live preview) ----------
+  // ---------- Start / Finish Inspection (photos through the phone's camera app) ----------
   // Mirrors the defensive treatment finishInspection already has. Every exit
-  // path below must either start a recording or say plainly why it couldn't —
-  // a tap that produces no recording AND no message is indistinguishable from
-  // a dead button, which is exactly how this was reported from the field.
+  // path below must either open the inspection or say plainly why it couldn't:
+  // a tap that does nothing AND says nothing is indistinguishable from a dead
+  // button, which is exactly how this was once reported from the field.
   let startInspectionInProgress = false;
-  // Set while a camera request is outstanding so a second tap can abandon it.
-  // Waiting on a permission sheet can legitimately take a while, and a button
-  // that is merely disabled for that whole time reads as broken — the way out
-  // has to stay in the technician's hands.
-  let abandonPendingStart = null;
 
   // ---------- The first shot of the job ----------
   // Starting a job opens straight onto one instruction: photograph the front
@@ -1986,76 +1985,29 @@
   }
 
   async function startInspection() {
-    // The job this tap was FOR. The camera permission prompt can take seconds, and
-    // by the time it answers the technician may have gone Back or opened another
-    // job; everything below must act on this job or on nothing.
+    // The job this tap was FOR; everything below acts on this job or on nothing.
     const startJobId = currentJobId;
     if (startInspectionInProgress) return;
     startInspectionInProgress = true;
 
     const originalLabel = '▶ Start Inspection';
-    // Deliberately NOT disabled: the button becomes the cancel.
-    startInspectionBtn.textContent = '⏳ Starting camera… (tap to cancel)';
     const resetButton = () => {
       startInspectionInProgress = false;
-      abandonPendingStart = null;
       startInspectionBtn.disabled = false;
       startInspectionBtn.textContent = originalLabel;
     };
-    // Releases the camera/mic if we acquired them but then bailed — otherwise
-    // the indicator light stays on and the device stays locked to this tab.
-    const releaseStream = () => {
-      if (!inspectionStream) return;
-      inspectionStream.getTracks().forEach((t) => t.stop());
-      inspectionStream = null;
-    };
+    if (!startJobId) { resetButton(); return; }
 
-    // The camera itself, and every hard-won thing about opening one, now
-    // lives in camera.js — it moved there when the QR scanner needed the
-    // same secure-context check, the same permission handling and the same
-    // deadline that knows whether a human is still being asked something.
-    // Two copies of that would have meant the scanner slowly re-learning all
-    // of it. What stays here is what to say and what to do about it, which is
-    // this screen's business and not the camera's.
-    // Lets a second tap on the button abandon a hung permission prompt.
-    let cancelStart = false;
+    // An inspection is a series of deliberate photographs, not a recording.
+    // Each one is taken with the phone's OWN camera app (v129): Take photo
+    // opens it, the technician shoots with proper focus, flash and zoom, taps
+    // the tick, and the photo comes back here tagged with the step it was for.
+    // Scope used to run its own viewfinder, which had none of that and was
+    // worst exactly where it mattered (a dark subfloor, a roof void). So
+    // nothing here asks for camera permission and no camera stream is ever
+    // held open; the phone's camera app handles all of it.
     try {
-      abandonPendingStart = () => { cancelStart = true; };
-      inspectionStream = await window.Camera.open({ isCancelled: () => cancelStart });
-    } catch (err) {
-      releaseStream();
-      if (err && err.code === 'cancelled') {
-        // Their own choice — no error language for it.
-        resetButton();
-        return;
-      }
-      toast(window.Camera.messageFor(err) || 'Could not start the camera.');
-      resetButton();
-      return;
-    }
-
-    // The permission prompt may have taken a while. If the technician has left
-    // this job in the meantime there is nothing to start: let the camera go
-    // rather than open it over a different screen, or against no job at all.
-    if (!startJobId || currentJobId !== startJobId) {
-      releaseStream();
-      resetButton();
-      return;
-    }
-
-    // An inspection is a series of deliberate photographs, not a continuous
-    // recording. Video was capturing 20 minutes of mostly floor and ceiling to
-    // find the handful of frames that mattered, and the report only ever cited
-    // stills anyway. Photographing each subject means every image is one the
-    // technician chose, tagged with the zone they were standing in — which is
-    // both better evidence and a far better input for the draft, because the
-    // model is reading considered photographs instead of motion-blurred frames.
-    //
-    // No video is recorded anywhere in the app. The camera stream here is a
-    // viewfinder for taking photographs and nothing else: it is never
-    // recorded, and there is no longer any way to bring video in.
-    try {
-      inspectionVideo.srcObject = inspectionStream;
+      showLastPhoto(null);
       inspectionZoneInput.value = '';
       inspectionZonePill.textContent = 'Untagged';
       show(inspectionModal);
@@ -2123,19 +2075,18 @@
         photoWalk.start();
       }
     } catch (err) {
-      console.error('[inspection] camera preview failed to start:', err);
+      console.error('[inspection] the inspection screen failed to open:', err);
       endPhotoWalk();
-      inspectionVideo.srcObject = null;
       hide(inspectionModal);
-      releaseStream();
-      toast('Could not open the camera preview: ' + ((err && err.message) || err));
+      inspectionActiveJobId = null;
+      toast('Could not open the inspection: ' + ((err && err.message) || err));
       resetButton();
       return;
     }
 
-    // The camera is open. renderInspectionControls hides this button below,
-    // but the same element is reused for the next job, so its label has to
-    // go back.
+    // The inspection screen is open. renderInspectionControls hides this
+    // button below, but the same element is reused for the next job, so its
+    // label has to go back.
     resetButton();
     inspectionStartedAt = Date.now();
     inspectionTimerInterval = setInterval(() => {
@@ -2155,7 +2106,7 @@
     }
 
     // Both are best-effort, fire-and-forget: neither should delay the
-    // camera preview opening, and both only fill an empty field (never
+    // inspection screen opening, and both only fill an empty field (never
     // overwrite something the technician already entered).
     if (window.ReportUI) {
       const hhmm = new Date(inspectionStartedAt).toTimeString().slice(0, 5);
@@ -2175,9 +2126,8 @@
     if (photoWalk) photoWalk.zoneChanged(inspectionZoneInput.value.trim());
   });
 
-  // The shutter answers at once: a white flash over the preview and a short
-  // buzz where the phone has one. The save behind it takes a moment longer,
-  // and without this a tap could feel like it missed.
+  // A photo has landed: a white flash over the screen and a short buzz where
+  // the phone has one, so it is plain the shot was kept.
   function shutterFeedback() {
     if (inspectionFlashEl) {
       inspectionFlashEl.classList.remove('flash');
@@ -2187,90 +2137,127 @@
     try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) { /* not supported */ }
   }
 
-  inspectionStillBtn.addEventListener('click', async () => {
-    if (!inspectionStream || !inspectionVideo.videoWidth) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = inspectionVideo.videoWidth;
-    canvas.height = inspectionVideo.videoHeight;
-    canvas.getContext('2d').drawImage(inspectionVideo, 0, 0, canvas.width, canvas.height);
-    shutterFeedback();
-    const jobIdAtCapture = currentJobId;
-    // Claim the front-photo slot synchronously. Everything below is async,
-    // and a technician who taps twice in quick succession was otherwise
-    // filing their second shot as a second 'front elevation' too.
-    const isFront = frontPhotoPending;
-    if (isFront) showFrontPhotoPrompt(false);
-    // Read the zone now too, for the same reason: by the time the encode
-    // finishes the technician has often already typed the next room in.
-    const zoneAtCapture = isFront ? 'Front Elevation' : inspectionZoneInput.value.trim();
-    canvas.toBlob(async (blob) => {
-      if (!blob) { toast('Capture failed, try again'); return; }
-      let capture;
-      try {
-        capture = await DB.addCapture({
-          jobId: jobIdAtCapture,
-          zone: zoneAtCapture,
-          type: 'photo',
-          photoBlob: blob,
-        });
-      } catch (err) {
-        // The shutter must never fail silently: a technician moves on the moment
-        // they hear it. Say the photo is NOT kept, and give the front-photo slot
-        // back so the cover shot can be retaken.
-        if (window.ErrorLog) window.ErrorLog.note(err, 'camera: save photo');
-        toast(DB.describeSaveFailure(err, 'That photo'));
-        if (isFront) showFrontPhotoPrompt(true);
-        return;
-      }
+  // Where the viewfinder used to be: the last photo taken, so the technician
+  // can see it came out (and is the right way up) before moving on.
+  let lastPhotoUrl = null;
+  function showLastPhoto(blob) {
+    if (lastPhotoUrl) { URL.revokeObjectURL(lastPhotoUrl); lastPhotoUrl = null; }
+    if (!inspectionLastPhoto) return;
+    if (!blob) {
+      inspectionLastPhoto.removeAttribute('src');
+      inspectionLastPhoto.classList.add('hidden');
+      if (inspectionStageHint) inspectionStageHint.classList.remove('hidden');
+      return;
+    }
+    lastPhotoUrl = URL.createObjectURL(blob);
+    inspectionLastPhoto.src = lastPhotoUrl;
+    inspectionLastPhoto.classList.remove('hidden');
+    if (inspectionStageHint) inspectionStageHint.classList.add('hidden');
+  }
 
-      if (!isFront) {
-        if (zoneAtCapture && inspectionChecklistItems.some((item) => item.label === zoneAtCapture)) {
-          inspectionChecklistDone.add(zoneAtCapture);
-          renderInspectionChecklist();
-        }
-        if (photoWalk) photoWalk.photoSaved();
-        toast('Photo saved');
-        return;
-      }
+  // ---------- Taking a photo: the phone's own camera app (v129) ----------
+  // What the photo is FOR is fixed at the moment of the tap: the job, whether
+  // it is the cover shot, and the step or zone on screen. The camera app can
+  // be open for a while, and the photo must land where the technician was
+  // standing when they reached for it, not wherever the screen is later.
+  let pendingShot = null;
 
-      // The cover is a wide block on an A4 page. A portrait shot gets
-      // letterboxed into it with the house small in the middle, and a house
-      // is wider than it is tall anyway — so this is checked rather than only
-      // asked for, because a prompt read once at the start of a job is a
-      // prompt that stops being read.
-      //
-      // It warns and keeps the photo. Refusing it would be worse: the shot is
-      // taken, the technician has moved on, and a usable-but-tall cover beats
-      // no cover at all.
-      try {
-        const bitmap = await createImageBitmap(blob);
-        const portrait = bitmap.height > bitmap.width;
-        bitmap.close();
-        if (portrait) {
-          toast('That cover photo is portrait — turn the phone sideways and take it again for a better report cover.');
-        }
-      } catch (e) { /* some browsers refuse createImageBitmap on a fresh blob — not worth a message */ }
+  function shotForNow() {
+    return {
+      jobId: currentJobId,
+      isFront: frontPhotoPending,
+      zone: frontPhotoPending ? 'Front Elevation' : inspectionZoneInput.value.trim(),
+    };
+  }
 
-      // Mark it so a later visit doesn't ask for the cover shot again, and
-      // put it straight into the report's cover field rather than making the
-      // technician find it in the gallery and attach it by hand.
-      await DB.updateCapture(capture.id, { isFrontElevation: true });
-      if (window.ReportUI && window.ReportUI.attachCoverPhoto) {
-        await window.ReportUI.attachCoverPhoto(jobIdAtCapture, blob)
-          .catch((err) => console.warn('[inspection] could not set the cover photo:', err.message || err));
-      }
-      if (photoWalk) {
-        const nextName = photoWalk.frontSaved();
-        toast('Front photo saved. Next: ' + nextName + '.');
-      } else {
-        toast('Front photo saved — now work through the property.');
-      }
-      // Reading it is best-effort and must not hold up the walkthrough.
-      draftPropertyFromFrontPhoto(jobIdAtCapture, blob);
-    }, 'image/jpeg', 0.88);
+  inspectionStillBtn.addEventListener('click', () => {
+    if (!inspectionActiveJobId) return;
+    pendingShot = shotForNow();
+    if (inspectionCameraInput) inspectionCameraInput.click();
   });
 
+  if (inspectionGalleryBtn) {
+    inspectionGalleryBtn.addEventListener('click', () => {
+      if (!inspectionActiveJobId) return;
+      pendingShot = shotForNow();
+      if (inspectionGalleryInput) inspectionGalleryInput.click();
+    });
+  }
 
+  async function takeFiles(input) {
+    const files = Array.from(input.files || []);
+    input.value = '';
+    const shot = pendingShot || shotForNow();
+    pendingShot = null;
+    if (!files.length || !shot.jobId) return; // the camera was closed without a shot
+    for (let i = 0; i < files.length; i++) {
+      // Made a sensible size (photo-prep.js); the original is kept if that fails.
+      const blob = window.PhotoPrep ? await window.PhotoPrep.prepare(files[i]) : files[i];
+      // From the gallery, several at once: only the first can be the cover.
+      const isFront = shot.isFront && i === 0 && frontPhotoPending;
+      const zone = isFront ? 'Front Elevation' : (shot.isFront ? inspectionZoneInput.value.trim() : shot.zone);
+      await saveInspectionPhoto(blob, { jobId: shot.jobId, isFront, zone });
+    }
+  }
+
+  if (inspectionCameraInput) inspectionCameraInput.addEventListener('change', () => takeFiles(inspectionCameraInput));
+  if (inspectionGalleryInput) inspectionGalleryInput.addEventListener('change', () => takeFiles(inspectionGalleryInput));
+
+  async function saveInspectionPhoto(blob, { jobId, isFront, zone }) {
+    let capture;
+    try {
+      capture = await DB.addCapture({ jobId, zone, type: 'photo', photoBlob: blob });
+    } catch (err) {
+      // Never silent: a technician moves on the moment they have taken the
+      // shot. Say the photo is NOT kept. The cover prompt is still up, so the
+      // front photo can simply be taken again.
+      if (window.ErrorLog) window.ErrorLog.note(err, 'camera: save photo');
+      toast(DB.describeSaveFailure(err, 'That photo'));
+      return;
+    }
+    shutterFeedback();
+    showLastPhoto(blob);
+
+    if (!isFront) {
+      if (zone && inspectionChecklistItems.some((item) => item.label === zone)) {
+        inspectionChecklistDone.add(zone);
+        renderInspectionChecklist();
+      }
+      if (photoWalk) photoWalk.photoSaved();
+      toast('Photo saved');
+      return;
+    }
+
+    showFrontPhotoPrompt(false);
+    // The cover is a wide block on an A4 page. A portrait shot gets
+    // letterboxed into it with the house small in the middle, and a house is
+    // wider than it is tall anyway, so this is checked rather than only asked
+    // for. It warns and keeps the photo: a usable-but-tall cover beats none.
+    try {
+      const bitmap = await createImageBitmap(blob);
+      const portrait = bitmap.height > bitmap.width;
+      bitmap.close();
+      if (portrait) {
+        toast('That cover photo is portrait. Turn the phone sideways and take it again for a better report cover.');
+      }
+    } catch (e) { /* some browsers refuse createImageBitmap on a fresh blob; not worth a message */ }
+
+    // Marked so a later visit does not ask for the cover shot again, and put
+    // straight into the report's cover field.
+    await DB.updateCapture(capture.id, { isFrontElevation: true });
+    if (window.ReportUI && window.ReportUI.attachCoverPhoto) {
+      await window.ReportUI.attachCoverPhoto(jobId, blob)
+        .catch((err) => console.warn('[inspection] could not set the cover photo:', err.message || err));
+    }
+    if (photoWalk) {
+      const nextName = photoWalk.frontSaved();
+      toast('Front photo saved. Next: ' + nextName + '.');
+    } else {
+      toast('Front photo saved. Now work through the property.');
+    }
+    // Reading it is best-effort and must not hold up the walkthrough.
+    draftPropertyFromFrontPhoto(jobId, blob);
+  }
 
   let finishInspectionInProgress = false;
 
@@ -2309,12 +2296,9 @@
 
     try {
       clearInterval(inspectionTimerInterval);
-      if (inspectionStream) {
-        inspectionStream.getTracks().forEach((t) => t.stop());
-        inspectionStream = null;
-      }
-      inspectionVideo.srcObject = null;
       inspectionActiveJobId = null;
+      pendingShot = null;
+      showLastPhoto(null);
       endPhotoWalk();
       hide(inspectionModal);
 
@@ -2402,11 +2386,7 @@
     }
   }
 
-  startInspectionBtn.addEventListener('click', () => {
-    // While a camera request is outstanding the same button cancels it.
-    if (startInspectionInProgress && abandonPendingStart) { abandonPendingStart(); return; }
-    startInspection();
-  });
+  startInspectionBtn.addEventListener('click', () => startInspection());
   finishInspectionBtn.addEventListener('click', finishInspection);
   inspectionFinishBtn.addEventListener('click', finishInspection);
 

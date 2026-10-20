@@ -317,7 +317,10 @@
       }
     }],
 
-    ['Start Inspection, then Back before the camera answers: no camera is left running', async (n) => {
+    // v129: photos come from the phone's own camera app, so Scope never opens
+    // a camera stream. These two used to hunt for a camera left running; now
+    // they check none is ever opened, and that the screens still behave.
+    ['Start Inspection, then Back at once: no camera is ever opened, nothing is stranded', async (n) => {
       await makeJob({ 'job-name': 'Scenario Camera Race', 'job-address': '6 Lens St' });
       const job = await findJob('Scenario Camera Race');
       must(job, 'job not created');
@@ -325,38 +328,40 @@
       try {
         await home(); await window.showJobViewById(job.id); await sleep(450);
         await tapVisible($('start-inspection-btn'), 'Start Inspection');
-        await sleep(120); // the camera has NOT answered yet (700ms)
+        await sleep(120);
         const back = Array.from(document.querySelectorAll('button[id*="back"]')).filter(visible).pop();
-        must(back, 'no Back button to reach for');
-        await tap(back);
-        await sleep(2200); // long enough for the camera to answer after being abandoned
+        if (back) await tap(back); else history.back();
+        await sleep(1200);
         n.push('streams opened: ' + cam.created.length + ', still live: ' + cam.live());
-        must(cam.created.length >= 1, 'the app never asked for the camera, so the race was never run');
-        must(cam.live() === 0, cam.live() + ' camera track(s) still live after backing out - the camera light stays on');
+        must(cam.created.length === 0, 'Scope opened a camera of its own: photos should come from the phone’s camera app');
+        must(!!viewId(), 'no screen is showing after backing out');
         const after = await DB.getJob(job.id);
         n.push('job status after: ' + after.status);
         must(after.status !== 'inspecting' && after.status !== 'in-progress' && after.status !== 'recording',
           'backing out left the job marked as mid-inspection: ' + after.status);
+        // Back on the inspection screen says to finish first; Generate Form is the way out.
+        const fin = $('inspection-finish-btn');
+        if (visible(fin)) { await tap(fin); await sleep(1500); }
       } finally { cam.restore(); }
     }],
 
-    ['Start Inspection twice, fast: only one camera is held', async (n) => {
+    ['Start Inspection twice, fast: one inspection screen, and no camera of Scope’s own', async (n) => {
       const job = await findJob('Scenario Camera Race');
       must(job, 'depends on the previous scenario');
       const cam = trackedCamera(300);
       try {
         await home(); await window.showJobViewById(job.id); await sleep(450);
         const start = $('start-inspection-btn');
-        await tapVisible(start, 'Start Inspection'); await sleep(40); await tap(start);
-        await sleep(1800);
+        if (visible(start)) { await tap(start); await sleep(40); if (visible(start)) await tap(start); }
+        await sleep(1200);
         n.push('streams opened: ' + cam.created.length + ', live: ' + cam.live());
-        must(cam.created.length >= 1, 'the app never asked for the camera, so nothing was tested');
-        must(cam.live() <= 1, cam.live() + ' cameras are running at once');
-        // Leave properly and make sure nothing is left on.
-        const back = Array.from(document.querySelectorAll('button[id*="back"]')).filter(visible).pop();
-        if (back) await tap(back);
+        must(cam.created.length === 0, 'Scope opened a camera of its own');
+        must(document.querySelectorAll('#inspection-modal:not(.hidden)').length <= 1, 'more than one inspection screen');
+        // Leave properly: the inspection screen's way out is Generate Form
+        // (Back says "finish or cancel the inspection first").
         const fin = $('inspection-finish-btn');
-        await sleep(600);
+        if (visible(fin)) { await tap(fin); await sleep(1500); }
+        must(!visible($('inspection-modal')), 'the inspection screen did not close');
       } finally { cam.restore(); }
     }],
 

@@ -3047,14 +3047,24 @@
     // are standing in front of the thing, and wrong when the photograph is
     // already on the phone, taken earlier or sent by the client. Without a
     // second input there was no way to attach one.
-    function addFiles(list) {
-      let added = 0;
-      for (const file of Array.from(list || [])) {
-        if (!file) continue;
-        photos.push({ id: DB.uid(), blob: file });
-        added++;
+    // Each photo is made a sensible size first (photo-prep.js): a phone camera
+    // photo straight from the camera app is several megabytes, too big to
+    // store, sync and have the AI read. That takes a moment, so the section
+    // these are for is noted first and they are only added if it is still
+    // the one open.
+    async function addFiles(list) {
+      const files = Array.from(list || []).filter(Boolean);
+      if (!files.length) return;
+      const sectionValues = pendingSectionValues;
+      const prepared = [];
+      for (const file of files) {
+        prepared.push(window.PhotoPrep ? await window.PhotoPrep.prepare(file) : file);
       }
-      if (!added) return;
+      if (sectionValues !== pendingSectionValues) {
+        toast('Those photos were not added: the section was closed while they were being prepared. Add them again.');
+        return;
+      }
+      for (const blob of prepared) photos.push({ id: DB.uid(), blob });
       pendingSectionValues[field.id] = photos;
       redrawGrid();
       // Nothing is sent anywhere here, deliberately. See the note on the

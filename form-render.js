@@ -182,28 +182,52 @@
       redraw();
       wrap.appendChild(grid);
 
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.multiple = true;
-      input.className = 'hidden';
-      input.addEventListener('change', () => {
-        for (const file of Array.from(input.files || [])) {
-          photos.push({ id: (window.DB && window.DB.uid) ? window.DB.uid() : String(Date.now() + Math.random()), blob: file });
+      // Two ways in, as on the report form (v129): Take photo opens the
+      // phone's own camera app (`capture`, set as an attribute so phones
+      // honour it), Import opens the gallery. Each photo is made a sensible
+      // size first (photo-prep.js).
+      const newId = () => ((window.DB && window.DB.uid) ? window.DB.uid() : String(Date.now() + Math.random()));
+      async function addFiles(input) {
+        const files = Array.from(input.files || []);
+        input.value = '';
+        if (!files.length) return;
+        for (const file of files) {
+          const blob = window.PhotoPrep ? await window.PhotoPrep.prepare(file) : file;
+          photos.push({ id: newId(), blob });
         }
         setValue(field, photos);
-        input.value = '';
         redraw();
-      });
+      }
+      const makeInput = (camera) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        if (camera) input.setAttribute('capture', 'environment');
+        else input.multiple = true;
+        input.className = 'hidden';
+        input.addEventListener('change', () => addFiles(input));
+        return input;
+      };
+      const cameraInput = makeInput(true);
+      const galleryInput = makeInput(false);
 
+      const buttons = document.createElement('div');
+      buttons.className = 'row gap photo-field-buttons';
       const addBtn = document.createElement('button');
       addBtn.type = 'button';
-      addBtn.className = 'btn btn-secondary';
-      addBtn.textContent = '📷 Add photo';
-      addBtn.addEventListener('click', () => input.click());
+      addBtn.className = 'btn btn-outline flex1';
+      addBtn.textContent = '📷 Take photo';
+      addBtn.addEventListener('click', () => cameraInput.click());
+      const importBtn = document.createElement('button');
+      importBtn.type = 'button';
+      importBtn.className = 'btn btn-secondary flex1';
+      importBtn.textContent = '🖼 Import';
+      importBtn.addEventListener('click', () => galleryInput.click());
+      buttons.append(addBtn, importBtn);
 
-      wrap.appendChild(input);
-      wrap.appendChild(addBtn);
+      wrap.appendChild(cameraInput);
+      wrap.appendChild(galleryInput);
+      wrap.appendChild(buttons);
       return wrap;
     }
 

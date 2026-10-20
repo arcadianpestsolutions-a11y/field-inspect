@@ -39,7 +39,7 @@ Enquiry -> Lead (optional) -> Job created -> Booked in diary
    email, invalid) is shown as plain text and the job is still saved.
 
 ### 2.2 Inspect
-1. Open job -> Start Inspection. Camera opens on one instruction: photograph the front of the property (landscape; it becomes the report cover).
+1. Open job -> Start Inspection. The inspection screen opens on one instruction: photograph the front of the property (landscape; it becomes the report cover). **Since v129 every photo is taken with the phone's own camera app**: **Take photo** opens it (proper focus, flash, zoom, low light), the technician shoots and taps the tick, and the photo comes back to the step on screen and shows where a viewfinder used to be. **Gallery** brings in photos already on the phone. Scope asks for no camera permission. Each photo is kept at most 2048 px on its long side (photo-prep.js), the right way up.
    For a **timber pest inspection** (v118) the screen then says "Front photo saved. Next: Meter Box" and walks the property one step at a time, in walking order:
    - **Outside:** meter box (durable notice), slab edge, weep holes, air con unit, hot water system, water tanks / downpipes, garden beds against walls, external timbers, trees and stumps, sheds and stored items.
    - **Subfloor:** "Is there a subfloor?" **Yes, going under**: entry, piers and ant capping, damp / ventilation. **Yes, but I can't get in**: one photo of why. **No, it's a slab**: no subfloor photos.

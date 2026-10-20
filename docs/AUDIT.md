@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈11,500 lines, 549 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈11,500 lines, 546 tests, all
 passing), 11 Edge Function folders, 36 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -64,6 +64,7 @@ the suite against v106) and passes now. Full UI findings: `docs/UI-REVIEW.md`.
 | 34 | On a narrow phone a long toast message wrapped into a ball half the screen wide | The toast sizes to its text, up to the screen width, with a rounded box instead of a pill |
 | 35 | Scope never learned an invoice was paid. It stored the Xero status once, at sending (always DRAFT), and never asked again, so the business figures and the client portal could not show paid | The xero function answers `invoice-statuses` (read only, up to 50 well-formed ids); the app asks after each sync, at most every half hour, and records PAID. Invoices can also be marked paid by hand for money outside Xero (`paid_at`, migration 035). Found building the referral credit, which is earned on payment |
 | 36 | A credit line rounded to $49.99: GST on a negative line rounded half a cent towards zero, Xero rounds it away | `lineGstCents` rounds half away from zero both ways; positive lines unchanged |
+| 37 | Photos were taken through a viewfinder inside Scope: no flash, poor focus and low light, worst in a subfloor or roof void. And no photo was ever made smaller, so a phone camera photo (3-12 MB) went into storage, sync and the AI as it was; the AI refuses images over about 5 MB | v129: every photo comes from the phone's own camera app (`capture`) or its gallery, on the inspection screen and in every photo box; `photo-prep.js` keeps each at most 2048 px, as a JPEG, the right way up, and keeps the original if anything fails |
 
 Not found this round: no crash, no unreachable control, no sideways scroll at 320 px,
 
