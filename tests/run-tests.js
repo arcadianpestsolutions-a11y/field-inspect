@@ -8371,12 +8371,14 @@
     const job = await jobWithPhotos(win, 'Save Test Job', ['Kitchen', 'Laundry']);
     const log = stubSaving(win);
     try {
-      win.showJobViewById(job.id);
+      await win.showJobViewById(job.id);
       await waitFor(() => doc.querySelectorAll('.capture-tile').length === 2, 'two photos show');
       doc.getElementById('gallery-select-toggle').click();
       const save = doc.getElementById('selection-save-btn');
       await waitFor(() => !save.classList.contains('hidden'), 'the selection bar offers Save');
       assert(save.disabled, 'nothing selected, nothing to save');
+      assert(doc.getElementById('selection-zone-btn').disabled,
+        'and nothing to re-zone: the bar used to start with its buttons live from the last selection');
       doc.querySelectorAll('.capture-tile').forEach((t) => t.click());
       assert(!save.disabled, 'two selected');
       save.click();
@@ -8407,7 +8409,7 @@
       },
     });
     try {
-      win.showJobViewById(job.id);
+      await win.showJobViewById(job.id);
       await waitFor(() => doc.querySelectorAll('.capture-tile').length === 1, 'the photo shows');
       doc.querySelector('.capture-tile').click();
       const btn = doc.getElementById('detail-save-btn');
@@ -8443,8 +8445,8 @@
     const job = await win.DB.addJob({ name: 'Memo Only Job' });
     await win.DB.addCapture({ jobId: job.id, zone: 'Roof', type: 'memo', audioBlob: new win.Blob(['x'], { type: 'audio/webm' }) });
     try {
-      win.showJobViewById(job.id);
-      await waitFor(() => doc.querySelectorAll('.capture-tile').length === 1, 'the note shows');
+      await win.showJobViewById(job.id);
+      await waitFor(() => doc.querySelectorAll('.capture-tile .capture-tile-icon').length === 1, 'the note shows');
       doc.querySelector('.capture-tile').click();
       await waitFor(() => !doc.getElementById('detail-modal').classList.contains('hidden'), 'it opens');
       assert(doc.getElementById('detail-save-btn').classList.contains('hidden'), 'no Save to phone on it');
@@ -8471,7 +8473,7 @@
     await win.DB.addCapture({ jobId: job.id, zone: 'Laundry', type: 'photo', photoBlob: photo,
       audioBlob: new win.Blob(['old note'], { type: 'audio/webm' }) });
     try {
-      win.showJobViewById(job.id);
+      await win.showJobViewById(job.id);
       await waitFor(() => doc.querySelectorAll('.capture-tile').length === 1, 'the photo shows');
       doc.querySelector('.capture-tile').click();
       await waitFor(() => !doc.getElementById('detail-modal').classList.contains('hidden'), 'the photo opens');

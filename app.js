@@ -1648,6 +1648,9 @@
     selectMode = true;
     gallerySelectToggle.textContent = 'Cancel';
     show(selectionBar);
+    // Nothing is chosen yet, so nothing in the bar may act. Without this the
+    // buttons kept whatever state the last selection left them in.
+    updateSelectionCount();
     renderGalleryTiles();
   }
 
