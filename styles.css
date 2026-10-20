@@ -671,6 +671,14 @@ input:focus, textarea:focus {
   font-weight: 600;
   color: var(--text);
 }
+/* Three actions plus the count do not fit across a small phone in one row
+   (it pushed Delete off the screen at 320 px), so there the actions get a
+   row of their own, sharing it evenly. */
+@media (max-width: 420px) {
+  .selection-bar { flex-wrap: wrap; row-gap: 8px; }
+  .selection-bar .selection-count { flex: 1 1 calc(100% - 64px); }
+  .selection-bar .btn { flex: 1 1 0; min-width: 0; padding-left: 8px; padding-right: 8px; }
+}
 
 /* ---------- Bulk zone-change modal ---------- */
 .bulk-zone-modal {
