@@ -9310,9 +9310,8 @@
     const doc = frame.contentDocument;
     const nameless = await win.DB.addJob({ name: '', address: '9 Blank Rd' });
     win.showJobListView();
-    await wait(200);
-    const names = Array.from(doc.querySelectorAll('.job-item-name')).map((e) => e.textContent);
-    assert(names.includes('9 Blank Rd'), 'an unnamed job falls back to its address');
+    await waitFor(() => Array.from(doc.querySelectorAll('.job-item-name')).some((e) => e.textContent === '9 Blank Rd'),
+      'an unnamed job falls back to its address');
     const search = doc.getElementById('job-search-input');
     search.value = 'zzz-no-such-job';
     search.dispatchEvent(new win.Event('input', { bubbles: true }));
