@@ -13,7 +13,10 @@ permissions:
 
 jobs:
   browser-suite:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: that label began moving to Ubuntu 26 on
+    # 19 Oct 2026, and Playwright 1.47.2 cannot install its browser's system
+    # packages on a release it does not know. Move both together.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
