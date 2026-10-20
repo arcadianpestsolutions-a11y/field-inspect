@@ -9165,7 +9165,8 @@
   });
 
   test('Audit: signature and sketch images in the printed report go through imageSrc', async () => {
-    const src = await (await fetch('../report.js', { cache: 'reload' })).text();
+    // The print view lives in report-print.js since v127.
+    const src = await (await fetch('../report-print.js', { cache: 'reload' })).text();
     assert(!/class="sig" src="\$\{val\}"/.test(src), 'signature src is not interpolated raw');
     assert(!/class="sketch-img" src="\$\{val\}"/.test(src), 'sketch src is not interpolated raw');
     assert(/HtmlSafe\.imageSrc\(val\)/.test(src), 'both use HtmlSafe.imageSrc');
@@ -11184,6 +11185,45 @@
     assert(/db\.onversionchange = \(\) => \{\s*\n\s*db\.close\(\);/.test(src), 'an old copy closes its connection when a newer version needs the database');
     assert(/req\.onblocked = \(\) => \{/.test(src), 'and a blocked upgrade tells the person what to do');
     assert(/const DB_VERSION = 12;/.test(src), 'version 12 is the one with the SOP library');
+  });
+
+  // ---------- The printed report (report-print.js, v127) ----------
+  test('Print: a report prints numbered, with its terms, its photos and signature, and no raw data', async () => {
+    const win = frame.contentWindow;
+    const P = win.ReportPrint;
+    assert(P && typeof P.buildBodyHtml === 'function', 'the print view is its own module');
+    const job = await win.DB.addJob({ name: 'Print Job <b>', jobType: 'termite', address: '9 Print St' });
+    const sig = 'data:image/png;base64,iVBORw0KGgo=';
+    const report = {
+      jobId: job.id,
+      documentType: 'timber_pest_inspection',
+      sections: {
+        property: { wallConstruction: 'Brick Veneer' },
+        agreement: { agreementSignature: sig, agreementAcceptedBy: 'Jane <script>' },
+        siteSketch: { sketchData: '{"markers":[{"x":1}]}' },
+        clientDetails: { generalPhotos: [{ id: 'p1', blob: new win.Blob(['x'], { type: 'image/jpeg' }) }] },
+      },
+      auditLog: [],
+    };
+    const urls = [];
+    const html = P.buildBodyHtml(job, report, urls);
+    assert(/<h2>1\. /.test(html) && /<h2>2\. /.test(html), 'sections are numbered');
+    assert(/AS 4349\.3-2010/.test(html) && /Australian Consumer Law/.test(html), 'the terms are printed');
+    assert(html.includes('Brick Veneer'), 'answers are printed');
+    assert(!html.includes('"markers"'), 'sketch marker data never reaches the page');
+    assert(html.includes(`class="sig" src="${sig}"`), 'the signature goes through imageSrc and prints');
+    assert(!html.includes('<script>') && html.includes('&lt;script&gt;'), 'typed text is escaped');
+    assertEqual(urls.length, 1, 'each photo gets one object URL, handed back to be released');
+    urls.forEach((u) => win.URL.revokeObjectURL(u));
+    assert(!/Appendix/.test(html), 'no amendments appendix when nothing was amended');
+
+    report.finalizedAt = Date.now() - 1000;
+    report.auditLog.push({ event: 'field-changed', afterFinalize: true, at: Date.now(), sectionTitle: 'Property',
+      label: 'Wall construction', from: 'Weatherboard', to: 'Brick Veneer', reason: 'Client called', userEmail: 'tal@example.com' });
+    const amended = P.buildBodyHtml(job, report, []);
+    assert(/Appendix — Amendments After Finalisation/.test(amended) && amended.includes('Client called'),
+      'an amended report says so on its face, with the reason');
+    assertEqual(P.FIXED_TERMS_HTML, win.ReportPrint.FIXED_TERMS_HTML, 'the screen and the print share one copy of the terms');
   });
 
   // ---------- A fixed clock for the suite (test-clock.js, v126) ----------

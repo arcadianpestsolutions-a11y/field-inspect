@@ -5,7 +5,7 @@ repository plus comparison of the **live** database catalogue with what the code
 actually does. Nothing here was assumed from the migrations.
 
 ## Scope and numbers
-~49 app JS files (≈21,900 lines), 4 test files (≈11,400 lines, 546 tests, all
+~49 app JS files (≈21,900 lines), 4 test files (≈11,450 lines, 547 tests, all
 passing), 11 Edge Function folders, 36 SQL migrations, 1 stylesheet, 4 vendored
 libraries. No `package.json`, linter, formatter or CI (see Known debt).
 
@@ -72,8 +72,10 @@ and no console error in ~2,400 random steps after the fixes.
 
 ## Known debt (stated plainly, not hidden)
 1. **Two giant closures**: `app.js` (~2,600 lines) and `report.js` (~4,400). Each
-   has a table of contents in its header. Splitting the form renderer and print
-   view out of `report.js` is the obvious first refactor.
+   has a table of contents in its header. **v127** moved the print view (the
+   printed report, the emailed PDF and the fixed terms text) into
+   `report-print.js`, which only reads a report and takes the few things it
+   needs from `report.js` through `init()`. The form renderer is next.
 2. ~~**Duplicated helpers.**~~ **Consolidated in v125** into `common.js`
    (`toast`, `askConfirm`, `askPrompt`, `el`, `escapeHtml`, `fmtDay`, `money`, `pad2`):
    61 identical copies across 21 files replaced, and a test fails if one is added back.
