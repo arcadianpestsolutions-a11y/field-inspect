@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v127 · **547 tests passing** (as of 20 Oct 2026)
+**Current build:** v128 · **549 tests passing** (as of 20 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
@@ -105,7 +105,7 @@ and `report.js` open with a table of contents.
 
 ### Tests and tools
 
-`tests/run-tests.html` (547 tests), `tests/chaos.js` + `chaos-scenarios.js`
+`tests/run-tests.html` (549 tests), `tests/chaos.js` + `chaos-scenarios.js`
 (GitHub Actions runs the suite on every push: `.github/workflows/tests.yml`),
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.

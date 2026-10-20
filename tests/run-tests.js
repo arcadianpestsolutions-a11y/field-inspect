@@ -8465,7 +8465,9 @@
       'invoice-ui.js': ['invoice: Xero status', 'invoice: email status check', 'invoice: send to Xero', 'invoice: email the invoice'],
       'client-link.js': ['client link: open', 'client link: create', 'client link: ask for acceptance', 'client link: apply signature', 'client link: revoke'],
       'comms.js': ['messages: send one', 'messages: preview reminders', 'messages: send reminders', 'messages: the server refused'],
-      'report.js': ['backup export', 'report: email status check', 'site sketch: trace outline', 'site sketch: GPS'],
+      'report.js': ['backup export', 'report: email status check'],
+      // The site sketch pad moved to its own file in v128.
+      'report-sketch.js': ['site sketch: trace outline', 'site sketch: GPS'],
       'qr-scan.js': ['QR scan: camera'],
       'app.js': ['business details: save', 'starting a voice note'],
     };
@@ -11224,6 +11226,54 @@
     assert(/Appendix — Amendments After Finalisation/.test(amended) && amended.includes('Client called'),
       'an amended report says so on its face, with the reason');
     assertEqual(P.FIXED_TERMS_HTML, win.ReportPrint.FIXED_TERMS_HTML, 'the screen and the print share one copy of the terms');
+  });
+
+  // ---------- Every script parses (v128) ----------
+  test('Scripts: every file the page loads is valid JavaScript', async () => {
+    // A syntax error does not fail loudly: the one file simply never runs and
+    // everything it provides is quietly missing. Splitting report.js produced
+    // exactly that (a parameter named like a local already in the file), and
+    // the first sign was a sketch pad that would not open.
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]).filter((s) => !s.startsWith('vendor/'));
+    const broken = [];
+    for (const src of scripts) {
+      const code = await (await fetch(`../${src}`, { cache: 'reload' })).text();
+      try { new Function(code); } catch (e) { broken.push(`${src}: ${e.message}`); }
+    }
+    assertEqual(broken.join(' | '), '', 'no file has a syntax error');
+  });
+
+  // ---------- The site sketch pad (report-sketch.js, v128) ----------
+  test('Sketch: the pad opens in the site sketch section and draws into that section’s answers', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    assert(win.ReportSketch && typeof win.ReportSketch.render === 'function', 'the sketch pad is its own module');
+    const job = await win.DB.addJob({ name: 'Sketch Job', jobType: 'termite', address: '3 Sketch St' });
+    await win.ReportUI.openReview(job.id);
+    await wait(250);
+    openReportSection(doc, 'Site Sketch');
+    await wait(400);
+    const canvas = doc.querySelector('#report-section-fields canvas');
+    assert(canvas, 'the sketch pad draws a canvas');
+    // Draw a stroke the way a finger would.
+    const r = canvas.getBoundingClientRect();
+    const pt = (x, y) => ({ clientX: r.left + x, clientY: r.top + y, bubbles: true, pointerId: 1, buttons: 1 });
+    const fire = (type, x, y) => {
+      const Ev = win.PointerEvent || win.MouseEvent;
+      canvas.dispatchEvent(new Ev(type, pt(x, y)));
+    };
+    fire('pointerdown', 20, 20); fire('mousedown', 20, 20);
+    for (let i = 1; i <= 8; i++) { fire('pointermove', 20 + i * 15, 20 + i * 10); fire('mousemove', 20 + i * 15, 20 + i * 10); }
+    fire('pointerup', 140, 100); fire('mouseup', 140, 100);
+    win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }));
+    await wait(200);
+    doc.getElementById('section-save-btn').click();
+    await waitFor(async () => {
+      const rep = await win.DB.getReport(job.id);
+      const s = rep && rep.sections.siteSketch;
+      return s && Object.values(s).some((v) => typeof v === 'string' && v.startsWith('data:image/png'));
+    }, 'the drawing is saved into the site sketch answers', 4000);
   });
 
   // ---------- A fixed clock for the suite (test-clock.js, v126) ----------
