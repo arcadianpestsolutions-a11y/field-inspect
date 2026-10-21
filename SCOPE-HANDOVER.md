@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v139 · **564 tests passing** (as of 21 Oct 2026)
+**Current build:** v140 · **564 tests passing** (as of 21 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app

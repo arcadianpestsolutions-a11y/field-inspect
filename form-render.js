@@ -124,8 +124,10 @@
       if (!fieldVisible(field, values)) row.classList.add('hidden');
       const labelEl = document.createElement('label');
       labelEl.className = 'field-label';
+      // No "AI" tag on every question the AI may fill (removed v140 at Tal's
+      // request: it was on nearly every line and said nothing). What the AI
+      // actually suggested is still marked by decorateRowWithAi in report.js.
       labelEl.innerHTML = escapeHtml(field.label)
-        + (field.aiFillable ? ' <span class="ai-badge">AI</span>' : '')
         + (field.required ? ' <span class="required-dot">*</span>' : '');
       row.appendChild(labelEl);
       if (decorateRow) decorateRow(row, field);
