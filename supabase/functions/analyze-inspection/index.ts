@@ -86,7 +86,7 @@ async function transcribeAudio(audioBase64: string, mimeType: string): Promise<T
 // photo, and the trial in ai-trial/ is the only evidence there is.
 const AI_MODEL = 'claude-sonnet-5';
 const PROMPT_VERSIONS: Record<string, string> = {
-  'draft-report': 'draft-report@2026-10-13',
+  'draft-report': 'draft-report@2026-10-21',
   'identify-pest': 'identify-pest@2026-10-13',
   'identify-tree': 'identify-tree@2026-10-13',
   'sort-photos': 'sort-photos@2026-10-13',
@@ -186,6 +186,24 @@ Hollowed, galleried, flaking or crumbling timber is consistent with several diff
 Before answering any damage question, work out which of these the photograph actually distinguishes, and name the deciding feature in your reason. If the visible evidence does not separate them — and a single photograph of degraded timber very often does not — do not answer the termite questions from it. Leave them out and say why. Calling fungal decay termite damage is the most expensive mistake available here, and "consistent with termite workings" is not a finding when rot would look the same.
 
 Beetle damage is under-reported for the opposite reason: exit holes and frass are small and easy to pass over while looking for termite evidence. If a photograph shows them, answer the borer questions on it.
+
+NOT EVERYTHING ROUGH AND BROWN IS TERMITE MUD.
+(Learned from this business's own inspection photos, October 2026: every one of these was read as termite workings and none was.)
+  - Rust scale and flaking on metal ant capping — it is the capping corroding, which belongs in antCappingCondition, not in the termite fields.
+  - Mortar squeezed out of brick joints, mortar droppings on sleeper walls, cement render and patching on piers.
+  - Mould, efflorescence, blistered or flaking paint on interior walls and ceilings — that is moisture and ventilation, not termites.
+  - Leaf litter, soil splash and organic debris against cladding or along a path.
+  - The rough concrete face of a slab edge behind a garden bed or pebbles.
+Termite mud has its own look: a lead or tube of fairly even width that runs continuously from soil or masonry ONTO timber or across a barrier, or soil packed into timber along the grain. Answer workingsFound "Yes" only when you can name that feature; otherwise describe what you see and let the technician decide.
+
+TREES, STUMPS, FENCE POSTS AND LANDSCAPING TIMBERS ARE TERMITE EVIDENCE TOO.
+A hollowed, gutted or tunnelled tree trunk, stump, fallen branch, fence post or garden-edge timber is very often termite damage in this region, and it is what these inspections record most. Do not file it only as tree notes or decay: record it under termite workings with workingsAreas "Trees" or "Landscaping Timbers", say plainly that it is POSSIBLE termite damage, and recommend probing to confirm. Fungal decay remains the alternative to name when the timber is soft and crumbling with no tunnelling.
+
+VENTILATION AND MOISTURE ARE OFTEN WHAT A PHOTO IS FOR.
+Mould on walls or ceilings, damp staining, condensation, a subfloor with few or blocked vents, or vents buried by soil or garden beds mean ventilation is Inadequate — answer it. Pooling water, downpipes discharging at the wall, and no stormwater drainage mean site drainage is Inadequate.
+
+SLAB EDGES.
+If the edge of a concrete slab is covered by soil, garden beds, mulch, pebbles, paving or render so the inspection zone is not exposed, answer slabEdgeComplies "No" and say what is covering it.
 
 WHAT YOU MUST NOT DO.
 Never invent specifics the images cannot support: termite species, product names, measured moisture percentages, timber types you cannot see, or the condition of an area that was not photographed. Absence of a photo is not evidence of absence — if no one photographed the roof void, say nothing about the roof void. Prefer leaving a field out to guessing at it. This is a DRAFT a licensed professional reviews, edits and confirms before it becomes a compliance document; a wrong confident answer costs them more time than a blank.

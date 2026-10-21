@@ -312,6 +312,12 @@ const REPORT_SCHEMA = [
       { id: 'antCappingCondition', label: 'Termite shields (ant capping) appear to be', type: 'select', options: ['Adequate', 'Inadequate', 'Not present'], aiFillable: true, default: 'Adequate' },
       { id: 'antCappingDetails', label: 'Details & Recommendations', type: 'textarea', showIf: { field: 'antCappingCondition', equals: 'Inadequate' }, aiFillable: true },
       { id: 'weepHolesClear', label: 'Weep holes are clear and visible', type: 'yesno', aiFillable: true, default: 'Yes' },
+      // v138. AS 3660.2's slab edge inspection zone: a concealed slab edge is
+      // where termites come in unseen. The Formitize form Tal used before
+      // Scope asked this on every inspection and Scope never did; 33 of the
+      // 189 findings photos in the October trial were of exactly this.
+      { id: 'slabEdgeComplies', label: 'Does the slab edge inspection zone fully comply (exposed and clear all round)?', type: 'yesno', aiFillable: true },
+      { id: 'slabEdgeDetails', label: 'Details & Recommendations', type: 'textarea', showIf: { field: 'slabEdgeComplies', equals: 'No' }, aiFillable: true },
     ],
   },
   // ---------- The action-plan half, shown only when it is needed ----------
