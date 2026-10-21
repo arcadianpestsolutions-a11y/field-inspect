@@ -288,6 +288,7 @@ input:focus, textarea:focus {
   text-align: center;
   margin: 0 0 6px;
 }
+.login-forgot { align-self: center; margin: 2px auto 0; display: block; }
 .login-error {
   color: var(--danger);
   font-size: 0.85rem;

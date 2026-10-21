@@ -8676,6 +8676,8 @@
     assert(/auth\.updateUser\(\{ password: first \}\)/.test(src), 'saved to their own account');
     const html = await (await fetch('../index.html', { cache: 'reload' })).text();
     assert(/id="password-btn"/.test(html) && /changePassword:/.test(src), 'and a Password button changes it any time while signed in (v136)');
+    assert(/id="login-forgot"/.test(html) && /resetPasswordForEmail\(/.test(src), 'and the sign-in screen has Forgot password (v137)');
+    assert(/redirectTo = `\$\{location\.origin\}\$\{location\.pathname\}`/.test(src), 'which comes back to the same copy of Scope');
   });
 
   // ---------- Save to phone (v132) ----------

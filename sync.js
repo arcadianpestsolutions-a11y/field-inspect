@@ -1545,6 +1545,16 @@
     return currentSession;
   }
 
+  // "Forgot password?" on the sign-in screen (v137). The link in the email
+  // comes back to this same copy of Scope, which then asks for the new
+  // password (PASSWORD_RECOVERY above). Supabase answers the same way whether
+  // or not the address has an account, so this cannot be used to find out.
+  async function sendPasswordReset(email) {
+    const redirectTo = `${location.origin}${location.pathname}`;
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(String(email || '').trim(), { redirectTo });
+    if (error) throw error;
+  }
+
   async function signOut() {
     await supabaseClient.auth.signOut();
     currentSession = null;
@@ -1557,6 +1567,7 @@
     currentUser,
     signIn,
     signOut,
+    sendPasswordReset,
     // The Password button in the sync bar (v136).
     changePassword: () => askForNewPassword('Type the new password you want (at least 8 characters).'),
     onAuthChange,

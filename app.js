@@ -465,6 +465,30 @@
     if (window.Sync) await Sync.signOut();
   });
 
+  const loginForgotBtn = document.getElementById('login-forgot');
+  if (loginForgotBtn) {
+    loginForgotBtn.addEventListener('click', async () => {
+      const email = loginEmailInput.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        loginErrorEl.textContent = 'Type your email address above first, then tap Forgot password.';
+        show(loginErrorEl);
+        loginEmailInput.focus();
+        return;
+      }
+      if (!window.Sync || !window.Sync.sendPasswordReset) return;
+      loginForgotBtn.disabled = true;
+      try {
+        await window.Sync.sendPasswordReset(email);
+        loginErrorEl.textContent = `If ${email} has an account, a reset email is on its way. Open the link on this device; Scope will ask for your new password.`;
+      } catch (e) {
+        if (window.ErrorLog) window.ErrorLog.note(e, 'sign in: password reset');
+        loginErrorEl.textContent = `Could not send the reset email: ${e.message || 'try again shortly'}.`;
+      }
+      show(loginErrorEl);
+      loginForgotBtn.disabled = false;
+    });
+  }
+
   // Change your own password while signed in (v136). There was no way to at
   // all, so a forgotten password meant a reset email every time.
   const passwordBtn = document.getElementById('password-btn');
