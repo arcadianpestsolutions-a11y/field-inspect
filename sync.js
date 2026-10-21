@@ -304,11 +304,11 @@
   // from the link, and until v135 that was all: they were in, with no way to
   // choose the password they had come to set, so the next sign-in failed the
   // same way. Asked twice, typed by the person, sent straight to Supabase.
-  async function askForNewPassword() {
+  async function askForNewPassword(intro) {
     const ask = (msg) => window.Common.askPrompt(msg, '', { title: 'Choose a new password', okLabel: 'Save password', inputType: 'password' });
     for (let attempt = 0; attempt < 3; attempt++) {
-      const first = await ask('You came here from a password reset email. Type the new password you want (at least 8 characters).');
-      if (first == null) { window.Common.toast('Password not changed. You are signed in for now; use the reset email again to set one.'); return; }
+      const first = await ask(intro || 'You came here from a password reset email. Type the new password you want (at least 8 characters).');
+      if (first == null) { window.Common.toast('Password not changed.'); return; }
       if (String(first).length < 8) { window.Common.toast('That is shorter than 8 characters. Try again.'); continue; }
       const second = await ask('Type the same password again, to be sure.');
       if (second == null) return;
@@ -1557,6 +1557,8 @@
     currentUser,
     signIn,
     signOut,
+    // The Password button in the sync bar (v136).
+    changePassword: () => askForNewPassword('Type the new password you want (at least 8 characters).'),
     onAuthChange,
     onStatusChange,
     pullAll,

@@ -8674,6 +8674,8 @@
     assert(/Type the same password again/.test(src) && /second !== first/.test(src), 'asked twice, so a typo cannot lock them out');
     assert(/length < 8/.test(src), 'and at least 8 characters');
     assert(/auth\.updateUser\(\{ password: first \}\)/.test(src), 'saved to their own account');
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    assert(/id="password-btn"/.test(html) && /changePassword:/.test(src), 'and a Password button changes it any time while signed in (v136)');
   });
 
   // ---------- Save to phone (v132) ----------

@@ -465,6 +465,15 @@
     if (window.Sync) await Sync.signOut();
   });
 
+  // Change your own password while signed in (v136). There was no way to at
+  // all, so a forgotten password meant a reset email every time.
+  const passwordBtn = document.getElementById('password-btn');
+  if (passwordBtn) {
+    passwordBtn.addEventListener('click', () => {
+      if (window.Sync && window.Sync.changePassword) window.Sync.changePassword().catch(() => {});
+    });
+  }
+
   syncNowBtn.addEventListener('click', async () => {
     if (!window.Sync) return;
     const result = await Sync.pullAll();
