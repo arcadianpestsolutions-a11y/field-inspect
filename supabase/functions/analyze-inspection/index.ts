@@ -127,6 +127,25 @@ function extractJson(text: string): any {
   return JSON.parse(raw);
 }
 
+// One model call whose answer must be JSON, retried once if it is not. About
+// one reply in 190 in the October 2026 photo trial came back as broken JSON
+// (an unclosed string mid-answer); asking again almost always fixes it, and a
+// technician staring at "AI failed" for a one-off glitch is the worse outcome.
+async function callClaudeJson(systemPrompt: string, userContent: unknown[]): Promise<{ parsed: any; model: string }> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { text, model } = await callClaude(systemPrompt, userContent);
+    try {
+      return { parsed: extractJson(text), model };
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      lastError = err;
+      console.warn('[analyze-inspection] reply was not valid JSON, retrying once:', (err as Error).message);
+    }
+  }
+  throw lastError;
+}
+
 async function handleDraftReport(body: any) {
   const { frames, photos, audioBase64, audioMimeType, fieldSchema, reportType } = body;
   // `photos` is the current shape: zone-labelled photographs from a
@@ -243,8 +262,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
     for (const frame of frames.slice(0, 12)) userContent.push(imageBlock(frame.dataUrl));
   }
 
-  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
-  const parsed = extractJson(raw);
+  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
 
   return json({
     transcript: transcription.text,
@@ -304,8 +322,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Identify every distinct pest or insect actually visible in these photographs.' });
 
-  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
-  const parsed = extractJson(raw);
+  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
 
   const identifications = (Array.isArray(parsed.identifications) ? parsed.identifications : [])
     .filter((id: any) => id && typeof id.commonName === 'string' && id.commonName)
@@ -368,8 +385,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Identify every distinct tree or stump actually visible and assess its termite susceptibility.' });
 
-  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
-  const parsed = extractJson(raw);
+  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
 
   const trees = (Array.isArray(parsed.trees) ? parsed.trees : [])
     .filter((t: any) => t && typeof t.species === 'string' && t.species)
@@ -428,8 +444,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Sort each photo into a specific field only where it clearly, specifically belongs. Leave the rest unassigned.' });
 
-  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
-  const parsed = extractJson(raw);
+  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
 
   const targetKeys = new Set(targets.map((t: any) => `${t.sectionId}::${t.fieldId}`));
   const assignments = (Array.isArray(parsed.assignments) ? parsed.assignments : [])
@@ -522,8 +537,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences:
     text: "Trace the main building's exterior perimeter. Use the shadow and the straight-line/right-angle rules to place any corner the tree canopy hides.",
   });
 
-  const { text: raw, model: servedModel } = await callClaude(systemPrompt, userContent);
-  const parsed = extractJson(raw);
+  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
 
   // The client draws this straight onto a canvas, so every vertex must be a
   // finite number inside the image before it goes back.

@@ -6917,7 +6917,8 @@
     const src = await (await fetch('../supabase/functions/analyze-inspection/index.ts', { cache: 'reload' })).text();
     assert(/const AI_MODEL = 'claude-[a-z0-9-]+';/.test(src), 'one place for the model');
     for (const action of ['draft-report', 'identify-pest', 'identify-tree', 'sort-photos', 'trace-building']) {
-      assert(new RegExp(`'${action}': '${action}@\\d{4}-\\d{2}-\\d{2}'`).test(src), `${action} has a prompt version`);
+      // A same-day revision takes a letter (draft-report@2026-10-21b).
+      assert(new RegExp(`'${action}': '${action}@\\d{4}-\\d{2}-\\d{2}[a-z]?'`).test(src), `${action} has a prompt version`);
       assert(new RegExp(`aiStamp\\('${action}', servedModel\\)`).test(src), `and stamps its answer with it`);
     }
     assert(!/model: 'claude-/.test(src), 'no model is named anywhere but AI_MODEL');
