@@ -8667,6 +8667,15 @@
     }
   });
 
+  test('Sign in: a password reset link asks for the new password, typed twice, hidden (v135)', async () => {
+    const src = await (await fetch('../sync.js', { cache: 'reload' })).text();
+    assert(/_event === 'PASSWORD_RECOVERY'/.test(src), 'arriving from a reset email is noticed');
+    assert(/inputType: 'password'/.test(src), 'the new password is typed into a hidden field');
+    assert(/Type the same password again/.test(src) && /second !== first/.test(src), 'asked twice, so a typo cannot lock them out');
+    assert(/length < 8/.test(src), 'and at least 8 characters');
+    assert(/auth\.updateUser\(\{ password: first \}\)/.test(src), 'saved to their own account');
+  });
+
   // ---------- Save to phone (v132) ----------
   // Nothing may land on this machine's disk or open a real share sheet, so
   // the link click and the share call are both caught.

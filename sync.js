@@ -300,8 +300,29 @@
   function role() { return currentRole; }
   function isAdmin() { return currentRole === 'admin'; }
 
+  // Arriving from a "reset your password" email. Supabase signs the person in
+  // from the link, and until v135 that was all: they were in, with no way to
+  // choose the password they had come to set, so the next sign-in failed the
+  // same way. Asked twice, typed by the person, sent straight to Supabase.
+  async function askForNewPassword() {
+    const ask = (msg) => window.Common.askPrompt(msg, '', { title: 'Choose a new password', okLabel: 'Save password', inputType: 'password' });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const first = await ask('You came here from a password reset email. Type the new password you want (at least 8 characters).');
+      if (first == null) { window.Common.toast('Password not changed. You are signed in for now; use the reset email again to set one.'); return; }
+      if (String(first).length < 8) { window.Common.toast('That is shorter than 8 characters. Try again.'); continue; }
+      const second = await ask('Type the same password again, to be sure.');
+      if (second == null) return;
+      if (second !== first) { window.Common.toast('Those two did not match. Try again.'); continue; }
+      const { error } = await supabaseClient.auth.updateUser({ password: first });
+      if (error) { window.Common.toast(`Password not saved: ${error.message}`); return; }
+      window.Common.toast('New password saved. Use it next time you sign in.');
+      return;
+    }
+  }
+
   supabaseClient.auth.onAuthStateChange((_event, session) => {
     currentSession = session;
+    if (_event === 'PASSWORD_RECOVERY' && window.Common) setTimeout(() => { askForNewPassword().catch(() => {}); }, 800);
     // Role first, then listeners: app.js rebuilds its UI from these, and
     // doing it the other way round renders the wrong buttons for a moment.
     refreshRole().finally(() => {
