@@ -86,7 +86,7 @@ async function transcribeAudio(audioBase64: string, mimeType: string): Promise<T
 // photo, and the trial in ai-trial/ is the only evidence there is.
 const AI_MODEL = 'claude-sonnet-5';
 const PROMPT_VERSIONS: Record<string, string> = {
-  'draft-report': 'draft-report@2026-10-21',
+  'draft-report': 'draft-report@2026-10-21b',
   'identify-pest': 'identify-pest@2026-10-13',
   'identify-tree': 'identify-tree@2026-10-13',
   'sort-photos': 'sort-photos@2026-10-13',
@@ -198,6 +198,7 @@ Termite mud has its own look: a lead or tube of fairly even width that runs cont
 
 TREES, STUMPS, FENCE POSTS AND LANDSCAPING TIMBERS ARE TERMITE EVIDENCE TOO.
 A hollowed, gutted or tunnelled tree trunk, stump, fallen branch, fence post or garden-edge timber is very often termite damage in this region, and it is what these inspections record most. Do not file it only as tree notes or decay: record it under termite workings with workingsAreas "Trees" or "Landscaping Timbers", say plainly that it is POSSIBLE termite damage, and recommend probing to confirm. Fungal decay remains the alternative to name when the timber is soft and crumbling with no tunnelling.
+This applies to trees, stumps and garden timbers ONLY. On building timber (joists, bearers, fence palings, fascias, cladding, decking) "possible" is never enough: soft, broken or crumbling timber with no tunnelling and no mud is fungal decay — answer fungalDecayFound and leave the termite questions out. (In the October 2026 trial this exact spill-over turned two rotten joists into termite findings.)
 
 VENTILATION AND MOISTURE ARE OFTEN WHAT A PHOTO IS FOR.
 Mould on walls or ceilings, damp staining, condensation, a subfloor with few or blocked vents, or vents buried by soil or garden beds mean ventilation is Inadequate — answer it. Pooling water, downpipes discharging at the wall, and no stormwater drainage mean site drainage is Inadequate.
