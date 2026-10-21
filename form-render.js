@@ -47,6 +47,58 @@
     // Called whenever a value changes through a control here. Report.js uses
     // it to run the job-category prefill; most hosts will not need it.
     const onFieldChange = typeof o.onFieldChange === 'function' ? o.onFieldChange : null;
+    // Ready-made wording for a comment box (comment-templates.js): the host
+    // passes a lookup, field -> [{ label, text }]. Report.js does; a SWMS or
+    // an enquiry form passes nothing and its comment boxes stay plain.
+    const commentTemplates = typeof o.commentTemplates === 'function' ? o.commentTemplates : null;
+
+    // "📝 Common comments" under a comment box. Tapping one ADDS it to what is
+    // already there (never replaces a sentence somebody typed), on its own
+    // line, and saves exactly as typing would. The [brackets] in a template
+    // are left for the technician to fill in.
+    function addTemplatePicker(row, field, ta) {
+      const list = commentTemplates ? commentTemplates(field) : [];
+      if (!list || !list.length) return;
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'link-btn comment-templates-toggle';
+      toggle.textContent = `📝 Common comments (${list.length})`;
+      toggle.setAttribute('aria-expanded', 'false');
+      const panel = document.createElement('div');
+      panel.className = 'comment-templates hidden';
+      for (const t of list) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'comment-template';
+        const strong = document.createElement('strong');
+        strong.textContent = t.label;
+        const span = document.createElement('span');
+        span.textContent = t.text;
+        b.append(strong, span);
+        b.addEventListener('click', () => {
+          const current = ta.value.trimEnd();
+          ta.value = current ? `${current}\n${t.text}` : t.text;
+          setValue(field, ta.value);
+          panel.classList.add('hidden');
+          toggle.setAttribute('aria-expanded', 'false');
+          // Straight to the first [bracket], so filling it in is the next keystroke.
+          const at = ta.value.indexOf('[', ta.value.length - t.text.length);
+          ta.focus();
+          if (at >= 0) {
+            const end = ta.value.indexOf(']', at);
+            ta.setSelectionRange(at, end >= 0 ? end + 1 : at + 1);
+          } else {
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+          }
+        });
+        panel.appendChild(b);
+      }
+      toggle.addEventListener('click', () => {
+        const open = panel.classList.toggle('hidden') === false;
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      row.append(toggle, panel);
+    }
 
     function setValue(field, value) {
       values[field.id] = value;
@@ -273,6 +325,7 @@
         ta.value = values[field.id] || '';
         ta.addEventListener('input', () => setValue(field, ta.value));
         row.appendChild(ta);
+        addTemplatePicker(row, field, ta);
       } else if (field.type === 'date') {
         const input = document.createElement('input');
         input.type = 'date';

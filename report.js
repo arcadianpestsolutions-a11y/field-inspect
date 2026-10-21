@@ -2538,6 +2538,9 @@
     // statement passes no decorator and gets a plain row.
     decorateRow: (row, field) => decorateRowWithAi(row, field),
 
+    // Ready-made wording from Tal's own past reports (comment-templates.js).
+    commentTemplates: (field) => (window.CommentTemplates ? window.CommentTemplates.forField(field.id) : []),
+
     onFieldChange: (field, value) => {
       if (field.id === 'jobCategory') applyJobCategoryPrefill(value);
     },

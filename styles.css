@@ -3412,3 +3412,15 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 /* On the inspection screen a message would sit over Take photo and Gallery,
    so it rises above them there (v129). */
 body:has(#inspection-modal:not(.hidden)) .toast { bottom: calc(190px + var(--safe-bottom)); }
+
+/* ---- Common comments under a comment box (comment-templates.js, v139) ---- */
+.comment-templates-toggle { display: inline-block; margin-top: 6px; font-size: 0.85rem; }
+.comment-templates { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-height: 320px; overflow-y: auto; }
+.comment-template {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 9px 11px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font: inherit; font-size: 0.85rem; cursor: pointer;
+}
+.comment-template strong { font-size: 0.86rem; }
+.comment-template span { color: var(--text-dim); line-height: 1.4; }
+.comment-template:active { border-color: var(--accent); }

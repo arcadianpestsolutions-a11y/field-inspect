@@ -8681,6 +8681,100 @@
     assert(/redirectTo = `\$\{location\.origin\}\$\{location\.pathname\}`/.test(src), 'which comes back to the same copy of Scope');
   });
 
+  // ---------- Common comments and the Formitize gaps (v139) ----------
+  test('Common comments: every template belongs to a real comment box, and none is a finished finding', async () => {
+    const win = frame.contentWindow;
+    const all = win.CommentTemplates.all;
+    const fields = {};
+    for (const s of win.REPORT_SCHEMA) for (const f of s.fields || []) fields[f.id] = f;
+    let n = 0;
+    for (const [id, list] of Object.entries(all)) {
+      assert(fields[id], `${id} is a field in the report`);
+      assertEqual(fields[id].type, 'textarea', `${id} is a comment box`);
+      for (const t of list) {
+        n++;
+        assert(t.label && t.label.length <= 40, `a short label for the picker: "${t.label}"`);
+        assert(t.text && t.text.length > 10, 'and real wording');
+        assert(!/\$\d/.test(t.text), `no price from one job baked into a template: ${t.label}`);
+        assert(!/\b0[2-9]\d{8}\b|\b04\d{2} ?\d{3} ?\d{3}\b|@/.test(t.text), `no client contact details: ${t.label}`);
+        assert(!/\b(no live termites|termite free|free of termites)\b/i.test(t.text) || /were found at the time of inspection/i.test(t.text),
+          `nothing that reads as a clearance certificate: ${t.label}`);
+      }
+    }
+    assert(n >= 100, `a useful library, got ${n}`);
+  });
+
+  test('Common comments: a tap adds the wording under what was typed and saves it', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const host = doc.createElement('div');
+    doc.body.appendChild(host);
+    try {
+      const values = { antCappingDetails: 'Checked from the subfloor hatch.' };
+      const changes = [];
+      const r = win.FormRender.create({
+        values, container: host,
+        commentTemplates: (f) => win.CommentTemplates.forField(f.id),
+        onFieldChange: (f, v) => changes.push([f.id, v]),
+      });
+      const section = { id: 'conducive', fields: [{ id: 'antCappingDetails', label: 'Details', type: 'textarea' }, { id: 'plain', label: 'Plain', type: 'textarea' }] };
+      r.renderSection(section);
+      const toggles = host.querySelectorAll('.comment-templates-toggle');
+      assertEqual(toggles.length, 1, 'only a box with templates gets the picker');
+      assert(/Common comments \(\d+\)/.test(toggles[0].textContent));
+      const panel = host.querySelector('.comment-templates');
+      assert(panel.classList.contains('hidden'), 'closed until asked for');
+      toggles[0].click();
+      assert(!panel.classList.contains('hidden'), 'opens');
+      const rusted = Array.from(panel.querySelectorAll('.comment-template')).find((b) => /Rusted throughout/.test(b.textContent));
+      rusted.click();
+      const ta = host.querySelector('textarea');
+      assert(ta.value.startsWith('Checked from the subfloor hatch.\n'), 'what was typed is kept');
+      assert(/rusted through in most places/.test(ta.value), 'and the template is added after it');
+      assertEqual(values.antCappingDetails, ta.value, 'saved exactly as typing would');
+      assert(changes.some(([id]) => id === 'antCappingDetails'), 'and the host hears about it');
+      assert(panel.classList.contains('hidden'), 'the list closes after a pick');
+    } finally { host.remove(); }
+
+    const plain = doc.createElement('div');
+    doc.body.appendChild(plain);
+    try {
+      const r2 = win.FormRender.create({ values: {}, container: plain });
+      r2.renderSection({ id: 'x', fields: [{ id: 'antCappingDetails', label: 'Details', type: 'textarea' }] });
+      assertEqual(plain.querySelectorAll('.comment-templates-toggle').length, 0, 'a form that does not ask for templates (a SWMS) gets none');
+    } finally { plain.remove(); }
+  });
+
+  test('Report: the questions Formitize asked and Scope did not are there now, and no old answer is lost', async () => {
+    const win = frame.contentWindow;
+    const f = {};
+    for (const s of win.REPORT_SCHEMA) for (const x of s.fields || []) f[x.id] = x;
+    for (const id of ['fungalDecayAreas', 'fungalDecayLocation', 'siteDrainageDetails', 'subfloorDrainageDetails', 'ventilationDetails',
+      'weepHoleDetails', 'waterLeakAreas', 'waterLeakDetails', 'tankDetails', 'otherConduciveFound', 'otherConduciveDetails',
+      'mouldFound', 'externalTimbers', 'majorSafetyHazard', 'majorSafetyHazardDetails', 'liveTermitesAreas', 'priorTreatmentDescription',
+      'durableNoticeDate', 'highRiskDetails', 'otherHinderedDetails', 'peoplePresent', 'propertyComments', 'slabEdgeComplies']) {
+      assert(f[id], `${id} is in the report`);
+    }
+    // Options were only ever added. Every answer a saved report could hold
+    // before v139 is still a valid answer.
+    const before = {
+      hinderedAreas: ['The Interior', 'The Exterior', 'Subfloor', 'Roof Void'],
+      exteriorObstructions: ['Stored Articles', 'Dense Vegetation', 'Paving/Decking'],
+      subfloorObstructions: ['Low Clearance', 'Stored Articles', 'Plumbing'],
+      roofVoidObstructions: ['Insulation', 'Sarking', 'Low Clearance'],
+      workingsAreas: ['The Exterior', 'The Interior', 'The Site', 'Landscaping Timbers', 'Trees', 'Subfloor', 'Roof Void'],
+      damageSeverity: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive'],
+      wallConstruction: ['Brick Veneer', 'Full Brick', 'Weatherboard', 'Fibro/Asbestos Cement', 'Concrete/Block', 'Mixed/Other'],
+      ventilation: ['Adequate', 'Inadequate'],
+      antCappingCondition: ['Adequate', 'Inadequate', 'Not present'],
+    };
+    for (const [id, opts] of Object.entries(before)) {
+      for (const o of opts) assert(f[id].options.includes(o), `${id} still offers "${o}"`);
+    }
+    assert(!f.treatmentComments.showIf, 'treatment comments show even when no treatment is recommended ("system in place")');
+    assert(f.majorSafetyHazard.confirmBeforeUse, 'a safety hazard answer from the AI must be confirmed by the inspector');
+  });
+
   // ---------- Save to phone (v132) ----------
   // Nothing may land on this machine's disk or open a real share sheet, so
   // the link click and the share call are both caught.

@@ -58,6 +58,8 @@ const REPORT_SCHEMA = [
       { id: 'inspectionDate', label: 'Inspection Date', type: 'date', required: true },
       { id: 'inspectionTime', label: 'Inspection Time', type: 'time' },
       { id: 'weather', label: 'Weather Conditions at time of inspection', type: 'text', aiFillable: true },
+      // v139, from Tal's Formitize Timber Pest Inspection form (AS 4349.3).
+      { id: 'peoplePresent', label: 'People present at the time of inspection', type: 'multiselect', options: ['Client', 'Vendor', 'Purchaser', 'Real Estate Agent', 'Tenant'] },
       {
         id: 'inspectionClassification',
         label: 'Inspection Classification (AS 3660.2-2017)',
@@ -134,7 +136,9 @@ const REPORT_SCHEMA = [
       },
       {
         id: 'wallConstruction', label: 'Wall Construction', type: 'select', required: true, aiFillable: true,
-        options: ['Brick Veneer', 'Full Brick', 'Weatherboard', 'Fibro/Asbestos Cement', 'Concrete/Block', 'Mixed/Other'],
+        // 'Cladding' and 'Stone' added in v139: Cladding was the second most
+        // common answer in Tal's last 60 Formitize inspections (14 of 60).
+        options: ['Brick Veneer', 'Full Brick', 'Weatherboard', 'Cladding', 'Fibro/Asbestos Cement', 'Concrete/Block', 'Stone', 'Mixed/Other'],
         default: 'Brick Veneer',
       },
       {
@@ -160,6 +164,7 @@ const REPORT_SCHEMA = [
         options: ['At the time of inspection the property was occupied', 'At the time of inspection the property was vacant'],
         default: 'At the time of inspection the property was occupied',
       },
+      { id: 'propertyComments', label: 'Additional Comments', type: 'textarea' },
     ],
   },
   {
@@ -187,15 +192,20 @@ const REPORT_SCHEMA = [
     fields: [
       { id: 'accessPhotos', label: 'Photos of Areas Inspected / Obstructions', type: 'photos', triggersAiFill: true },
       { id: 'hinderedObstructions', label: 'Were there any obstructions that may conceal possible termite attack?', type: 'yesno', required: true, aiFillable: true },
-      { id: 'hinderedAreas', label: 'Hindered Areas', type: 'multiselect', options: ['The Interior', 'The Exterior', 'Subfloor', 'Roof Void'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
-      { id: 'interiorObstructions', label: 'Interior Obstructions', type: 'multiselect', options: ['Furniture', 'Flooring', 'Fixtures', 'Items/belongings stored against wall', 'Items/belongings stored in cupboards'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
-      { id: 'exteriorObstructions', label: 'Exterior Obstructions', type: 'multiselect', options: ['Stored Articles', 'Dense Vegetation', 'Paving/Decking'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
-      { id: 'subfloorObstructions', label: 'Subfloor Obstructions', type: 'multiselect', options: ['Low Clearance', 'Stored Articles', 'Plumbing'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
-      { id: 'roofVoidObstructions', label: 'Roof Void Obstructions', type: 'multiselect', options: ['Insulation', 'Sarking', 'Low Clearance'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
+      // Option lists widened in v139 to what Tal's Formitize form offered and
+      // what he actually typed in as "Other" over 60 inspections. Options are
+      // only ever added, never renamed, so saved reports keep their answers.
+      { id: 'hinderedAreas', label: 'Hindered Areas', type: 'multiselect', options: ['The Interior', 'The Exterior', 'Subfloor', 'Roof Void', 'Outbuildings', 'The Site', 'Fences', 'Retaining Walls', 'Landscaping Timbers', 'Other'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
+      { id: 'interiorObstructions', label: 'Interior Obstructions', type: 'multiselect', options: ['Furniture', 'Flooring', 'Fixtures', 'Items/belongings stored against wall', 'Items/belongings stored in cupboards', 'Limited access to skirting boards', 'Locked room or storage'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
+      { id: 'exteriorObstructions', label: 'Exterior Obstructions', type: 'multiselect', options: ['Stored Articles', 'Dense Vegetation', 'Paving/Decking', 'Soil / garden beds', 'Stones / gravel', 'Paths against the wall', 'Air conditioning unit', 'Water tanks', 'Storage against garage walls'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
+      { id: 'subfloorObstructions', label: 'Subfloor Obstructions', type: 'multiselect', options: ['Low Clearance', 'Stored Articles', 'Plumbing', 'Ducting', 'Insulation', 'No access to subfloor'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
+      { id: 'roofVoidObstructions', label: 'Roof Void Obstructions', type: 'multiselect', options: ['Insulation', 'Sarking', 'Low Clearance', 'Air conditioning ducting', 'Stored articles', 'Low clearance at the outside edges', 'Height restrictions', 'No manhole / access blocked', 'Skillion roof (no void)'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
+      { id: 'otherHinderedDetails', label: 'Other hindered area details', type: 'textarea', showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'obstructionPhotos', label: 'Obstruction Photos', type: 'photos', showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'restrictedAccess', label: 'Were there any normally accessible areas that had restricted access?', type: 'yesno', required: true, aiFillable: true },
       { id: 'restrictedAccessDetails', label: 'Restricted Access Details', type: 'textarea', showIf: { field: 'restrictedAccess', equals: 'Yes' }, aiFillable: true },
       { id: 'highRiskAreas', label: 'Were there any High Risk Area(s) to which access should be gained or fully gained?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'highRiskDetails', label: 'High risk areas: details & recommendations', type: 'textarea', showIf: { field: 'highRiskAreas', equals: 'Yes' }, aiFillable: true },
       { id: 'invasiveRecommended', label: 'Is an Invasive Inspection recommended to this property?', type: 'yesno', required: true, aiFillable: true },
       { id: 'invasiveComments', label: 'Invasive Inspection Comments', type: 'textarea', showIf: { field: 'invasiveRecommended', equals: 'Yes' }, aiFillable: true },
     ],
@@ -212,18 +222,25 @@ const REPORT_SCHEMA = [
       { id: 'liveTermitesFound', label: 'Were live termites found at the time of the inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'termiteSpecies', label: 'Termite species (genus/species), if determinable', type: 'text', showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'riskOfAssociatedDamage', label: 'Potential for associated damage arising from this activity', type: 'select', options: ['Low', 'Moderate', 'High'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'liveTermitesAreas', label: 'Termites were found but not necessarily limited to the following areas', type: 'multiselect', options: ['Tree stumps', 'The Interior', 'The Exterior', 'Subfloor', 'Roof Void', 'Outbuildings', 'The Site', 'Fences', 'Retaining Walls', 'Landscaping Timbers'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'liveTermitesLocation', label: 'Location details', type: 'textarea', showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'nestFound', label: 'Was a termite nest found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'nestLocation', label: 'Nest Location(s)', type: 'textarea', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
       { id: 'nestPhotos', label: 'Nest Photos', type: 'photos', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
       { id: 'workingsFound', label: 'Was evidence of termite workings or damage found?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
-      { id: 'workingsAreas', label: 'Areas where workings/damage were found', type: 'multiselect', options: ['The Exterior', 'The Interior', 'The Site', 'Landscaping Timbers', 'Trees', 'Subfloor', 'Roof Void'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'workingsAreas', label: 'Areas where workings/damage were found', type: 'multiselect', options: ['The Exterior', 'The Interior', 'The Site', 'Landscaping Timbers', 'Trees', 'Subfloor', 'Roof Void', 'Fences', 'Retaining Walls', 'Outbuildings', 'Monitoring station'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'evidenceDetails', label: 'Details of the nature of the evidence found', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'damagePhotos', label: 'Damage Photos', type: 'photos', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
-      { id: 'damageSeverity', label: 'Damage appears to be', type: 'select', options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'damageSeverity', label: 'Damage appears to be', type: 'select', options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive', 'Extensive to Severe', 'Severe'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'findingsAdditionalComments', label: 'Additional Comments', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
-      { id: 'treatmentComments', label: 'Treatment Comments', type: 'textarea', showIf: { field: 'treatmentRecommended', equals: 'Yes' }, aiFillable: true },
+      // Shown whatever the answer since v139: "Termite management system in
+      // place" was one of Tal's commonest comments here, written when NO
+      // treatment was recommended.
+      { id: 'treatmentComments', label: 'Treatment Comments', type: 'textarea', aiFillable: true },
       { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
+      { id: 'priorTreatmentDescription', label: 'Description of the evidence found', type: 'multiselect', options: ['Treatment sticker in meter box', 'Treatment sticker under kitchen sink', 'Drill holes in slab or paving', 'Bait / monitoring stations', 'Physical barrier visible', 'History known from client'], showIf: { field: 'priorTreatmentEvidence', equals: 'Yes' }, aiFillable: true },
+      { id: 'priorTreatmentComments', label: 'Previous treatment: comments', type: 'textarea', showIf: { field: 'priorTreatmentEvidence', equals: 'Yes' } },
       { id: 'existingManagementSystem', label: 'Existing termite management system present, type & condition', type: 'textarea', aiFillable: true },
       // The gate for the action-plan half of this report. Answering "adequate"
       // ends the document here; any other answer opens the proposed-works and
@@ -250,6 +267,8 @@ const REPORT_SCHEMA = [
       // subfloor) is evidence, not just a checkbox — the photo is what a
       // client or a later inspector actually needs to see.
       { id: 'durableNoticePhotos', label: 'Durable Notice Photos', type: 'photos', showIf: { field: 'durableNoticeFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'durableNoticeDate', label: 'Date of treatment (if known)', type: 'text', showIf: { field: 'durableNoticeFound', equals: 'Yes' } },
+      { id: 'durableNoticeDetails', label: 'Durable notice: comments', type: 'textarea', showIf: { field: 'durableNoticeFound', equals: 'Yes' } },
       // AS 4349.3-2010 covers FOUR timber pest categories: subterranean
       // termites, dampwood termites, borers of seasoned timber, and wood
       // decay fungi. Termites and fungal decay had proper fields; borers
@@ -279,6 +298,12 @@ const REPORT_SCHEMA = [
         showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true,
       },
       { id: 'borerPhotos', label: 'Borer Damage Photos', type: 'photos', showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true },
+      // AS 4349.3 requires a Major Safety Hazard arising from timber pest
+      // damage to be reported (Tal's Formitize TPI form asked it for termite
+      // damage, borers and fungal decay separately; one question covers all
+      // three here, with the details saying which).
+      { id: 'majorSafetyHazard', label: 'Does any timber pest damage found present a Major Safety Hazard?', type: 'yesno', aiFillable: true, confirmBeforeUse: true },
+      { id: 'majorSafetyHazardDetails', label: 'Details & location of the safety hazard (must be rectified by a licensed builder)', type: 'textarea', showIf: { field: 'majorSafetyHazard', equals: 'Yes' }, aiFillable: true },
       { id: 'otherTimberPestsObserved', label: 'Evidence of other timber pests observed (e.g. drywood termites) — outside the scope of this Standard but noted as a duty to warn', type: 'textarea', aiFillable: true },
       { id: 'reinspectionInterval', label: 'A full inspection and written report should be conducted at this property every', type: 'select', options: ['3 months', '6 months', '12 months'], default: '12 months' },
       { id: 'susceptibility', label: 'In our opinion, the susceptibility of this property to termites is considered to be', type: 'select', required: true, options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true, confirmBeforeUse: true },
@@ -299,25 +324,49 @@ const REPORT_SCHEMA = [
       // added to treeAssessmentNotes with one tap, not written automatically.
       { id: 'treePhotos', label: 'Trees Near the Property', type: 'photos', identifiesTrees: true },
       { id: 'treeAssessmentNotes', label: 'Tree Species & Termite Susceptibility', type: 'textarea', aiFillable: true },
+      // v139: the "Details & Recommendations" boxes below are where Tal
+      // wrote 80-odd of his 328 Formitize comments (drainage, leaks,
+      // ventilation, weepholes...). Scope had the question and nowhere to
+      // say what was wrong or what to do about it.
       { id: 'waterLeaksFound', label: 'Were water leaks found at the time of inspection?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'waterLeakAreas', label: 'Visible leaks were located in the following areas', type: 'multiselect', options: ['Down Pipes', 'Gutters', 'Air conditioning overflow', 'Taps', 'Hot Water Service relief valve', 'Bathroom', 'Kitchen', 'Laundry', 'Shower', 'Plumbing under floor', 'Garage', 'Roof'], showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'waterLeakDetails', label: 'Water leaks: details & recommendations', type: 'textarea', showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
       { id: 'waterTankPresent', label: 'Was a water tank(s) located at the time of inspection?', type: 'yesno', aiFillable: true },
       { id: 'tankDrainageWorkNeeded', label: 'Is there a need for work to rectify overflow drainage?', type: 'yesno', showIf: { field: 'waterTankPresent', equals: 'Yes' }, aiFillable: true },
+      { id: 'tankDetails', label: 'Overflow drainage: details & recommendations', type: 'textarea', showIf: { field: 'tankDrainageWorkNeeded', equals: 'Yes' }, aiFillable: true },
       { id: 'highMoistureFound', label: 'Were high moisture readings found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'moistureMeterType', label: 'Moisture meter used', type: 'text', default: '"TRAMEX" encounter moisture meter', showIf: { field: 'highMoistureFound', equals: 'Yes' } },
       { id: 'moistureDetails', label: 'Details & Recommendations', type: 'textarea', showIf: { field: 'highMoistureFound', equals: 'Yes' }, aiFillable: true },
       { id: 'fungalDecayFound', label: 'Was evidence of Fungal Decay found at the time of the inspection?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'fungalDecayAreas', label: 'Visible decay appears to be located in the following areas', type: 'multiselect', options: ['Fence Posts', 'Landscaping Timbers', 'Decorative Timbers', 'Timber Joists', 'Timber Bearers', 'Pergola / Verandah Post(s)', 'Verandah / Deck', 'Retaining Wall', 'Fascia Boards', 'Barge Boards', 'Door Jambs', 'Window frames / sills', 'Wall cladding'], showIf: { field: 'fungalDecayFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'fungalDecayLocation', label: 'Fungal decay: location(s)', type: 'textarea', showIf: { field: 'fungalDecayFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'fungalDecayComments', label: 'Fungal decay: comments', type: 'textarea', showIf: { field: 'fungalDecayFound', equals: 'Yes' } },
+      { id: 'mouldFound', label: 'Was evidence of mould growth found at the time of inspection?', type: 'yesno', aiFillable: true },
+      { id: 'mouldDetails', label: 'Mould: details & recommendations', type: 'textarea', showIf: { field: 'mouldFound', equals: 'Yes' }, aiFillable: true },
       { id: 'siteDrainage', label: 'Site drainage appears to be generally', type: 'select', options: ['Adequate', 'Inadequate'], aiFillable: true, default: 'Adequate' },
+      { id: 'siteDrainageDetails', label: 'Site drainage: details & recommendations', type: 'textarea', showIf: { field: 'siteDrainage', equals: 'Inadequate' }, aiFillable: true },
       { id: 'subfloorDrainage', label: 'Subfloor drainage appears to be generally', type: 'select', options: ['Adequate', 'Inadequate', 'Not applicable'], aiFillable: true, default: 'Adequate' },
-      { id: 'ventilation', label: 'At the time of inspection, ventilation appeared to be', type: 'select', options: ['Adequate', 'Inadequate'], aiFillable: true, default: 'Adequate' },
-      { id: 'antCappingCondition', label: 'Termite shields (ant capping) appear to be', type: 'select', options: ['Adequate', 'Inadequate', 'Not present'], aiFillable: true, default: 'Adequate' },
+      { id: 'subfloorDrainageDetails', label: 'Subfloor drainage: details & recommendations', type: 'textarea', showIf: { field: 'subfloorDrainage', equals: 'Inadequate' }, aiFillable: true },
+      { id: 'ventilation', label: 'At the time of inspection, ventilation appeared to be', type: 'select', options: ['Adequate', 'Inadequate', 'Not applicable'], aiFillable: true, default: 'Adequate' },
+      { id: 'ventilationDetails', label: 'Ventilation: details & recommendations', type: 'textarea', showIf: { field: 'ventilation', equals: 'Inadequate' }, aiFillable: true },
+      { id: 'antCappingCondition', label: 'Termite shields (ant capping) appear to be', type: 'select', options: ['Adequate', 'Inadequate', 'Not present', 'Not applicable'], aiFillable: true, default: 'Adequate' },
       { id: 'antCappingDetails', label: 'Details & Recommendations', type: 'textarea', showIf: { field: 'antCappingCondition', equals: 'Inadequate' }, aiFillable: true },
       { id: 'weepHolesClear', label: 'Weep holes are clear and visible', type: 'yesno', aiFillable: true, default: 'Yes' },
+      { id: 'weepHoleDetails', label: 'Weep holes: details & recommendations', type: 'textarea', showIf: { field: 'weepHolesClear', equals: 'No' }, aiFillable: true },
+      { id: 'externalTimbers', label: 'The fitness for purpose of visible structural timber exposed to the weather appears to be', type: 'select', options: ['Adequate', 'Inadequate', 'Not applicable'], aiFillable: true },
+      { id: 'externalTimberDetails', label: 'Exposed timbers: details & recommendations', type: 'textarea', showIf: { field: 'externalTimbers', equals: 'Inadequate' }, aiFillable: true },
       // v138. AS 3660.2's slab edge inspection zone: a concealed slab edge is
       // where termites come in unseen. The Formitize form Tal used before
       // Scope asked this on every inspection and Scope never did; 33 of the
       // 189 findings photos in the October trial were of exactly this.
       { id: 'slabEdgeComplies', label: 'Does the slab edge inspection zone fully comply (exposed and clear all round)?', type: 'yesno', aiFillable: true },
       { id: 'slabEdgeDetails', label: 'Details & Recommendations', type: 'textarea', showIf: { field: 'slabEdgeComplies', equals: 'No' }, aiFillable: true },
+      { id: 'slabEdgeComments', label: 'Slab edge: additional comments', type: 'textarea' },
+      // Tal reported "other conducive conditions" on 52 of his last 60
+      // inspections (bushland within 75 m, timber debris, posts in soil...).
+      { id: 'otherConduciveFound', label: 'Any other conducive conditions to report on?', type: 'yesno', aiFillable: true },
+      { id: 'otherConduciveDetails', label: 'Details of other conducive conditions', type: 'textarea', showIf: { field: 'otherConduciveFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'otherConducivePhotos', label: 'Other conducive condition photos', type: 'photos', showIf: { field: 'otherConduciveFound', equals: 'Yes' }, aiFillable: true },
     ],
   },
   // ---------- The action-plan half, shown only when it is needed ----------

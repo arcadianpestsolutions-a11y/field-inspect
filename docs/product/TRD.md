@@ -56,7 +56,7 @@ See also `../ARCHITECTURE.md` (script map) and `../AUDIT.md` (findings, debt).
 | Privacy | Client data only to the business, the client, and listed processors; opt-out honoured within one send cycle |
 
 ## 5. Testing requirements
-* Browser suite `tests/run-tests.html`: 561 tests, no framework, about 70 s, own
+* Browser suite `tests/run-tests.html`: 564 tests, no framework, about 70 s, own
   IndexedDB. **Two clean back-to-back runs before any release.** GitHub Actions also
   runs it headless on every push (`.github/workflows/tests.yml`).
 * Use `waitFor(predicate)`, never fixed waits. Tests must not depend on today's date:
