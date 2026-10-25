@@ -20,7 +20,7 @@ It produces the compliance documents a pest inspection legally requires, from
 a phone, in a subfloor, with no signal.
 
 **Live:** `https://arcadianpestsolutions-a11y.github.io/field-inspect/`
-**Current build:** v140 · **564 tests passing** (as of 21 Oct 2026)
+**Current build:** v141 · **567 tests passing** (as of 21 Oct 2026)
 
 **Read next:** `README.md` (run, test, deploy), `docs/ARCHITECTURE.md`,
 `docs/AUDIT.md` (findings and honest debt), and `docs/product/` (PRD, TRD, app
@@ -104,7 +104,7 @@ and `report.js` open with a table of contents.
 
 ### Tests and tools
 
-`tests/run-tests.html` (564 tests), `tests/chaos.js` + `chaos-scenarios.js`
+`tests/run-tests.html` (567 tests), `tests/chaos.js` + `chaos-scenarios.js`
 (GitHub Actions runs the suite on every push: `.github/workflows/tests.yml`),
 (random-tapper; **demo mode only**), `tools/backup-scope.ps1` (weekly backup;
 run with `-Check` first), `docs/BACKUP-RUNBOOK.md`.
@@ -130,6 +130,7 @@ verification OFF is recorded in `supabase/config.toml`).
 | `calendar-feed` | **JWT verification OFF.** Token in query = credential. |
 | `client-portal` | **JWT verification OFF.** Token in query = credential. |
 | `portal-chat` | **JWT verification OFF.** Token in query = credential. The client page assistant (migration 037). Off unless `organisations.portal_assistant_enabled`. Writes only `portal_messages` and `portal_requests`; never the referral register. Needs `ANTHROPIC_API_KEY`. |
+| `sharepoint-files` | Copies client files to SharePoint (Arcadian Clients site), one folder per client; log in `sharepoint_files` (migration 038). Needs `MS_TENANT_ID`, `MS_CLIENT_ID`, `SHAREPOINT_SITE` and Tal's `MS_CLIENT_SECRET`; answers `{configured:false}` without them. |
 | `sms-inbound` | **JWT verification OFF.** Secret `?k=` (`SMS_INBOUND_TOKEN`) = credential. Records STOP by phone number. Answers 503 until the secret is set. |
 | `schedule-agent` | Tool-using assistant over the diary |
 | `check-email-status`, `xero` | |

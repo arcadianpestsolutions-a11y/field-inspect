@@ -8775,6 +8775,57 @@
     assert(f.majorSafetyHazard.confirmBeforeUse, 'a safety hazard answer from the AI must be confirmed by the inspector');
   });
 
+  // ---------- SharePoint client folders (v141, sharepoint-files, migration 038) ----------
+  let __sp = null;
+  const spMod = async () => (__sp || (__sp = await import('../supabase/functions/_shared/sharepoint-names.js')));
+
+  test('SharePoint: a client folder is named so Tal recognises it, and SharePoint accepts it', async () => {
+    const S = await spMod();
+    assertEqual(S.clientFolderName({ clientName: 'Faye Swain', address: '16 Sanctuary Drive, Tahmoor New South Wales, 2573 Australia' }),
+      'Faye Swain - 16 Sanctuary Drive Tahmoor', 'name and street, no state, postcode or country');
+    assertEqual(S.clientFolderName({ clientName: 'Smith/Jones: "Strata"', address: '' }), 'Smith Jones Strata',
+      'characters SharePoint refuses are taken out');
+    assertEqual(S.clientFolderName({ clientName: '', address: '', fallbackId: 'job1' }), 'Client job1', 'never an empty name');
+    assert(!/[.\s]$/.test(S.clean('Report. ')), 'no trailing dot or space');
+    assertEqual(S.clean('CON'), 'CON_', 'a Windows-reserved name is changed so it can sync to a PC');
+    assert(S.clientFolderName({ clientName: 'x'.repeat(300), address: 'y'.repeat(300) }).length <= 120, 'and bounded');
+    assert(!/#|%/.test(S.clean('Unit #3 100%')), '# and % break pasted links');
+  });
+
+  test('SharePoint: files are dated in Sydney time and say what they are', async () => {
+    const S = await spMod();
+    // 9:30 pm on 20 Oct in Sydney is 10:30 UTC the same day; 1 am on 21 Oct
+    // Sydney is still 20 Oct in UTC. The Sydney date is the one that counts.
+    assertEqual(S.sydneyDate(Date.parse('2026-10-20T14:30:00Z')), '2026-10-21', 'after midnight in Sydney is the next day');
+    assertEqual(S.reportFileName({ documentType: 'timber_pest_inspection', finalizedAt: Date.parse('2026-10-21T02:00:00Z'), address: '12 Example St, Camden NSW 2570' }),
+      '2026-10-21 Timber Pest Inspection - 12 Example St Camden.pdf');
+    assertEqual(S.reportFileName({ documentType: 'mystery', finalizedAt: Date.parse('2026-10-21T02:00:00Z'), address: '' }), '2026-10-21 Report.pdf');
+    assertEqual(S.invoiceFileName({ number: 'INV-00918', issuedAt: '2026-10-21' }), '2026-10-21 Invoice INV-00918.pdf');
+    assertEqual(S.photoFileName({ zone: 'Subfloor', index: 3, ext: 'JPG' }), 'Subfloor 03.jpg', 'numbered per zone');
+    assertEqual(S.photoFileName({ zone: '', index: 1, ext: 'exe;rm' }), 'Photo 01.jpg', 'a strange extension becomes jpg');
+    assertEqual(S.graphPath(['A & B', 'x/y.pdf']), 'A%20%26%20B/x%2Fy.pdf', 'each part encoded on its own');
+    // Every document Scope can finalise has a proper title.
+    const win = frame.contentWindow;
+    const types = win.ReportUI.documentTypesFor('termite').concat(win.ReportUI.documentTypesFor('pest_treatment'));
+    for (const t of types) assert(S.DOCUMENT_TITLES[t.id], `a file title for ${t.id}`);
+  });
+
+  test('SharePoint: the copier is signed-in only, limited to your own business, and silent until set up', async () => {
+    const src = await (await fetch('../supabase/functions/sharepoint-files/index.ts', { cache: 'reload' })).text();
+    const cfg = await (await fetch('../supabase/config.toml', { cache: 'reload' })).text();
+    assert(!/\[functions\.sharepoint-files\]/.test(cfg), 'JWT checks stay on: only a signed-in user can ask for a copy');
+    assert(/job\.org_id !== orgId/.test(src), 'a job from another business is refused');
+    assert(/if \(!configured\(\)\) return json\(\{ configured: false \}\)/.test(src), 'nothing happens until the secret is set');
+    assert(!/MS_CLIENT_SECRET\s*=\s*['"][^'"]/.test(src), 'the secret is never written in the code');
+    assert(/Sites\.Selected/.test(src), 'and the permission it relies on is the one-site kind');
+    const sql = await (await fetch('../supabase-migration-038-sharepoint-files.sql', { cache: 'reload' })).text();
+    assert(/revoke insert, update, delete, truncate on public\.sharepoint_files from authenticated/.test(sql), 'the app only reads the copy log');
+    const sp = await (await fetch('../sharepoint.js', { cache: 'reload' })).text();
+    assert(/!window\.IS_TEST && !window\.IS_DEMO/.test(sp), 'tests and the demo never call it');
+    assert(frame.contentWindow.SharePoint && typeof frame.contentWindow.SharePoint.copyAll === 'function', 'the module loads');
+    assertEqual((await frame.contentWindow.SharePoint.status()).configured, false, 'in test mode it reports not set up, without a network call');
+  });
+
   // ---------- Save to phone (v132) ----------
   // Nothing may land on this machine's disk or open a real share sheet, so
   // the link click and the share call are both caught.

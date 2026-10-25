@@ -98,6 +98,7 @@ Rules learned the hard way:
 | `send-client-message` | signed-in user, or service key (schedule) | on | Booking/report/day-before/reminder messages; recipient read from the job row |
 | `client-portal` | anyone with a valid link token | **off** | Client report page and quote acceptance |
 | `portal-chat` | anyone with a valid link token | **off** | Client page assistant (v134): answers from that page's facts only, passes call backs, bookings and referrals to the team. Does nothing unless switched on in Business details |
+| `sharepoint-files` | signed-in user, own business only | on | Copies finalised reports, sent invoices and job photos into the client's folder on the Arcadian Clients SharePoint site (v141). Microsoft app "Scope - client files", Sites.Selected. Silent until `MS_CLIENT_SECRET` is set |
 | `sms-inbound` | ClickSend, secret `?k=` | **off** | STOP handling and replies |
 | `calendar-feed` | calendar apps, token | **off** | .ics feed |
 | `send-due-reminders` | retired (410) | off | Kept so old schedules fail loudly |

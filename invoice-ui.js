@@ -484,6 +484,9 @@
         renderEmailStatus();
       }
       toast('Invoice emailed to ' + to);
+      // The sent invoice also goes in the client's SharePoint folder
+      // (sharepoint.js; silent until SharePoint is set up).
+      if (window.SharePoint) window.SharePoint.copyInvoiceQuietly(current, pdfBlob);
     } catch (err) {
       if (window.ErrorLog) window.ErrorLog.note(err, 'invoice: email the invoice');
       toast('Could not email the invoice: ' + (err.message || err));

@@ -2371,6 +2371,49 @@
       card.appendChild(notesWrap);
     }
 
+    // SharePoint copies (sharepoint.js). Says plainly whether it is set up,
+    // and offers one button to copy every finalised job's files.
+    if (window.SharePoint && window.supabaseClient && !window.IS_DEMO && !window.IS_TEST) {
+      const head = document.createElement('h3');
+      head.className = 'business-subhead';
+      head.textContent = 'SharePoint client folders';
+      const state = document.createElement('p');
+      state.className = 'business-hint';
+      state.id = 'business-sharepoint-state';
+      state.textContent = 'Checking…';
+      const copyAllBtn = document.createElement('button');
+      copyAllBtn.type = 'button';
+      copyAllBtn.className = 'btn btn-outline full hidden';
+      copyAllBtn.id = 'business-sharepoint-copy-all';
+      copyAllBtn.textContent = 'Copy all finalised jobs to SharePoint';
+      copyAllBtn.addEventListener('click', async () => {
+        copyAllBtn.disabled = true;
+        try {
+          const r = await window.SharePoint.copyAll((done, total, files) => {
+            copyAllBtn.textContent = `Copying… ${done} of ${total} jobs (${files} files)`;
+          });
+          toast(r.configured
+            ? `Done: ${r.copied} file${r.copied === 1 ? '' : 's'} copied from ${r.jobs} jobs${r.failed ? `, ${r.failed} jobs failed (see the error log)` : ''}.`
+            : 'SharePoint is not set up yet.');
+        } catch (e) {
+          toast(`Copy stopped: ${e.message || e}`);
+        }
+        copyAllBtn.textContent = 'Copy all finalised jobs to SharePoint';
+        copyAllBtn.disabled = false;
+      });
+      card.append(head, state, copyAllBtn);
+      window.SharePoint.status({ fresh: true }).then((s) => {
+        if (s.configured && !s.error) {
+          state.textContent = 'Connected. Finalised reports, sent invoices and job photos are copied into each client\'s folder automatically.';
+          copyAllBtn.classList.remove('hidden');
+        } else if (s.error) {
+          state.textContent = `Not working yet: ${s.error}`;
+        } else {
+          state.textContent = 'Not set up yet. Once the Microsoft permission and secret key are in place, files are copied automatically.';
+        }
+      });
+    }
+
     const actions = document.createElement('div');
     actions.className = 'row gap';
     const cancel = document.createElement('button');

@@ -2106,8 +2106,12 @@
     // technician standing in a driveway with one bar has finalized their
     // report; whether a copy reached a bucket is not their problem, and the
     // next finalize or amendment will try again.
-    uploadReportPdf(currentJobId).catch((err) =>
-      console.warn('[report] could not back up the report PDF:', err.message || err));
+    const finalisedJobId = currentJobId;
+    uploadReportPdf(finalisedJobId)
+      // Then the copy into the client's SharePoint folder, which reads that
+      // PDF from storage (sharepoint.js; silent until SharePoint is set up).
+      .then((path) => { if (path && window.SharePoint) window.SharePoint.copyJobQuietly(finalisedJobId); })
+      .catch((err) => console.warn('[report] could not back up the report PDF:', err.message || err));
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
     offerForemanFollowUpTask(currentJobId);
