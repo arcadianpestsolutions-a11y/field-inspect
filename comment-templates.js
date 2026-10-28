@@ -192,8 +192,95 @@
     ],
   };
 
+  // ---- The business's own templates (migration 039, v142) ----
+  //
+  // Added and hidden from the picker itself, shared by everybody in the
+  // business through Supabase, and kept on the phone so the picker works with
+  // no signal. Changes need a connection; reading never does.
+  //
+  // In test and demo mode nothing leaves the page: changes live in memory, so
+  // a demo or a test run can never write to the real business's list.
+  const CACHE_KEY = 'scope.commentTemplates.v1';
+  const online = () => !!(window.supabaseClient && !window.IS_TEST && !window.IS_DEMO);
+  let rows = [];
+  try { if (online()) rows = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]') || []; } catch (e) { rows = []; }
+  const keep = () => { if (online()) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(rows)); } catch (e) { /* full */ } } };
+  const uid = () => `ct_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
+  async function refresh() {
+    if (!online()) return rows;
+    try {
+      const { data, error } = await window.supabaseClient.from('comment_templates')
+        .select('id, field_id, kind, label, text, updated_at').order('created_at', { ascending: true });
+      if (!error && Array.isArray(data)) { rows = data; keep(); }
+    } catch (e) { /* offline: the cached list stands */ }
+    return rows;
+  }
+
+  // Your own first (newest last within them), then the built-ins you have
+  // not hidden. Each item says which it is, so the picker knows whether
+  // "remove" deletes it or just hides it.
+  function forField(fieldId) {
+    const mine = rows.filter((r) => r.field_id === fieldId);
+    const hidden = new Set(mine.filter((r) => r.kind === 'hidden').map((r) => r.label));
+    const custom = mine.filter((r) => r.kind === 'custom').map((r) => ({ label: r.label, text: r.text, id: r.id, custom: true }));
+    const builtIn = (ALL[fieldId] || []).filter((t) => !hidden.has(t.label)).map((t) => ({ ...t, builtIn: true }));
+    return custom.concat(builtIn);
+  }
+
+  async function write(row) {
+    if (!online()) { rows.push(row); return row; }
+    const { error } = await window.supabaseClient.from('comment_templates').insert(row);
+    if (error) throw new Error(/relation|does not exist/i.test(error.message) ? 'Saving your own comments needs a database update (migration 039).' : error.message);
+    rows.push(row);
+    keep();
+    return row;
+  }
+
+  async function add(fieldId, label, text) {
+    const l = String(label || '').trim().slice(0, 40);
+    const t = String(text || '').trim().slice(0, 2000);
+    if (!l || !t) throw new Error('A common comment needs a short name and some wording.');
+    const now = Date.now();
+    const userId = window.Sync && window.Sync.currentUserId ? window.Sync.currentUserId() : null;
+    return write({ id: uid(), field_id: fieldId, kind: 'custom', label: l, text: t, created_by: userId, created_at: now, updated_at: now });
+  }
+
+  // Your own: deleted. A built-in: hidden for the whole business (it stays
+  // in the app, so it can be brought back with restoreHidden).
+  async function remove(fieldId, item) {
+    if (item.custom) {
+      if (online()) {
+        const { error } = await window.supabaseClient.from('comment_templates').delete().eq('id', item.id);
+        if (error) throw new Error(error.message);
+      }
+      rows = rows.filter((r) => r.id !== item.id);
+      keep();
+      return;
+    }
+    const now = Date.now();
+    await write({ id: uid(), field_id: fieldId, kind: 'hidden', label: item.label, text: '', created_at: now, updated_at: now });
+  }
+
+  async function restoreHidden(fieldId) {
+    const ids = rows.filter((r) => r.field_id === fieldId && r.kind === 'hidden').map((r) => r.id);
+    if (!ids.length) return 0;
+    if (online()) {
+      const { error } = await window.supabaseClient.from('comment_templates').delete().in('id', ids);
+      if (error) throw new Error(error.message);
+    }
+    rows = rows.filter((r) => !ids.includes(r.id));
+    keep();
+    return ids.length;
+  }
+
+  const hiddenCount = (fieldId) => rows.filter((r) => r.field_id === fieldId && r.kind === 'hidden').length;
+
+  if (online()) setTimeout(() => { refresh(); }, 5000);
+
   window.CommentTemplates = {
-    forField: (fieldId) => ALL[fieldId] || [],
+    forField, add, remove, restoreHidden, hiddenCount, refresh,
     all: ALL,
+    _reset: () => { rows = []; }, // the suite starts each test clean
   };
 })();

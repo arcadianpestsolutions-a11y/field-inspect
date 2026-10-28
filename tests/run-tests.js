@@ -6919,7 +6919,7 @@
     for (const action of ['draft-report', 'identify-pest', 'identify-tree', 'sort-photos', 'trace-building']) {
       // A same-day revision takes a letter (draft-report@2026-10-21b).
       assert(new RegExp(`'${action}': '${action}@\\d{4}-\\d{2}-\\d{2}[a-z]?'`).test(src), `${action} has a prompt version`);
-      assert(new RegExp(`aiStamp\\('${action}', servedModel\\)`).test(src), `and stamps its answer with it`);
+      assert(new RegExp(`aiStamp\\('${action}', servedModel, usage\\)`).test(src), `and stamps its answer with it, and what it cost (v142)`);
     }
     assert(!/model: 'claude-/.test(src), 'no model is named anywhere but AI_MODEL');
     const job = await win.DB.addJob({ name: 'AI Stamp Job', jobType: 'termite' });
@@ -8824,6 +8824,87 @@
     assert(/!window\.IS_TEST && !window\.IS_DEMO/.test(sp), 'tests and the demo never call it');
     assert(frame.contentWindow.SharePoint && typeof frame.contentWindow.SharePoint.copyAll === 'function', 'the module loads');
     assertEqual((await frame.contentWindow.SharePoint.status()).configured, false, 'in test mode it reports not set up, without a network call');
+  });
+
+  test('Common comments: the business can save its own, hide a built-in, and bring it back (v142)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const CT = win.CommentTemplates;
+    CT._reset();
+    const host = doc.createElement('div');
+    doc.body.appendChild(host);
+    const realPrompt = win.Common.askPrompt;
+    const realConfirm = win.Common.askConfirm;
+    try {
+      win.Common.askPrompt = async () => 'Pool fence rot';
+      win.Common.askConfirm = async () => true;
+      const values = { antCappingDetails: '' };
+      const r = win.FormRender.create({
+        values, container: host,
+        commentTemplates: {
+          list: (f) => CT.forField(f.id),
+          add: (f, l, t) => CT.add(f.id, l, t),
+          remove: (f, i) => CT.remove(f.id, i),
+          restoreHidden: (f) => CT.restoreHidden(f.id),
+          hiddenCount: (f) => CT.hiddenCount(f.id),
+        },
+      });
+      r.renderSection({ id: 'conducive', fields: [{ id: 'antCappingDetails', label: 'Details', type: 'textarea' }, { id: 'brandNew', label: 'Other', type: 'textarea' }] });
+      assertEqual(host.querySelectorAll('.comment-templates-toggle').length, 2, 'a box with no templates yet can still start one');
+      const builtIns = CT.forField('antCappingDetails').length;
+
+      // Save what is typed as the business's own.
+      const ta = host.querySelector('textarea');
+      ta.value = 'Pool fence posts show rot at ground level.';
+      ta.dispatchEvent(new win.Event('input'));
+      host.querySelector('.comment-templates-toggle').click();
+      host.querySelector('.comment-template-save').click();
+      await waitFor(() => CT.forField('antCappingDetails').length === builtIns + 1, 'saved');
+      const mine = CT.forField('antCappingDetails')[0];
+      assert(mine.custom && mine.label === 'Pool fence rot', 'your own comes first, by the name you gave it');
+      assert(/Common comments \(\d+\)/.test(host.querySelector('.comment-templates-toggle').textContent));
+
+      // Hide a built-in: it leaves the list but is not deleted from the app.
+      const rusted = CT.forField('antCappingDetails').find((t) => t.label === 'Rusted throughout');
+      await CT.remove('antCappingDetails', rusted);
+      assert(!CT.forField('antCappingDetails').some((t) => t.label === 'Rusted throughout'), 'hidden');
+      assertEqual(CT.hiddenCount('antCappingDetails'), 1);
+      assert(CT.all.antCappingDetails.some((t) => t.label === 'Rusted throughout'), 'the built-in still exists');
+      await CT.restoreHidden('antCappingDetails');
+      assert(CT.forField('antCappingDetails').some((t) => t.label === 'Rusted throughout'), 'and comes back');
+
+      // Delete your own.
+      await CT.remove('antCappingDetails', mine);
+      assertEqual(CT.forField('antCappingDetails').length, builtIns, 'deleted');
+      let refused = null;
+      try { await CT.add('x', '', 'text'); } catch (e) { refused = e; }
+      assert(refused, 'a nameless template is refused');
+      const src = await (await fetch('../comment-templates.js', { cache: 'reload' })).text();
+      assert(/!window\.IS_TEST && !window\.IS_DEMO/.test(src), 'tests and the demo never write to the real business list');
+    } finally {
+      win.Common.askPrompt = realPrompt;
+      win.Common.askConfirm = realConfirm;
+      CT._reset();
+      host.remove();
+    }
+  });
+
+  test('AI cost: each drafting pass records what it cost, and Saved Reports adds it up (v142)', async () => {
+    const win = frame.contentWindow;
+    const src = await (await fetch('../supabase/functions/analyze-inspection/index.ts', { cache: 'reload' })).text();
+    assert(/'claude-sonnet-5': \{ input: 2, output: 10 \}/.test(src), 'priced at the list price for the model in use');
+    assert(/usage\.input \+= u\.input/.test(src), 'a retried call counts both attempts');
+    const reports = [
+      { aiDraft: { runs: [{ costUsdCentsX100: 1500 }, { costUsdCentsX100: 500 }] } }, // 20 cents
+      { aiDraft: { runs: [{ costUsdCentsX100: 1000 }] } },                           // 10 cents
+      { aiDraft: { runs: [{ model: 'old pass, no cost' }] } },                        // before v142
+      {},
+    ];
+    const s = win.ReportUI.aiCostSummary(reports);
+    assertEqual(s.reports, 2, 'only passes that carry a cost count');
+    assertEqual(s.totalUsd, 'US$0.30');
+    assertEqual(s.perReportUsd, 'US$0.15', 'an average per report');
+    assertEqual(win.ReportUI.aiCostSummary([]).perReportUsd, null, 'nothing to show before the AI is used');
   });
 
   // ---------- Save to phone (v132) ----------

@@ -95,11 +95,29 @@ const PROMPT_VERSIONS: Record<string, string> = {
 
 // What the app records next to an answer. `model` is what the API says served
 // the request (data.model), which is the truth even if AI_MODEL is an alias.
-function aiStamp(action: string, servedModel: string) {
-  return { action, model: servedModel || AI_MODEL, requestedModel: AI_MODEL, promptVersion: PROMPT_VERSIONS[action] || `${action}@unversioned` };
+// What one call cost (v142), so a report can say what its AI cost. US dollars
+// per million tokens, Anthropic's list price for the model in AI_MODEL. A
+// model not in this table is reported with tokens but no cost, rather than a
+// guessed one.
+const PRICE_PER_MTOK: Record<string, { input: number; output: number }> = {
+  'claude-sonnet-5': { input: 2, output: 10 },
+  'claude-sonnet-5-5': { input: 2, output: 10 },
+  'claude-haiku-5-5': { input: 0.1, output: 0.5 },
+};
+
+function aiStamp(action: string, servedModel: string, usage?: { input: number; output: number }) {
+  const model = servedModel || AI_MODEL;
+  const price = PRICE_PER_MTOK[model] || PRICE_PER_MTOK[AI_MODEL];
+  const u = usage || { input: 0, output: 0 };
+  // Hundredths of a US cent, as a whole number: a single photo costs a cent or two.
+  const costCentsX100 = price ? Math.round(((u.input * price.input + u.output * price.output) / 1e6) * 100 * 100) : null;
+  return {
+    action, model, requestedModel: AI_MODEL, promptVersion: PROMPT_VERSIONS[action] || `${action}@unversioned`,
+    inputTokens: u.input, outputTokens: u.output, costUsdCentsX100: costCentsX100,
+  };
 }
 
-async function callClaude(systemPrompt: string, userContent: unknown[]): Promise<{ text: string; model: string }> {
+async function callClaude(systemPrompt: string, userContent: unknown[]): Promise<{ text: string; model: string; usage: { input: number; output: number } }> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -117,7 +135,9 @@ async function callClaude(systemPrompt: string, userContent: unknown[]): Promise
   if (!res.ok) throw new Error(`Claude API call failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
   const textBlock = (data.content || []).find((b: any) => b.type === 'text');
-  return { text: textBlock ? textBlock.text : '', model: typeof data.model === 'string' ? data.model : '' };
+  const u = data.usage || {};
+  const usage = { input: Number(u.input_tokens) || 0, output: Number(u.output_tokens) || 0 };
+  return { text: textBlock ? textBlock.text : '', model: typeof data.model === 'string' ? data.model : '', usage };
 }
 
 // Claude may wrap JSON in a code fence despite instructions not to — strip it defensively.
@@ -131,12 +151,16 @@ function extractJson(text: string): any {
 // one reply in 190 in the October 2026 photo trial came back as broken JSON
 // (an unclosed string mid-answer); asking again almost always fixes it, and a
 // technician staring at "AI failed" for a one-off glitch is the worse outcome.
-async function callClaudeJson(systemPrompt: string, userContent: unknown[]): Promise<{ parsed: any; model: string }> {
+async function callClaudeJson(systemPrompt: string, userContent: unknown[]): Promise<{ parsed: any; model: string; usage: { input: number; output: number } }> {
   let lastError: unknown = null;
+  // A retried call costs both attempts, so both are counted.
+  const usage = { input: 0, output: 0 };
   for (let attempt = 0; attempt < 2; attempt++) {
-    const { text, model } = await callClaude(systemPrompt, userContent);
+    const { text, model, usage: u } = await callClaude(systemPrompt, userContent);
+    usage.input += u.input;
+    usage.output += u.output;
     try {
-      return { parsed: extractJson(text), model };
+      return { parsed: extractJson(text), model, usage };
     } catch (err) {
       if (!(err instanceof SyntaxError)) throw err;
       lastError = err;
@@ -262,14 +286,14 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
     for (const frame of frames.slice(0, 12)) userContent.push(imageBlock(frame.dataUrl));
   }
 
-  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
+  const { parsed, model: servedModel, usage } = await callClaudeJson(systemPrompt, userContent);
 
   return json({
     transcript: transcription.text,
     draftFields: parsed.draftFields || {},
     fieldReasons: parsed.fieldReasons || {},
     frameNotes: parsed.frameNotes || [],
-    ai: aiStamp('draft-report', servedModel),
+    ai: aiStamp('draft-report', servedModel, usage),
   });
 }
 
@@ -322,7 +346,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Identify every distinct pest or insect actually visible in these photographs.' });
 
-  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
+  const { parsed, model: servedModel, usage } = await callClaudeJson(systemPrompt, userContent);
 
   const identifications = (Array.isArray(parsed.identifications) ? parsed.identifications : [])
     .filter((id: any) => id && typeof id.commonName === 'string' && id.commonName)
@@ -334,7 +358,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
       matchedCategory: typeof id.matchedCategory === 'string' ? id.matchedCategory : '',
     }));
 
-  return json({ identifications, ai: aiStamp('identify-pest', servedModel) });
+  return json({ identifications, ai: aiStamp('identify-pest', servedModel, usage) });
 }
 
 // 'identify-tree': reads a photograph of a tree (or stump) near the property
@@ -385,7 +409,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Identify every distinct tree or stump actually visible and assess its termite susceptibility.' });
 
-  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
+  const { parsed, model: servedModel, usage } = await callClaudeJson(systemPrompt, userContent);
 
   const trees = (Array.isArray(parsed.trees) ? parsed.trees : [])
     .filter((t: any) => t && typeof t.species === 'string' && t.species)
@@ -397,7 +421,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
       recommendDrilling: !!t.recommendDrilling,
     }));
 
-  return json({ trees, ai: aiStamp('identify-tree', servedModel) });
+  return json({ trees, ai: aiStamp('identify-tree', servedModel, usage) });
 }
 
 // 'sort-photos': looks at a bucket of general/untagged photos (things a
@@ -444,7 +468,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   });
   userContent.push({ type: 'text', text: 'Sort each photo into a specific field only where it clearly, specifically belongs. Leave the rest unassigned.' });
 
-  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
+  const { parsed, model: servedModel, usage } = await callClaudeJson(systemPrompt, userContent);
 
   const targetKeys = new Set(targets.map((t: any) => `${t.sectionId}::${t.fieldId}`));
   const assignments = (Array.isArray(parsed.assignments) ? parsed.assignments : [])
@@ -459,7 +483,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
       reasoning: typeof a.reasoning === 'string' ? a.reasoning : '',
     }));
 
-  return json({ assignments, ai: aiStamp('sort-photos', servedModel) });
+  return json({ assignments, ai: aiStamp('sort-photos', servedModel, usage) });
 }
 
 // 'trace-building': reads a building's exterior perimeter out of aerial
@@ -537,7 +561,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences:
     text: "Trace the main building's exterior perimeter. Use the shadow and the straight-line/right-angle rules to place any corner the tree canopy hides.",
   });
 
-  const { parsed, model: servedModel } = await callClaudeJson(systemPrompt, userContent);
+  const { parsed, model: servedModel, usage } = await callClaudeJson(systemPrompt, userContent);
 
   // The client draws this straight onto a canvas, so every vertex must be a
   // finite number inside the image before it goes back.
@@ -562,7 +586,7 @@ Respond with ONLY a JSON object, no other text, no markdown fences:
     confidence: parsed.confidence || 'medium',
     note: parsed.note || '',
     obscured: parsed.obscured || '',
-    ai: aiStamp('trace-building', servedModel),
+    ai: aiStamp('trace-building', servedModel, usage),
   });
 }
 

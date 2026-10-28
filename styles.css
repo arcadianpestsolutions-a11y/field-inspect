@@ -3408,6 +3408,7 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .ai-accuracy .ai-sec { color: var(--text); }
 .ai-accuracy .ai-weak .ai-fig { color: var(--warning); font-weight: 650; }
 .ai-accuracy .ai-versions { display: block; margin-top: 8px; font-size: .76rem; overflow-wrap: anywhere; }
+.ai-accuracy .ai-cost { display: block; margin-top: 8px; font-size: .8rem; }
 
 /* On the inspection screen a message would sit over Take photo and Gallery,
    so it rises above them there (v129). */
@@ -3424,3 +3425,12 @@ body:has(#inspection-modal:not(.hidden)) .toast { bottom: calc(190px + var(--saf
 .comment-template strong { font-size: 0.86rem; }
 .comment-template span { color: var(--text-dim); line-height: 1.4; }
 .comment-template:active { border-color: var(--accent); }
+/* v142: own common comments - remove/hide, save, restore */
+.comment-template-row { display: flex; gap: 6px; align-items: stretch; }
+.comment-template-row .comment-template { flex: 1; min-width: 0; }
+.comment-template-remove {
+  flex: 0 0 38px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text-dim); font-size: 0.9rem; cursor: pointer;
+}
+.comment-template-save { margin-top: 4px; font-size: 0.85rem; }
+.comment-template-restore { font-size: 0.82rem; align-self: flex-start; }

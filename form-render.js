@@ -47,56 +47,122 @@
     // Called whenever a value changes through a control here. Report.js uses
     // it to run the job-category prefill; most hosts will not need it.
     const onFieldChange = typeof o.onFieldChange === 'function' ? o.onFieldChange : null;
-    // Ready-made wording for a comment box (comment-templates.js): the host
-    // passes a lookup, field -> [{ label, text }]. Report.js does; a SWMS or
-    // an enquiry form passes nothing and its comment boxes stay plain.
-    const commentTemplates = typeof o.commentTemplates === 'function' ? o.commentTemplates : null;
+    // Ready-made wording for a comment box (comment-templates.js). The host
+    // passes either a lookup, field -> [{ label, text }], or (v142) an object
+    // that can also add, remove and restore: { list, add, remove,
+    // restoreHidden, hiddenCount }. Report.js passes the object; a SWMS or an
+    // enquiry form passes nothing and its comment boxes stay plain.
+    const tpl = (() => {
+      const c = o.commentTemplates;
+      if (typeof c === 'function') return { list: c, manage: false };
+      if (c && typeof c.list === 'function') return { ...c, manage: typeof c.add === 'function' };
+      return null;
+    })();
+    const ask = (msg, def, opts) => (window.Common && window.Common.askPrompt ? window.Common.askPrompt(msg, def, opts) : Promise.resolve(window.prompt(msg, def)));
+    const confirmIt = (msg, opts) => (window.Common && window.Common.askConfirm ? window.Common.askConfirm(msg, opts) : Promise.resolve(window.confirm(msg)));
+    const say = (msg) => { if (window.Common && window.Common.toast) window.Common.toast(msg); };
 
     // "📝 Common comments" under a comment box. Tapping one ADDS it to what is
     // already there (never replaces a sentence somebody typed), on its own
     // line, and saves exactly as typing would. The [brackets] in a template
     // are left for the technician to fill in.
     function addTemplatePicker(row, field, ta) {
-      const list = commentTemplates ? commentTemplates(field) : [];
-      if (!list || !list.length) return;
+      if (!tpl) return;
+      if (!tpl.list(field).length && !tpl.manage) return;
       const toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'link-btn comment-templates-toggle';
-      toggle.textContent = `📝 Common comments (${list.length})`;
       toggle.setAttribute('aria-expanded', 'false');
       const panel = document.createElement('div');
       panel.className = 'comment-templates hidden';
-      for (const t of list) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'comment-template';
-        const strong = document.createElement('strong');
-        strong.textContent = t.label;
-        const span = document.createElement('span');
-        span.textContent = t.text;
-        b.append(strong, span);
-        b.addEventListener('click', () => {
-          const current = ta.value.trimEnd();
-          ta.value = current ? `${current}\n${t.text}` : t.text;
-          setValue(field, ta.value);
-          panel.classList.add('hidden');
-          toggle.setAttribute('aria-expanded', 'false');
-          // Straight to the first [bracket], so filling it in is the next keystroke.
-          const at = ta.value.indexOf('[', ta.value.length - t.text.length);
-          ta.focus();
-          if (at >= 0) {
-            const end = ta.value.indexOf(']', at);
-            ta.setSelectionRange(at, end >= 0 ? end + 1 : at + 1);
-          } else {
-            ta.setSelectionRange(ta.value.length, ta.value.length);
-          }
-        });
-        panel.appendChild(b);
+      const label = () => {
+        const n = tpl.list(field).length;
+        toggle.textContent = n ? `📝 Common comments (${n})` : '📝 Common comments';
+      };
+      const close = () => { panel.classList.add('hidden'); toggle.setAttribute('aria-expanded', 'false'); };
+
+      function insert(t) {
+        const current = ta.value.trimEnd();
+        ta.value = current ? `${current}\n${t.text}` : t.text;
+        setValue(field, ta.value);
+        close();
+        // Straight to the first [bracket], so filling it in is the next keystroke.
+        const at = ta.value.indexOf('[', ta.value.length - t.text.length);
+        ta.focus();
+        if (at >= 0) {
+          const end = ta.value.indexOf(']', at);
+          ta.setSelectionRange(at, end >= 0 ? end + 1 : at + 1);
+        } else {
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        }
       }
+
+      function build() {
+        panel.innerHTML = '';
+        for (const t of tpl.list(field)) {
+          const item = document.createElement('div');
+          item.className = 'comment-template-row';
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'comment-template';
+          const strong = document.createElement('strong');
+          strong.textContent = t.custom ? `${t.label} ✎` : t.label;
+          const span = document.createElement('span');
+          span.textContent = t.text;
+          b.append(strong, span);
+          b.addEventListener('click', () => insert(t));
+          item.appendChild(b);
+          if (tpl.manage) {
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'comment-template-remove';
+            x.textContent = '✕';
+            x.setAttribute('aria-label', t.custom ? `Delete "${t.label}"` : `Hide "${t.label}"`);
+            x.addEventListener('click', async () => {
+              const yes = await confirmIt(t.custom
+                ? `Delete your common comment "${t.label}"? This is for everyone in the business.`
+                : `Hide "${t.label}" from this list? It can be brought back later.`,
+              { title: t.custom ? 'Delete common comment' : 'Hide common comment', okLabel: t.custom ? 'Delete' : 'Hide', danger: !!t.custom });
+              if (!yes) return;
+              try { await tpl.remove(field, t); build(); label(); } catch (e) { say(e.message || 'That did not save. Try again with a signal.'); }
+            });
+            item.appendChild(x);
+          }
+          panel.appendChild(item);
+        }
+        if (tpl.manage) {
+          const save = document.createElement('button');
+          save.type = 'button';
+          save.className = 'btn btn-outline comment-template-save';
+          save.textContent = '＋ Save what is in this box as a common comment';
+          save.addEventListener('click', async () => {
+            const text = ta.value.trim();
+            if (!text) { say('Type the comment in the box first, then save it.'); return; }
+            const name = await ask('A short name for it, to find it in this list:', '', { title: 'Save as a common comment', okLabel: 'Save' });
+            if (name == null || !String(name).trim()) return;
+            try { await tpl.add(field, name, text); build(); label(); say('Saved. It is in this list for everyone in the business.'); } catch (e) { say(e.message || 'That did not save. Try again with a signal.'); }
+          });
+          panel.appendChild(save);
+          const hidden = tpl.hiddenCount ? tpl.hiddenCount(field) : 0;
+          if (hidden) {
+            const back = document.createElement('button');
+            back.type = 'button';
+            back.className = 'link-btn comment-template-restore';
+            back.textContent = `Show the ${hidden} hidden one${hidden === 1 ? '' : 's'} again`;
+            back.addEventListener('click', async () => {
+              try { await tpl.restoreHidden(field); build(); label(); } catch (e) { say(e.message || 'That did not save. Try again with a signal.'); }
+            });
+            panel.appendChild(back);
+          }
+        }
+      }
+
       toggle.addEventListener('click', () => {
         const open = panel.classList.toggle('hidden') === false;
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) build();
       });
+      label();
       row.append(toggle, panel);
     }
 

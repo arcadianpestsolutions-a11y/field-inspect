@@ -1026,6 +1026,7 @@
     // from anywhere else that ever wants it, without re-deriving the rules
     // for what counts as a kept suggestion.
     aiAccuracySummary,
+    aiCostSummary,
     async openArchive() {
       await renderArchiveList();
       hideAllAppViews();
@@ -1071,6 +1072,10 @@
           promptVersion: (result.ai && result.ai.promptVersion) || 'unknown',
           sections: Object.keys(result.draftFields || {}),
           suggestions: Object.values(result.draftFields || {}).reduce((n, f) => n + Object.keys(f || {}).length, 0),
+          // What this pass cost (v142): tokens, and hundredths of a US cent.
+          inputTokens: (result.ai && result.ai.inputTokens) || 0,
+          outputTokens: (result.ai && result.ai.outputTokens) || 0,
+          costUsdCentsX100: result.ai && typeof result.ai.costUsdCentsX100 === 'number' ? result.ai.costUsdCentsX100 : null,
         }],
       };
       // On the record of the document too: which AI offered suggestions for it,
@@ -1361,13 +1366,43 @@
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
   }
 
+  // What the AI has cost (v142), from the stamp on each drafting pass. Passes
+  // from before v142 carry no cost and are left out rather than guessed at.
+  function aiCostSummary(reports) {
+    let cents100 = 0;
+    let passes = 0;
+    let reportsCosted = 0;
+    for (const report of reports || []) {
+      const runs = ((report && report.aiDraft && report.aiDraft.runs) || []).filter((r) => typeof r.costUsdCentsX100 === 'number');
+      if (!runs.length) continue;
+      reportsCosted += 1;
+      passes += runs.length;
+      for (const r of runs) cents100 += r.costUsdCentsX100;
+    }
+    const usd = (c100) => `US$${(c100 / 10000).toFixed(2)}`;
+    return {
+      passes,
+      reports: reportsCosted,
+      totalUsd: usd(cents100),
+      perReportUsd: reportsCosted ? usd(cents100 / reportsCosted) : null,
+      totalCentsX100: cents100,
+    };
+  }
+
   // Stays hidden until the AI has actually been used, so a business that
   // never turns it on is not shown an empty statistic about it — and so the
   // number, when it appears, is always about real work.
   function renderAiAccuracy(reports) {
     if (!aiAccuracyEl) return;
     const summary = aiAccuracySummary(reports);
-    if (!summary.total) { aiAccuracyEl.classList.add('hidden'); return; }
+    const cost = aiCostSummary(reports);
+    const costLine = cost.reports
+      ? `<span class="ai-cost">AI cost: about ${escapeHtml(cost.perReportUsd)} a report (${escapeHtml(cost.totalUsd)} over ${cost.reports} report${cost.reports === 1 ? '' : 's'}), report drafting only.</span>`
+      : '';
+    if (!summary.total) {
+      if (costLine) { aiAccuracyEl.innerHTML = costLine; aiAccuracyEl.classList.remove('hidden'); } else aiAccuracyEl.classList.add('hidden');
+      return;
+    }
     const reportWord = summary.reportsWithAi === 1 ? 'report' : 'reports';
     const head = `AI suggestions: ${summary.kept} of ${summary.total} kept as written (${summary.keptPercent}%) `
       + `across ${summary.reportsWithAi} ${reportWord}. `
@@ -1385,7 +1420,8 @@
     const versions = Object.keys(summary.versions || {}).filter((v) => !/before v123/.test(v));
     aiAccuracyEl.innerHTML = `<span class="ai-head">${escapeHtml(head)}</span>`
       + (rows ? `<ul class="ai-sections">${rows}</ul>` : '')
-      + (versions.length ? `<span class="ai-versions">Measured on: ${escapeHtml(versions.join('; '))}</span>` : '');
+      + (versions.length ? `<span class="ai-versions">Measured on: ${escapeHtml(versions.join('; '))}</span>` : '')
+      + costLine;
     aiAccuracyEl.classList.remove('hidden');
   }
 
@@ -2543,7 +2579,14 @@
     decorateRow: (row, field) => decorateRowWithAi(row, field),
 
     // Ready-made wording from Tal's own past reports (comment-templates.js).
-    commentTemplates: (field) => (window.CommentTemplates ? window.CommentTemplates.forField(field.id) : []),
+    // v142: the business can also add its own, and hide built-ins it never uses.
+    commentTemplates: window.CommentTemplates ? {
+      list: (field) => window.CommentTemplates.forField(field.id),
+      add: (field, label, text) => window.CommentTemplates.add(field.id, label, text),
+      remove: (field, item) => window.CommentTemplates.remove(field.id, item),
+      restoreHidden: (field) => window.CommentTemplates.restoreHidden(field.id),
+      hiddenCount: (field) => window.CommentTemplates.hiddenCount(field.id),
+    } : null,
 
     onFieldChange: (field, value) => {
       if (field.id === 'jobCategory') applyJobCategoryPrefill(value);

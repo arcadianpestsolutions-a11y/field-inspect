@@ -15,7 +15,7 @@ Serve the folder over HTTP (service workers and camera need http://localhost):
 contact. **Do not exercise live mode against real client data.**
 
 ## Test
-Open `/tests/run-tests.html` and press Run (or `window.runAllTests()`). 567 tests,
+Open `/tests/run-tests.html` and press Run (or `window.runAllTests()`). 569 tests,
 no framework, about 70 seconds. It uses its own `field-inspect-db-test` database, and a
 fixed clock (`test-clock.js`) so results do not depend on the date it is run.
 GitHub runs the same suite headless on every push (`.github/workflows/tests.yml`); the
