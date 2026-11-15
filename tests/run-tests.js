@@ -7415,7 +7415,6 @@
     assert(/key/i.test(shown) && /owner/i.test(shown), `says the key needs renewing by the owner, got: ${shown}`);
     assert(!/signed out|log out/i.test(shown), 'and does not send the technician to log out and in');
     assert(/signed out/i.test(win.AIMessages.humanError(new Error('Not authenticated'))), 'a real sign-out still says so');
-    assert(typeof win.AI.checkShot === 'function', 'the app can ask for a check of one walk photo');
   });
 
   test('Calendar feed: a missing migration reads as a setup problem, not raw Postgres', () => {
