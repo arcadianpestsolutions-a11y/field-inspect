@@ -2632,7 +2632,7 @@
     assertEqual(visible[0].id, 'view-login', 'the login view should be the one showing');
   });
 
-  test('Scheduler: dragging the bottom edge of a job makes it longer or shorter, and asks before running into the next one (v149)', async () => {
+  test('Scheduler: a job is dragged longer, shorter, earlier or to another time in half-hour steps, and asks before landing on another job (v150)', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const d = dayThisMonth(9, 9);
@@ -2646,29 +2646,61 @@
       .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(9).getDate())).click();
     await wait(300);
 
-    const handleRow = () => doc.querySelector(`[data-resize="${job.id}"]`).closest('.slot-row');
-    assertEqual(handleRow().dataset.hour, '9', 'a one-hour job carries its handle on its own row');
+    const fresh = () => win.DB.getJob(job.id);
+    const at = async () => { const j = await fresh(); const t = new Date(j.scheduledAt); return `${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')}+${j.scheduledDurationMins}`; };
+    const handle = (edge) => doc.querySelector(`[data-resize="${job.id}"][data-edge="${edge}"]`);
 
-    // Dropped in the 11am row: the job now ends at midday.
-    assertEqual(await win.Scheduler.resizeJob(await win.DB.getJob(job.id), 12), 180, 'three hours, 9 to 12');
-    assertEqual((await win.DB.getJob(job.id)).scheduledDurationMins, 180);
+    assertEqual(doc.querySelectorAll('.slot-row[data-slot]').length, 22, 'the day is laid out in half hours, 7am to 6pm');
+    assert(doc.querySelector('.slot-row[data-slot="570"] .slot-continued'), 'a one-hour job fills its second half hour');
+    assertEqual(handle('start').closest('.slot-row').dataset.slot, '540', 'the top edge is on the row it starts in');
+    assertEqual(handle('end').closest('.slot-row').dataset.slot, '570', 'the bottom edge is on its last half hour');
+    assert(doc.querySelector(`.slot-job[data-job="${job.id}"]`), 'and the job itself is there to pick up');
+
+    // Bottom edge down to 11:30: longer, same start.
+    await win.Scheduler.reschedule(await fresh(), 540, 690);
+    assertEqual(await at(), '9:00+150', 'a later finish in a half-hour step');
     await wait(200);
-    assertEqual(handleRow().dataset.hour, '11', 'the handle moves to the new last hour');
-    assert(Array.from(doc.querySelectorAll('.slot-row')).some((r) => r.dataset.hour === '10' && /continues/.test(r.textContent)),
-      'and the hours between read as taken');
+    assertEqual(handle('end').closest('.slot-row').dataset.slot, '660', 'the bottom edge moves with it');
 
-    // Dragged back up: shorter needs no question.
-    assertEqual(await win.Scheduler.resizeJob(await win.DB.getJob(job.id), 10), 60, 'back to one hour');
-    assertEqual(await win.Scheduler.resizeJob(await win.DB.getJob(job.id), 4), null, 'never shorter than its first hour: no change');
+    // Bottom edge back up: shorter needs no question, and never below one half hour.
+    await win.Scheduler.reschedule(await fresh(), 540, 600);
+    assertEqual(await at(), '9:00+60');
+    await win.Scheduler.reschedule(await fresh(), 540, 300);
+    assertEqual(await at(), '9:00+30', 'dragged past its own start, it stops at half an hour');
 
-    // Dragged over the 1pm job: the clash question, and No leaves it alone.
-    const asking = win.Scheduler.resizeJob(await win.DB.getJob(job.id), 14);
-    await wait(300);
-    const dialog = doc.querySelector('.app-dialog');
-    assert(dialog && /After Lunch Job/.test(dialog.textContent), 'running into the next job is asked about, by name');
-    Array.from(dialog.querySelectorAll('button')).find((b) => !/Book anyway/.test(b.textContent)).click();
-    assertEqual(await asking, null, 'answering no changes nothing');
-    assertEqual((await win.DB.getJob(job.id)).scheduledDurationMins, 60);
+    // Top edge up to 8am: earlier start, same finish.
+    await win.Scheduler.reschedule(await fresh(), 480, 570);
+    assertEqual(await at(), '8:00+90', 'dragging the top edge up starts earlier and keeps the finish');
+    await wait(200);
+    assertEqual(handle('start').closest('.slot-row').dataset.slot, '480');
+
+    // Picked up and put down at 10:30: same length, new time.
+    await win.Scheduler.reschedule(await fresh(), 630, 720);
+    assertEqual(await at(), '10:30+90', 'moved to a half-hour start, length kept');
+
+    // The old one-hour entry point still works.
+    assertEqual(await win.Scheduler.resizeJob(await fresh(), 12), null, 'already ends at 12: no change');
+
+    // Dropped onto the 1pm job: the clash question, and No leaves it alone.
+    const origConfirm = win.confirm;
+    let asked = '';
+    win.confirm = (msg) => { asked = String(msg); return false; };
+    try {
+      assertEqual(await win.Scheduler.reschedule(await fresh(), 750, 840), null, 'answering no changes nothing');
+    } finally { win.confirm = origConfirm; }
+    assert(/After Lunch Job/.test(asked), `landing on another job is asked about, by name; got: ${asked}`);
+    assertEqual(await at(), '10:30+90');
+
+    // A half-hour slot can be booked directly.
+    await win.DB.addJob({ name: 'Half Past Job' });
+    await win.Scheduler.refresh();
+    await wait(200);
+    doc.querySelector('.slot-row[data-slot="930"] .slot-free').click();
+    await wait(200);
+    Array.from(doc.querySelectorAll('.picker-row')).find((r) => r.textContent.includes('Half Past Job')).click();
+    await wait(500);
+    const half = (await win.DB.getJobs()).find((j) => j.name === 'Half Past Job');
+    assertEqual(new Date(half.scheduledAt).getHours() * 60 + new Date(half.scheduledAt).getMinutes(), 930, 'booked at 3:30pm');
   });
 
   test('Booking notice: a booking asks before the client is told, and the job keeps saying so until they are (v149)', async () => {

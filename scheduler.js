@@ -226,6 +226,13 @@
   }
 
   // ---------- day timeslot grid ----------
+  // Half-hour rows (v150). A slot is named by its minutes from midnight:
+  // 9:30am is 570.
+  const SLOT_MINS = 30;
+  const minsOfDay = (ts) => { const d = new Date(ts); return d.getHours() * 60 + d.getMinutes(); };
+  const slotFloor = (mins) => Math.floor(mins / SLOT_MINS) * SLOT_MINS;
+  const fmtSlot = (mins) => fmtTime(new Date(selected).setHours(0, mins, 0, 0));
+
   function renderDay() {
     const list = jobsOn(selected);
     const { count, minutes } = loadFor(selected);
@@ -239,16 +246,16 @@
 
     slotsEl.innerHTML = '';
 
-    // Which hours a job occupies, so a 2-hour job greys out the hour after it
-    // instead of looking like that hour is free.
+    // Which half hours a job occupies, so a 2-hour job fills the rows after
+    // it instead of looking like that time is free.
     const occupiedBy = new Map();
     for (const job of list) {
-      const start = new Date(job.scheduledAt);
-      const startHour = start.getHours();
-      const spans = Math.max(1, Math.ceil(durationOf(job) / 60));
+      const start = minsOfDay(job.scheduledAt);
+      const first = slotFloor(start);
+      const spans = Math.max(1, Math.ceil((start - first + durationOf(job)) / SLOT_MINS));
       for (let i = 0; i < spans; i++) {
-        const h = startHour + i;
-        if (!occupiedBy.has(h)) occupiedBy.set(h, { job, isStart: i === 0 });
+        const m = first + i * SLOT_MINS;
+        if (!occupiedBy.has(m)) occupiedBy.set(m, { job, isStart: i === 0 });
       }
     }
 
@@ -258,24 +265,26 @@
       return h < DAY_START_HOUR || h >= DAY_END_HOUR;
     });
 
-    for (let hour = DAY_START_HOUR; hour < DAY_END_HOUR; hour++) {
+    for (let slot = DAY_START_HOUR * 60; slot < DAY_END_HOUR * 60; slot += SLOT_MINS) {
+      const onHour = slot % 60 === 0;
       const row = document.createElement('div');
-      row.className = 'slot-row';
-      row.dataset.hour = String(hour);
+      row.className = 'slot-row' + (onHour ? '' : ' slot-row-half');
+      row.dataset.slot = String(slot);
 
       const label = document.createElement('span');
-      label.className = 'slot-hour';
-      label.textContent = fmtHour(hour);
+      label.className = 'slot-hour' + (onHour ? '' : ' slot-hour-half');
+      label.textContent = onHour ? fmtHour(slot / 60) : ':30';
       row.appendChild(label);
 
-      const entry = occupiedBy.get(hour);
-      const next = occupiedBy.get(hour + 1);
-      // The job's last hour on the grid: its bottom edge can be dragged.
+      const entry = occupiedBy.get(slot);
+      const next = occupiedBy.get(slot + SLOT_MINS);
+      // The job's last half hour on the grid: its bottom edge can be dragged.
       const isLastRow = entry && (!next || next.job.id !== entry.job.id || next.isStart);
       if (entry && entry.isStart) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'slot-job';
+        btn.dataset.job = entry.job.id;
         const name = document.createElement('span');
         name.className = 'slot-job-name';
         name.textContent = `${typeIcon(entry.job)} ${entry.job.name}`;
@@ -295,8 +304,11 @@
           .filter(Boolean).join(' · ');
         btn.appendChild(meta);
         btn.addEventListener('click', () => {
+          // The click that ends a drag is not a tap on the job.
+          if (suppressClickUntil > Date.now()) return;
           if (window.showJobViewById) window.showJobViewById(entry.job.id);
         });
+        makeMovable(btn, entry.job);
         row.appendChild(btn);
 
         // The drive to get here from the previous job, and whether the day
@@ -320,21 +332,24 @@
           // reads as belonging to this arrival.
           btn.appendChild(note);
         }
+        row.appendChild(edgeHandle(entry.job, 'start'));
       } else if (entry) {
         const cont = document.createElement('span');
         cont.className = 'slot-continued';
-        cont.textContent = `↳ ${entry.job.name} continues`;
+        cont.dataset.job = entry.job.id;
+        // Said once an hour: a long job is not a column of the same sentence.
+        cont.textContent = onHour ? `↳ ${entry.job.name} continues` : '';
         row.appendChild(cont);
       } else {
         const free = document.createElement('button');
         free.type = 'button';
         free.className = 'slot-free';
-        free.textContent = '+ Book this slot';
-        free.addEventListener('click', () => openPicker(hour));
+        free.textContent = onHour ? '+ Book this slot' : `+ ${fmtSlot(slot)}`;
+        free.addEventListener('click', () => openPicker(slot));
         row.appendChild(free);
       }
 
-      if (isLastRow) row.appendChild(resizeHandle(entry.job));
+      if (isLastRow) row.appendChild(edgeHandle(entry.job, 'end'));
       slotsEl.appendChild(row);
     }
 
@@ -363,84 +378,176 @@
     }
   }
 
-  // ---------- dragging a job longer or shorter (v149) ----------
-  // The bottom edge of a booked job is a handle. Drag it down over the next
-  // hours to give the job more time, or up to give some back. The grid is
-  // hourly, so the job ends on the hour it is dropped in.
-  function endHourFor(job) {
-    const start = new Date(job.scheduledAt);
-    return start.getHours() + Math.max(1, Math.ceil((start.getMinutes() + durationOf(job)) / 60));
-  }
+  // ---------- dragging a job (v149, v150) ----------
+  // Three drags, all in half-hour steps:
+  //   the bar along the bottom edge   later or earlier finish
+  //   the bar along the top edge      earlier or later start, same finish
+  //   press and hold the job itself   move it to another time, same length
+  // Each one ends in reschedule(), which asks before landing on another job.
+  let suppressClickUntil = 0;
 
-  // The job now ends at endHour o'clock. Asks before running into another
-  // job, exactly as booking does. Returns the new minutes, or null.
-  async function resizeJob(job, endHour) {
-    const start = new Date(job.scheduledAt);
-    const startMins = start.getHours() * 60 + start.getMinutes();
-    const last = Math.max(start.getHours() + 1, Math.min(DAY_END_HOUR, endHour));
-    const mins = Math.max(30, last * 60 - startMins);
-    if (mins === durationOf(job)) return null;
-    if (mins > durationOf(job) && !(await confirmNoOverlap(job.id, job.scheduledAt, mins))) return null;
-    await DB.updateJob(job.id, { scheduledDurationMins: mins });
-    toast(`${job.name}: now ${fmtHours(mins)}, finishing ${fmtHour(last)}`);
+  // The job now runs from startMins to endMins (minutes from midnight) on the
+  // day it is already on. Returns what was saved, or null if nothing changed.
+  async function reschedule(job, startMins, endMins) {
+    const open = DAY_START_HOUR * 60;
+    const close = DAY_END_HOUR * 60;
+    const oldStart = minsOfDay(job.scheduledAt);
+    const oldEnd = oldStart + durationOf(job);
+    // Inside working hours, unless the job already ran outside them.
+    let from = Math.max(Math.min(open, oldStart), startMins);
+    let to = Math.min(Math.max(close, oldEnd), endMins);
+    // Never shorter than one half hour: the edge that was dragged gives way.
+    if (to - from < SLOT_MINS) { if (from !== oldStart) from = to - SLOT_MINS; else to = from + SLOT_MINS; }
+    const mins = to - from;
+    const moved = from !== oldStart;
+    if (!moved && mins === durationOf(job)) return null;
+    const when = new Date(job.scheduledAt);
+    when.setHours(0, from, 0, 0);
+    const scheduledAt = when.getTime();
+    // Shorter and in the same place cannot land on anything new.
+    if ((moved || mins > durationOf(job)) && !(await confirmNoOverlap(job.id, scheduledAt, mins))) return null;
+    await DB.updateJob(job.id, { scheduledAt, scheduledDurationMins: mins });
+    toast(`${job.name}: ${fmtTime(scheduledAt)} to ${fmtSlot(to)} (${fmtHours(mins)})`);
     await refresh();
-    return mins;
+    // A new start time is news for the client; a new length is not.
+    if (moved) offerBookingNotice(job.id);
+    return { scheduledAt, mins };
   }
 
-  function resizeHandle(job) {
+  // Kept for v149 callers: the job now ends at endHour o'clock.
+  async function resizeJob(job, endHour) {
+    const saved = await reschedule(job, minsOfDay(job.scheduledAt), endHour * 60);
+    return saved ? saved.mins : null;
+  }
+
+  function slotUnder(x, y) {
+    const under = document.elementFromPoint(x, y);
+    const row = under && under.closest ? under.closest('.slot-row[data-slot]') : null;
+    return row ? Number(row.dataset.slot) : null;
+  }
+
+  function paintPreview(from, to) {
+    slotsEl.querySelectorAll('.slot-row[data-slot]').forEach((r) => {
+      const m = Number(r.dataset.slot);
+      const on = from !== null && m >= slotFloor(from) && m < to;
+      r.classList.toggle('slot-drag-preview', on);
+      r.classList.toggle('slot-drag-first', on && m === slotFloor(from));
+      r.classList.toggle('slot-drag-last', on && m + SLOT_MINS >= to);
+    });
+  }
+
+  // One drag in progress: where the job would run if dropped now.
+  function beginDrag(job, mode, grabSlot) {
+    const s0 = minsOfDay(job.scheduledAt);
+    const e0 = s0 + durationOf(job);
+    const grabOffset = mode === 'move' && grabSlot !== null ? grabSlot - slotFloor(s0) : 0;
+    const drag = { from: s0, to: e0 };
+    slotsEl.classList.add('slot-dragging');
+    paintPreview(drag.from, drag.to);
+    return {
+      move(x, y) {
+        const slot = slotUnder(x, y);
+        if (slot === null) return;
+        if (mode === 'end') { drag.from = s0; drag.to = Math.max(slotFloor(s0) + SLOT_MINS, slot + SLOT_MINS); }
+        else if (mode === 'start') { drag.to = e0; drag.from = Math.min(e0 - SLOT_MINS, slot); }
+        else {
+          const len = e0 - s0;
+          const first = Math.max(DAY_START_HOUR * 60, Math.min(DAY_END_HOUR * 60 - len, slot - grabOffset));
+          drag.from = first; drag.to = first + len;
+        }
+        paintPreview(drag.from, drag.to);
+      },
+      async end(commit) {
+        slotsEl.classList.remove('slot-dragging');
+        paintPreview(null, 0);
+        if (commit) await reschedule(job, drag.from, drag.to);
+      },
+    };
+  }
+
+  // The bar along the top ('start') or bottom ('end') edge of a job.
+  function edgeHandle(job, edge) {
     const handle = document.createElement('div');
-    handle.className = 'slot-resize';
+    handle.className = 'slot-resize slot-resize-' + edge;
     handle.dataset.resize = job.id;
+    handle.dataset.edge = edge;
     handle.setAttribute('role', 'slider');
-    handle.setAttribute('aria-label', `Drag to change how long ${job.name} takes`);
-    handle.title = 'Drag to make this job longer or shorter';
-    const startHour = new Date(job.scheduledAt).getHours();
-    let dragging = false;
-    let target = null;
-
-    const paint = () => {
-      slotsEl.querySelectorAll('.slot-row').forEach((r) => {
-        const h = Number(r.dataset.hour);
-        r.classList.toggle('slot-resize-preview', dragging && target !== null && h >= startHour && h < target);
-        r.classList.toggle('slot-resize-drop', dragging && target !== null && h === target - 1);
-      });
-    };
-    const hourAt = (x, y) => {
-      const under = document.elementFromPoint(x, y);
-      const row = under && under.closest ? under.closest('.slot-row[data-hour]') : null;
-      return row ? Number(row.dataset.hour) : null;
-    };
-
+    handle.setAttribute('aria-label', edge === 'end'
+      ? `Drag to change when ${job.name} finishes`
+      : `Drag to change when ${job.name} starts`);
+    handle.title = edge === 'end' ? 'Drag to finish later or earlier' : 'Drag to start earlier or later';
+    let drag = null;
     handle.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      dragging = true;
-      target = endHourFor(job);
       try { handle.setPointerCapture(e.pointerId); } catch (err) { /* older browsers still get the events */ }
-      slotsEl.classList.add('slot-resizing');
-      paint();
+      drag = beginDrag(job, edge, null);
     });
-    handle.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const h = hourAt(e.clientX, e.clientY);
-      if (h === null) return;
-      target = Math.max(startHour + 1, h + 1);
-      paint();
-    });
-    const finish = async (commit) => {
-      if (!dragging) return;
-      dragging = false;
-      slotsEl.classList.remove('slot-resizing');
-      const to = target;
-      target = null;
-      paint();
-      if (commit && to !== null) await resizeJob(job, to);
-    };
-    handle.addEventListener('pointerup', () => finish(true));
+    handle.addEventListener('pointermove', (e) => { if (drag) drag.move(e.clientX, e.clientY); });
+    const finish = (commit) => { const d = drag; drag = null; if (d) d.end(commit); };
+    // Where it was let go counts, even if no move event arrived on the way.
+    handle.addEventListener('pointerup', (e) => { if (drag) drag.move(e.clientX, e.clientY); finish(true); });
     handle.addEventListener('pointercancel', () => finish(false));
     // The handle sits on the job: a drag must not also open the job.
     handle.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
     return handle;
+  }
+
+  // Press and hold the job, then drag it to another time. A mouse starts as
+  // soon as it moves; a finger has to rest first (HOLD_MS), so that a swipe
+  // still scrolls the day.
+  const HOLD_MS = 350;
+  const SLOP_PX = 6;
+  function makeMovable(btn, job) {
+    let press = null;
+    let drag = null;
+    const start = () => {
+      if (!press) return;
+      press.active = true;
+      try { btn.setPointerCapture(press.id); } catch (err) { /* still works without capture */ }
+      btn.classList.add('slot-job-lifted');
+      if (navigator.vibrate) { try { navigator.vibrate(15); } catch (err) { /* a nicety */ } }
+      drag = beginDrag(job, 'move', slotUnder(press.x, press.y));
+    };
+    const clear = (commit) => {
+      if (press && press.timer) clearTimeout(press.timer);
+      const d = drag;
+      const wasActive = press && press.active;
+      press = null;
+      drag = null;
+      btn.classList.remove('slot-job-lifted');
+      if (wasActive) suppressClickUntil = Date.now() + 400;
+      if (d) d.end(commit);
+    };
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button) return; // left button or a finger only
+      if (e.target.closest && e.target.closest('.slot-resize')) return;
+      press = { id: e.pointerId, x: e.clientX, y: e.clientY, active: false, timer: null };
+      // A mouse that moves fast is off the job before its first move event:
+      // keep the events coming here from the moment it is pressed.
+      if (e.pointerType === 'mouse') { try { btn.setPointerCapture(e.pointerId); } catch (err) { /* still works for a slow drag */ } }
+      if (e.pointerType !== 'mouse') press.timer = setTimeout(start, HOLD_MS);
+    });
+    btn.addEventListener('pointermove', (e) => {
+      if (!press) return;
+      if (!press.active) {
+        const far = Math.abs(e.clientX - press.x) > SLOP_PX || Math.abs(e.clientY - press.y) > SLOP_PX;
+        if (!far) return;
+        if (e.pointerType === 'mouse') start(); else { clear(false); return; } // a swipe: let it scroll
+      }
+      if (drag) drag.move(e.clientX, e.clientY);
+    });
+    btn.addEventListener('pointerup', (e) => {
+      // A mouse let go somewhere else without a move event in between.
+      if (press && !press.active && e.pointerType === 'mouse'
+        && (Math.abs(e.clientX - press.x) > SLOP_PX || Math.abs(e.clientY - press.y) > SLOP_PX)) start();
+      if (drag) drag.move(e.clientX, e.clientY);
+      clear(true);
+    });
+    btn.addEventListener('pointercancel', () => clear(false));
+    // Once a finger has lifted the job, the page must not scroll under it.
+    btn.addEventListener('touchmove', (e) => { if (press && press.active) e.preventDefault(); }, { passive: false });
+    btn.addEventListener('contextmenu', (e) => { if (press) e.preventDefault(); });
   }
 
   // Ask whether the client should be told (booking-notice.js). Never awaited
@@ -464,9 +571,9 @@
     }).sort((a, b) => (a.nextDueAt || a.createdAt) - (b.nextDueAt || b.createdAt));
   }
 
-  function openPicker(hour) {
-    pendingSlotHour = hour;
-    pickerTitle.textContent = `Book ${fmtHour(hour)}, ${fmtDayLabel(selected)}`;
+  function openPicker(slot) {
+    pendingSlotHour = slot;
+    pickerTitle.textContent = `Book ${fmtSlot(slot)}, ${fmtDayLabel(selected)}`;
     pickerDuration.value = '60';
     pickerList.innerHTML = '';
 
@@ -489,7 +596,7 @@
       meta.className = 'agenda-meta';
       meta.textContent = job.address || (job.nextDueAt ? 'Due for re-inspection' : 'Not booked yet');
       btn.appendChild(meta);
-      btn.addEventListener('click', () => bookInto(job, hour));
+      btn.addEventListener('click', () => bookInto(job, slot));
       pickerList.appendChild(btn);
     }
     pickerModal.classList.remove('hidden');
@@ -500,9 +607,9 @@
     pendingSlotHour = null;
   }
 
-  async function bookInto(job, hour) {
+  async function bookInto(job, slot) {
     const when = new Date(selected);
-    when.setHours(hour, 0, 0, 0);
+    when.setHours(0, slot, 0, 0);
     const mins = parseInt(pickerDuration.value, 10) || 60;
     // The grid only ever shows the tapped hour as free — it says nothing
     // about whether the chosen duration runs into the hour after, which is
@@ -511,7 +618,7 @@
     if (!(await confirmNoOverlap(job.id, when.getTime(), mins))) return;
     await DB.updateJob(job.id, { scheduledAt: when.getTime(), scheduledDurationMins: mins });
     closePicker();
-    toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtHour(hour)} (${mins} min)`);
+    toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtSlot(slot)} (${mins} min)`);
     await refresh();
     offerBookingNotice(job.id);
   }
@@ -802,8 +909,9 @@
     // asks the same question with the same wording, instead of each writing
     // its own half of a conflict check.
     confirmNoOverlap,
-    // Exposed for the suite: what a drag of the bottom edge ends up doing.
+    // Exposed for the suite: what the three drags end up doing.
     resizeJob,
+    reschedule,
     // Exposed so the estimate itself can be tested against known distances,
     // rather than only through the booking flow that consumes it.
     travelMinutesBetween,
