@@ -4188,6 +4188,43 @@
       'and keeps a record that the technician confirmed it');
   });
 
+  test('Photo walk: a redraw while an issue is being filled in keeps what was typed and ticked (v145)', () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const box = doc.createElement('div');
+    doc.body.appendChild(box);
+    const jobId = 'redraw-test-' + Date.now();
+    const done = new Set(['Trees & Stumps']);
+    let saved = null;
+    const walk = win.PhotoWalk.mount({
+      container: box, jobId, items, done: () => done, setZone: () => {},
+      saveNotes: async () => true, saveAnswer: async () => true, saveResults: (s) => { saved = s; },
+    });
+    try {
+      walk.start();
+      walk.zoneChanged('Trees & Stumps');
+      box.querySelector('[data-result="issue"]').click();
+      assertEqual(box.querySelectorAll('[data-kind]').length, 4, 'an issue on timber asks what kind: damage, live termites, borers, decay');
+      box.querySelector('[data-kind="workings"]').click();
+      const input = box.querySelector('.walk-issue-note');
+      input.value = 'Mud leads on the stump';
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+      walk.photoSaved(); // another photo arrives: the card is redrawn
+      assertEqual(box.querySelector('.walk-issue-note').value, 'Mud leads on the stump', 'the note survives the redraw');
+      assert(box.querySelector('[data-kind="workings"]').classList.contains('chosen-issue'), 'and so does the kind that was ticked');
+      box.querySelector('.walk-issue-save').click();
+      assertEqual(saved.results.trees.kinds.join(','), 'workings', 'the kind is saved with the issue');
+      assertEqual(saved.results.trees.note, 'Mud leads on the stump', 'and the note');
+      walk.zoneChanged('Slab Edge');
+      assert(!box.querySelector('[data-kind]'), 'a spot that is not timber is not asked what kind');
+    } finally {
+      walk.destroy();
+      box.remove();
+      try { win.localStorage.removeItem('scope-photo-walk:' + jobId); } catch (e) { /* nothing to clean */ }
+    }
+  });
+
   // ---------- Mandatory photos (v144) ----------
   test('Mandatory photos: a finding, a durable notice or an obstruction outside the living space needs a photo, or the reason there is none', () => {
     const win = frame.contentWindow;

@@ -250,6 +250,7 @@
     let visible = startVisible !== false;
     let saving = false;
     let noteOpenFor = null; // the item whose Issue note box is showing
+    let draft = null;       // { id, note, kinds } being filled in there
 
     function persist() {
       saveState(jobId, state);
@@ -267,6 +268,7 @@
     function go(i, { quiet } = {}) {
       index = Math.max(0, Math.min(steps.length - 1, i));
       noteOpenFor = null;
+      draft = null;
       if (!quiet) { banner = ''; clearTimeout(bannerTimer); }
       setZone(zoneFor(steps[index]));
       render();
@@ -370,14 +372,19 @@
     function noteBox(item, existing, onSave, opts) {
       const o = opts || {};
       const wrap = el('div', 'walk-issue');
-      const picked = (o.kinds || []).slice();
+      // What is being typed and ticked lives outside this box, because the
+      // card is redrawn under it (a photo arriving, the banner timing out)
+      // and a redraw must not throw away half an answer.
+      if (!draft || draft.id !== item.id) draft = { id: item.id, note: existing || '', kinds: (o.kinds || []).slice() };
+      const picked = draft.kinds;
       if (!o.required) { const chips = kindChips(item, picked); if (chips) wrap.appendChild(chips); }
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'walk-other walk-issue-note';
       input.maxLength = 300;
       input.placeholder = o.placeholder || 'What is wrong? (optional)';
-      input.value = existing || '';
+      input.value = draft.note;
+      input.addEventListener('input', () => { if (draft) draft.note = input.value; });
       wrap.appendChild(input);
       const save = btn(o.saveLabel || 'Save issue, next ›', 'walk-primary walk-issue-save', () => {
         if (o.required && !input.value.trim()) { input.focus(); return; }
@@ -427,7 +434,7 @@
           } else {
             const ok = btn('✓ ' + (step.item.okLabel || 'OK'), 'walk-primary' + (result && result.r === 'ok' ? ' chosen' : ''), () => { setResult(step.item.id, 'ok'); next(); });
             ok.dataset.result = 'ok';
-            const issue = btn('⚠ ' + (step.item.issueLabel || 'Issue'), 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : ''), () => { noteOpenFor = step.item.id; render(); });
+            const issue = btn('⚠ ' + (step.item.issueLabel || 'Issue'), 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : ''), () => { noteOpenFor = step.item.id; draft = null; render(); });
             issue.dataset.result = 'issue';
             actions.appendChild(ok);
             actions.appendChild(issue);
@@ -443,7 +450,7 @@
           none.dataset.result = 'nothere';
           actions.appendChild(none);
           if (!step.blocked) {
-            const cant = btn('Can’t photo', 'walk-secondary', () => { noteOpenFor = step.item.id; render(); });
+            const cant = btn('Can’t photo', 'walk-secondary', () => { noteOpenFor = step.item.id; draft = null; render(); });
             cant.dataset.result = 'nophoto';
             actions.appendChild(cant);
           }
@@ -613,7 +620,7 @@
       // walk to that step; anything else leaves the walk where it is.
       zoneChanged(label) {
         const at = steps.findIndex((s) => s.kind === 'photo' && s.item.label === label);
-        if (at !== -1 && at !== index) { index = at; noteOpenFor = null; render(); }
+        if (at !== -1 && at !== index) { index = at; noteOpenFor = null; draft = null; render(); }
       },
       setVisible(on) {
         const was = visible;
