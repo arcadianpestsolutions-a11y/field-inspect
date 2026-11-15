@@ -150,7 +150,10 @@ async function jobFor(jobId: string, orgId: string) {
   if (!job || job.org_id !== orgId) return null;
   let client: Row | null = null;
   if (job.client_id) {
-    const { data } = await admin.from('clients').select('id, name, address').eq('id', job.client_id).maybeSingle();
+    // A read that fails is an error, not "no client" (migration 040: the
+    // first real run filed under the job's name because this was refused).
+    const { data, error } = await admin.from('clients').select('id, name, address').eq('id', job.client_id).maybeSingle();
+    if (error) throw new Error('Could not read the client record: ' + error.message);
     client = data || null;
   }
   return { job: job as Row, client };
@@ -222,8 +225,11 @@ async function copyJob(jobId: string, orgId: string) {
   }
 
   // Photos, numbered per zone in the order they were taken.
-  const { data: captures } = await admin.from('captures').select('id, zone, photo_path, created_at')
+  // Same rule: a refused read must not look like "this job has no photos".
+  const { data: captures, error: capturesError } = await admin.from('captures').select('id, zone, photo_path, created_at')
     .eq('job_id', job.id).not('photo_path', 'is', null).order('created_at', { ascending: true });
+  if (capturesError) throw new Error('Could not read the photo list: ' + capturesError.message);
+  let unreadable = 0;
   const perZone: Record<string, number> = {};
   let remaining = 0;
   for (const c of captures || []) {
@@ -233,7 +239,7 @@ async function copyJob(jobId: string, orgId: string) {
     if (seen && !(seen as Row).stale) continue;
     if (budget <= 0) { remaining++; continue; }
     const bytes = await storageBytes(c.photo_path);
-    if (!bytes) continue;
+    if (!bytes) { unreadable++; continue; }
     const ext = String(c.photo_path).split('.').pop();
     const sub = photoFolderName(job.inspection_ended_at || c.created_at);
     const name = photoFileName({ zone, index: perZone[zone], ext });
@@ -242,7 +248,7 @@ async function copyJob(jobId: string, orgId: string) {
     copied.push(`${sub}/${name}`);
     budget--;
   }
-  return json({ configured: true, folder, copied: copied.length, skipped: skipped.length, remaining });
+  return json({ configured: true, folder, copied: copied.length, skipped: skipped.length, remaining, unreadable });
 }
 
 async function copyInvoice(body: Row, orgId: string) {
