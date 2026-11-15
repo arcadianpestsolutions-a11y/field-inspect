@@ -187,7 +187,8 @@
   }
 
   function renderInspectionChecklist() {
-    const chips = inspectionChecklistItems.filter((item) => !item.hidden);
+    // Tick items (the inside rooms) are checks, not shots: no chip.
+    const chips = inspectionChecklistItems.filter((item) => !item.hidden && !item.tick);
     if (!chips.length) { hide(inspectionChecklistRow); return; }
     const currentZone = inspectionZoneInput.value.trim();
     inspectionChecklistRow.innerHTML = '';
@@ -1918,6 +1919,14 @@
           items: inspectionChecklistItems,
           done: () => inspectionChecklistDone,
           visible: !frontPhotoPending,
+          // The report's copy of the walk (v143): another phone's ticks, or
+          // this one's after its storage was cleared.
+          remote: existingReport && existingReport.sections ? existingReport.sections.walkthrough : null,
+          saveResults: async (walkState) => {
+            if (!(window.ReportUI && window.ReportUI.recordWalkState)) return;
+            try { await window.ReportUI.recordWalkState(startJobId, walkState); }
+            catch (err) { if (window.ErrorLog) window.ErrorLog.note(err, 'photo walk: results'); }
+          },
           setZone: (label) => {
             inspectionZoneInput.value = label;
             inspectionZoneInput.dispatchEvent(new Event('input', { bubbles: true }));

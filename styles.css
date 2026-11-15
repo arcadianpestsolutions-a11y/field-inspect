@@ -3298,6 +3298,34 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 }
 .walk-other::placeholder { color: rgba(255, 255, 255, 0.6); }
 
+/* v143: area buttons, OK / Issue, inside checks, still-to-do list. */
+.walk-areas { display: flex; gap: 5px; }
+.walk-area {
+  flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 3px; font-size: 0.72rem; white-space: nowrap;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.walk-area.current { background: rgba(255, 255, 255, 0.22); border-color: #f8fafc; }
+.walk-area.clear { color: #3dff88; }
+.walk-issue-btn { border-color: #fbbf24; color: #fde68a; }
+.walk-issue { display: flex; flex-direction: column; gap: 8px; }
+.walk-checks { display: flex; flex-direction: column; gap: 2px; }
+.walk-check { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.walk-check-text { flex: 1; min-width: 0; }
+.walk-check-label { font-size: 0.88rem; font-weight: 600; line-height: 1.25; }
+.walk-check-hint { font-size: 0.72rem; line-height: 1.3; color: rgba(226, 232, 240, 0.7); }
+.walk-mini { flex: 0 0 auto; min-height: 40px; min-width: 52px; padding: 0 10px; font-size: 0.8rem; }
+.walk-mini.chosen-ok { background: #3dff88; border-color: #3dff88; color: #032012; }
+.walk-mini.chosen-issue { background: #fbbf24; border-color: #fbbf24; color: #2b1a00; }
+.walk-todo { display: flex; flex-direction: column; gap: 6px; }
+.walk-todo-item { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; padding: 6px 12px; line-height: 1.25; }
+.walk-todo-need { font-size: 0.72rem; font-weight: 400; color: rgba(226, 232, 240, 0.7); }
+
+/* The same list on the report screen. */
+.walk-todo-card { margin-bottom: 12px; border-left: 4px solid #d97706; }
+.walk-todo-card.walk-todo-clear { border-left-color: var(--accent); }
+.walk-todo-line { margin: 6px 0 0; font-size: 0.86rem; line-height: 1.4; }
+.walk-todo-hint { margin: 8px 0 0; font-size: 0.78rem; color: var(--text-dim); }
+
 /* Shutter flash: the photo is taken the instant this shows. */
 .inspection-flash {
   position: absolute;

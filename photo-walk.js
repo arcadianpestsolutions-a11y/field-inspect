@@ -1,35 +1,45 @@
-// Guided photo walk for the timber pest inspection (v118).
+// Guided photo walk for the timber pest inspection (v118, reworked v143).
 //
-// After the front photo, the camera used to leave the technician with a row
-// of chips and a zone box: everything that ought to be photographed was there,
-// but in no order, and remembering what was left was their job. This turns
-// the same checklist (photo-checklists.js, items carrying an `area`) into one
-// step at a time, in the order the property is walked:
+// The checklist (photo-checklists.js, items carrying an `area`) as a walk of
+// the property, one spot at a time:
 //
 //   Outside      every photo step for the exterior
 //   Subfloor     "Is there a subfloor?" first: Yes, Yes but can't get in, or
 //                No (a slab). Only Yes walks its photo steps; can't get in
 //                asks for one photo of why
 //   Roof void    the same three answers, then its steps
-//   Inside       no photos: a few ticks for what blocked the view, written
-//                into the report's Areas We Were Unable to Inspect section
-//   Done         says so, and points at Generate Form
+//   Inside       no photos: each room ticked OK or Issue, then a few ticks
+//                for what blocked the view, written into the report's Areas
+//                We Were Unable to Inspect section
+//   Done         what is still to do, each one tap away; or that all is done
 //
-// The answers to the two questions are written into the report too (v119,
+// v143, agreed with Tal on 15 Nov 2026. An inspection is not walked in a
+// straight line, so:
+//   - the area buttons along the top jump to any area at any time, and the
+//     walk comes back to whatever is still open there;
+//   - every spot ends in a state: a photo marked OK or Issue, or "Not here".
+//     A photo alone is not finished, because the report has to say what the
+//     photo showed;
+//   - the last step lists what is still to do rather than saying "done" when
+//     it is not.
+//
+// The answers to the two questions are written into the report (v119,
 // ReportUI.recordAccessAnswer): floor type, subfloor drainage, and a
 // restricted-access line for an area that could not be entered.
 //
 // Each step sets the zone for the photos taken on it, exactly as tapping its
-// chip does, so filing them into the report is unchanged. Nothing is ever
-// forced: Skip moves on, Back goes back, the chips still jump anywhere, and a
-// zone typed by hand still works for something off the list.
+// chip does, so filing them into the report is unchanged. Back goes back, the
+// chips still jump anywhere, and a zone typed by hand still works for
+// something off the list.
 //
-// Where the walk is up to (skips and answers) is kept on this phone in
-// localStorage, per job. It is about this visit on this device, so it has no
-// business being synced, and a re-opened camera picks up where it left off.
+// Where the walk is up to is kept on this phone in localStorage, per job, so
+// it works with no signal. Since v143 it is also handed to `saveResults`
+// after every change (app.js writes it into the report, which syncs), so the
+// office and the finished report know what was checked.
 //
 // EXPOSES: window.PhotoWalk = { isGuided, buildSteps, firstOpenIndex,
-//   loadState, saveState, mount, AREAS, INSIDE_NOTES, INSIDE_ZONE }
+//   outstanding, mergeStates, loadState, saveState, mount, AREAS,
+//   INSIDE_NOTES, INSIDE_ZONE }
 
 (() => {
   'use strict';
@@ -61,29 +71,65 @@
 
   const INSIDE_ZONE = 'Inside';
   const KEY = (jobId) => 'scope-photo-walk:' + jobId;
+  const RESULTS = ['ok', 'issue'];
 
   function isGuided(items) {
     return Array.isArray(items) && items.length > 0 && items.every((i) => !!i.area);
   }
 
-  function blankState() { return { skipped: [], answers: {}, notesSaved: false, notes: null }; }
+  function blankState() { return { skipped: [], answers: {}, results: {}, notesSaved: false, notes: null }; }
+
+  // Anything stored (this phone, or the report) made safe to use.
+  function cleanState(s) {
+    if (!s || typeof s !== 'object') return blankState();
+    const results = {};
+    if (s.results && typeof s.results === 'object') {
+      for (const id of Object.keys(s.results)) {
+        const r = s.results[id];
+        if (!r || !RESULTS.includes(r.r)) continue;
+        results[id] = { r: r.r, at: Number(r.at) || 0 };
+        if (typeof r.note === 'string' && r.note.trim()) results[id].note = r.note.trim().slice(0, 300);
+      }
+    }
+    return {
+      skipped: Array.isArray(s.skipped) ? s.skipped.filter((x) => typeof x === 'string') : [],
+      answers: s.answers && typeof s.answers === 'object' ? { ...s.answers } : {},
+      results,
+      notesSaved: !!s.notesSaved,
+      notes: Array.isArray(s.notes) ? s.notes.filter((x) => typeof x === 'string') : null,
+    };
+  }
 
   function loadState(jobId) {
     try {
       const raw = localStorage.getItem(KEY(jobId));
-      const s = raw ? JSON.parse(raw) : null;
-      if (!s || typeof s !== 'object') return blankState();
-      return {
-        skipped: Array.isArray(s.skipped) ? s.skipped.filter((x) => typeof x === 'string') : [],
-        answers: s.answers && typeof s.answers === 'object' ? s.answers : {},
-        notesSaved: !!s.notesSaved,
-        notes: Array.isArray(s.notes) ? s.notes.filter((x) => typeof x === 'string') : null,
-      };
+      return cleanState(raw ? JSON.parse(raw) : null);
     } catch (e) { return blankState(); }
   }
 
   function saveState(jobId, state) {
     try { localStorage.setItem(KEY(jobId), JSON.stringify(state)); } catch (e) { /* private mode: the walk still works, it just forgets */ }
+  }
+
+  // This phone's copy and the report's copy (another phone's work) as one.
+  // Per spot the later tap wins; this phone wins a tie and the two questions,
+  // because it is the one being held on site right now.
+  function mergeStates(local, remote) {
+    const a = cleanState(local);
+    const b = cleanState(remote);
+    const out = cleanState(a);
+    for (const id of Object.keys(b.results)) {
+      if (!out.results[id] || b.results[id].at > out.results[id].at) out.results[id] = b.results[id];
+    }
+    for (const id of b.skipped) {
+      if (!out.skipped.includes(id) && !out.results[id]) out.skipped.push(id);
+    }
+    out.skipped = out.skipped.filter((id) => !out.results[id]);
+    for (const area of Object.keys(b.answers)) {
+      if (!out.answers[area]) out.answers[area] = b.answers[area];
+    }
+    out.notesSaved = a.notesSaved || b.notesSaved;
+    return out;
   }
 
   // The ordered steps for this job as things stand. The front photo is left
@@ -95,15 +141,20 @@
     const st = state || blankState();
     const steps = [];
     for (const area of AREAS) {
-      if (area.notes) { steps.push({ kind: 'notes', area: area.id, areaTitle: area.title }); continue; }
-      const photos = items.filter((i) => i.area === area.id && !i.hidden && i.id !== 'frontElevation');
+      if (area.notes) {
+        const ticks = items.filter((i) => i.area === area.id && !i.hidden && i.tick);
+        if (ticks.length) steps.push({ kind: 'checks', area: area.id, areaTitle: area.title, items: ticks });
+        steps.push({ kind: 'notes', area: area.id, areaTitle: area.title });
+        continue;
+      }
+      const photos = items.filter((i) => i.area === area.id && !i.hidden && !i.tick && i.id !== 'frontElevation');
       if (!photos.length) continue;
       if (area.ask) steps.push({ kind: 'question', area: area.id, areaTitle: area.title, ask: area.ask, answers: area.answers });
       const answer = area.ask ? st.answers[area.id] : null;
       if (answer === 'no') continue;
       for (const item of photos) {
         if (answer === 'blocked') {
-          if (item.blockedHint) steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item, hint: item.blockedHint });
+          if (item.blockedHint) steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item, hint: item.blockedHint, blocked: true });
         } else {
           steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item, hint: item.hint });
         }
@@ -113,9 +164,18 @@
     return steps;
   }
 
+  // A photo step is finished when the spot is not here, or it has a photo AND
+  // someone has said what the photo shows. The photo of why an area could not
+  // be entered needs no verdict: it is the evidence, not a check.
   function stepComplete(step, done, state) {
-    if (step.kind === 'photo') return done.has(step.item.label) || state.skipped.includes(step.item.id);
+    const results = state.results || {};
+    if (step.kind === 'photo') {
+      if (state.skipped.includes(step.item.id)) return true;
+      if (!done.has(step.item.label)) return false;
+      return step.blocked ? true : !!results[step.item.id];
+    }
     if (step.kind === 'question') return !!state.answers[step.area];
+    if (step.kind === 'checks') return step.items.every((i) => !!results[i.id]);
     if (step.kind === 'notes') return !!state.notesSaved;
     return false;
   }
@@ -124,6 +184,31 @@
   function firstOpenIndex(steps, done, state) {
     const i = steps.findIndex((s) => !stepComplete(s, done, state));
     return i === -1 ? steps.length - 1 : i;
+  }
+
+  // What is still to do, in walking order, in words a technician can act on.
+  // Used by the walk's last step and by the report screen.
+  function outstanding(items, state, done) {
+    const st = cleanState(state);
+    const doneSet = done || new Set();
+    const out = [];
+    for (const step of buildSteps(items, st)) {
+      if (step.kind === 'done' || stepComplete(step, doneSet, st)) continue;
+      if (step.kind === 'photo') {
+        const got = doneSet.has(step.item.label);
+        out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'photo', id: step.item.id, label: step.item.label,
+          need: got ? 'mark OK or Issue' : 'photo, or Not here' });
+      } else if (step.kind === 'question') {
+        out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'question', id: step.area, label: step.ask, need: 'answer' });
+      } else if (step.kind === 'checks') {
+        const left = step.items.filter((i) => !st.results[i.id]);
+        out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'checks', id: 'checks',
+          label: left.length === 1 ? left[0].label : `${left.length} rooms and checks`, need: 'tick OK or Issue' });
+      } else if (step.kind === 'notes') {
+        out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'notes', id: 'notes', label: 'What blocked the view inside', need: 'save the ticks' });
+      }
+    }
+    return out;
   }
 
   function el(tag, cls, text) {
@@ -145,31 +230,54 @@
   // setZone(label): sets the zone box as if typed. saveNotes(list): writes
   // the inside ticks into the report, resolving true when it did;
   // saveAnswer(area, value) does the same for a question's answer.
-  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, visible: startVisible }) {
-    let state = loadState(jobId);
+  // saveResults(state): told after every change, to copy the walk into the
+  // report. remote: the report's copy of the walk, if it has one.
+  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, remote, visible: startVisible }) {
+    let state = remote ? mergeStates(loadState(jobId), remote) : loadState(jobId);
     let steps = buildSteps(items, state);
     let index = firstOpenIndex(steps, done(), state);
     let banner = '';
     let bannerTimer = null;
     let visible = startVisible !== false;
     let saving = false;
+    let noteOpenFor = null; // the item whose Issue note box is showing
 
-    function persist() { saveState(jobId, state); }
+    function persist() {
+      saveState(jobId, state);
+      if (saveResults) {
+        try { Promise.resolve(saveResults(cleanState(state))).catch(() => {}); } catch (e) { /* the phone's copy is the one that matters on site */ }
+      }
+    }
 
     function zoneFor(step) {
       if (step.kind === 'photo') return step.item.label;
-      if (step.kind === 'notes') return INSIDE_ZONE;
+      if (step.kind === 'notes' || step.kind === 'checks') return INSIDE_ZONE;
       return '';
     }
 
     function go(i, { quiet } = {}) {
       index = Math.max(0, Math.min(steps.length - 1, i));
+      noteOpenFor = null;
       if (!quiet) { banner = ''; clearTimeout(bannerTimer); }
       setZone(zoneFor(steps[index]));
       render();
     }
 
     function next() { go(index + 1); }
+
+    // An area button: the first thing still open there, or its first step.
+    function goArea(areaId) {
+      const doneSet = done();
+      let at = steps.findIndex((s) => s.area === areaId && !stepComplete(s, doneSet, state));
+      if (at === -1) at = steps.findIndex((s) => s.area === areaId);
+      if (at !== -1) go(at);
+    }
+
+    function goStep(match) {
+      const at = steps.findIndex((s) => s.kind === match.kind && s.area === match.area
+        && (s.kind !== 'photo' || s.item.id === match.id));
+      if (at !== -1) go(at);
+    }
 
     function rebuild(keepStep) {
       steps = buildSteps(items, state);
@@ -200,11 +308,47 @@
 
     function skip() {
       const step = steps[index];
-      if (step.kind === 'photo' && !state.skipped.includes(step.item.id)) {
-        state.skipped.push(step.item.id);
+      if (step.kind === 'photo') {
+        if (!state.skipped.includes(step.item.id)) state.skipped.push(step.item.id);
+        delete state.results[step.item.id];
         persist();
       }
       next();
+    }
+
+    function setResult(id, r, note) {
+      state.results[id] = { r, at: Date.now() };
+      if (note && note.trim()) state.results[id].note = note.trim().slice(0, 300);
+      state.skipped = state.skipped.filter((x) => x !== id);
+      persist();
+    }
+
+    function renderAreas(step, doneSet) {
+      const row = el('div', 'walk-areas');
+      for (const area of AREAS) {
+        const mine = steps.filter((s) => s.area === area.id);
+        if (!mine.length) continue;
+        const left = mine.filter((s) => !stepComplete(s, doneSet, state)).length;
+        const b = btn(area.title + (left ? ' ' + left : ' ✓'), 'walk-area' + (step.area === area.id ? ' current' : '') + (left ? '' : ' clear'),
+          () => goArea(area.id));
+        b.dataset.area = area.id;
+        b.setAttribute('aria-label', area.title + (left ? `: ${left} still to do` : ': all done'));
+        row.appendChild(b);
+      }
+      return row;
+    }
+
+    function noteBox(item, existing, onSave) {
+      const wrap = el('div', 'walk-issue');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'walk-other walk-issue-note';
+      input.maxLength = 300;
+      input.placeholder = 'What is wrong? (optional)';
+      input.value = existing || '';
+      wrap.appendChild(input);
+      wrap.appendChild(btn('Save issue, next ›', 'walk-primary walk-issue-save', () => onSave(input.value)));
+      return wrap;
     }
 
     function render() {
@@ -217,6 +361,7 @@
       const pos = countable.indexOf(step);
 
       if (banner) container.appendChild(el('div', 'walk-banner', banner));
+      container.appendChild(renderAreas(step, doneSet));
       const meta = step.kind === 'done' ? 'All areas' : `${step.areaTitle} · ${pos + 1} of ${countable.length}`;
       container.appendChild(el('div', 'walk-meta', meta));
 
@@ -227,13 +372,32 @@
 
       if (step.kind === 'photo') {
         const got = doneSet.has(step.item.label);
-        container.appendChild(el('div', 'walk-title', (got ? '✓ ' : '') + step.item.label));
+        const result = state.results[step.item.id];
+        const finished = stepComplete(step, doneSet, state);
+        container.appendChild(el('div', 'walk-title', (finished ? '✓ ' : '') + step.item.label));
         if (step.hint) container.appendChild(el('div', 'walk-hint', step.hint));
-        if (got) {
+        if (got && step.blocked) {
           container.appendChild(el('div', 'walk-got', 'Photo saved. Take another, or go on.'));
           actions.appendChild(btn('Next ›', 'walk-primary', next));
+        } else if (got) {
+          container.appendChild(el('div', 'walk-got', result
+            ? (result.r === 'ok' ? 'Photo saved, marked OK.' : 'Photo saved, marked as an issue' + (result.note ? ': ' + result.note : '.'))
+            : 'Photo saved. What does it show?'));
+          if (noteOpenFor === step.item.id) {
+            container.appendChild(noteBox(step.item, result && result.note, (note) => { setResult(step.item.id, 'issue', note); next(); }));
+          } else {
+            const ok = btn('✓ OK', 'walk-primary' + (result && result.r === 'ok' ? ' chosen' : ''), () => { setResult(step.item.id, 'ok'); next(); });
+            ok.dataset.result = 'ok';
+            const issue = btn('⚠ Issue', 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : ''), () => { noteOpenFor = step.item.id; render(); });
+            issue.dataset.result = 'issue';
+            actions.appendChild(ok);
+            actions.appendChild(issue);
+          }
         } else {
-          actions.appendChild(btn('Not here, skip', 'walk-secondary', skip));
+          if (state.skipped.includes(step.item.id)) container.appendChild(el('div', 'walk-got', 'Marked as not here. Take a photo if that was wrong.'));
+          const none = btn('Not here', 'walk-secondary', skip);
+          none.dataset.result = 'nothere';
+          actions.appendChild(none);
         }
       } else if (step.kind === 'question') {
         container.appendChild(el('div', 'walk-title', step.ask));
@@ -248,10 +412,62 @@
           choices.appendChild(b);
         });
         container.appendChild(choices);
-      } else if (step.kind === 'notes') {
-        container.appendChild(el('div', 'walk-title', 'Inside: no photos needed'));
+      } else if (step.kind === 'checks') {
+        container.appendChild(el('div', 'walk-title', 'Inside: tick each one'));
         container.appendChild(el('div', 'walk-hint',
-          'Tick what stopped you seeing walls and floors. These go into the report. Only photograph inside if you find damage or damp.'));
+          'No photos needed inside unless something is wrong. Mark an Issue, then photograph it.'));
+        const list = el('div', 'walk-checks');
+        for (const item of step.items) {
+          const result = state.results[item.id];
+          const row = el('div', 'walk-check');
+          row.dataset.item = item.id;
+          const text = el('div', 'walk-check-text');
+          text.appendChild(el('div', 'walk-check-label', item.label));
+          if (item.hint) text.appendChild(el('div', 'walk-check-hint', item.hint));
+          row.appendChild(text);
+          const ok = btn('OK', 'walk-mini' + (result && result.r === 'ok' ? ' chosen-ok' : ''), () => { setResult(item.id, 'ok'); noteOpenFor = null; render(); });
+          ok.dataset.result = 'ok';
+          const issue = btn('Issue', 'walk-mini' + (result && result.r === 'issue' ? ' chosen-issue' : ''), () => {
+            setResult(item.id, 'issue', result && result.note);
+            noteOpenFor = item.id;
+            // The next photo is of this issue, so it is filed under it.
+            setZone(item.label);
+            render();
+          });
+          issue.dataset.result = 'issue';
+          row.appendChild(ok);
+          row.appendChild(issue);
+          list.appendChild(row);
+          if (noteOpenFor === item.id) {
+            const wrap = el('div', 'walk-issue');
+            wrap.appendChild(el('div', 'walk-got', 'Photograph it now: the next photo is filed under ' + item.label + '.'));
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'walk-other walk-issue-note';
+            input.maxLength = 300;
+            input.placeholder = 'What is wrong? (optional)';
+            input.value = (result && result.note) || '';
+            input.addEventListener('change', () => { setResult(item.id, 'issue', input.value); });
+            wrap.appendChild(input);
+            list.appendChild(wrap);
+          }
+        }
+        container.appendChild(list);
+        const left = step.items.filter((i) => !state.results[i.id]);
+        if (left.length) {
+          const all = btn(left.length === step.items.length ? 'All OK' : 'Rest are OK', 'walk-secondary', () => {
+            for (const i of left) setResult(i.id, 'ok');
+            noteOpenFor = null;
+            render();
+          });
+          all.dataset.action = 'all-ok';
+          actions.appendChild(all);
+        }
+        actions.appendChild(btn('Next ›', 'walk-primary', next, { disabled: left.length > 0 }));
+      } else if (step.kind === 'notes') {
+        container.appendChild(el('div', 'walk-title', 'Inside: what blocked the view'));
+        container.appendChild(el('div', 'walk-hint',
+          'Tick what stopped you seeing walls and floors. These go into the report. No photos of these.'));
         const chosen = new Set(state.notes || INSIDE_NOTES.map((n) => n.value));
         const list = el('div', 'walk-notes');
         for (const n of INSIDE_NOTES) {
@@ -290,8 +506,22 @@
           next();
         }));
       } else {
-        container.appendChild(el('div', 'walk-title', '✓ All areas done'));
-        container.appendChild(el('div', 'walk-hint', 'Tap Generate Form when you are ready, or go back to add anything.'));
+        const todo = outstanding(items, state, doneSet);
+        if (!todo.length) {
+          container.appendChild(el('div', 'walk-title', '✓ All areas done'));
+          container.appendChild(el('div', 'walk-hint', 'Tap Generate Form when you are ready, or go back to add anything.'));
+        } else {
+          container.appendChild(el('div', 'walk-title', `${todo.length} still to do`));
+          container.appendChild(el('div', 'walk-hint', 'Tap one to go straight to it.'));
+          const list = el('div', 'walk-todo');
+          for (const t of todo) {
+            const b = btn(`${t.areaTitle}: ${t.label}`, 'walk-todo-item', () => goStep(t));
+            b.appendChild(el('span', 'walk-todo-need', t.need));
+            b.dataset.todo = t.id;
+            list.appendChild(b);
+          }
+          container.appendChild(list);
+        }
       }
       container.appendChild(actions);
     }
@@ -312,12 +542,20 @@
         render();
         return nextName;
       },
-      photoSaved() { render(); },
+      photoSaved() {
+        // A photo of a spot that had been marked "not here" means it is here.
+        const step = steps[index];
+        if (step && step.kind === 'photo' && done().has(step.item.label) && state.skipped.includes(step.item.id)) {
+          state.skipped = state.skipped.filter((x) => x !== step.item.id);
+          persist();
+        }
+        render();
+      },
       // The zone box changed (a chip, or typing). A checklist label jumps the
       // walk to that step; anything else leaves the walk where it is.
       zoneChanged(label) {
         const at = steps.findIndex((s) => s.kind === 'photo' && s.item.label === label);
-        if (at !== -1 && at !== index) { index = at; render(); }
+        if (at !== -1 && at !== index) { index = at; noteOpenFor = null; render(); }
       },
       setVisible(on) {
         const was = visible;
@@ -326,9 +564,10 @@
       },
       start() { if (visible) onShow(); else render(); },
       current() { return steps[index]; },
+      state() { return cleanState(state); },
       destroy() { clearTimeout(bannerTimer); container.innerHTML = ''; container.classList.add('hidden'); },
     };
   }
 
-  window.PhotoWalk = { isGuided, buildSteps, firstOpenIndex, loadState, saveState, mount, AREAS, INSIDE_NOTES, INSIDE_ZONE };
+  window.PhotoWalk = { isGuided, buildSteps, firstOpenIndex, outstanding, mergeStates, loadState, saveState, mount, AREAS, INSIDE_NOTES, INSIDE_ZONE };
 })();

@@ -606,6 +606,72 @@
     return changed;
   }
 
+  // ---------- The walk's "still to do" list (v143) ----------
+  let walkStateQueue = Promise.resolve();
+
+  // [] when the walk is finished; null when this job has no guided walk, or
+  // nobody has started it (a report typed up in the office is not nagged
+  // about a walk that never happened).
+  async function walkOutstandingFor(jobId, reportIn) {
+    if (!window.PhotoWalk || !window.PhotoChecklists || !window.PhotoWalk.outstanding) return null;
+    const job = await DB.getJob(jobId);
+    if (!job || job.jobType !== 'termite') return null;
+    const report = reportIn || await DB.getReport(jobId);
+    const items = window.PhotoChecklists.forJob(job, null, report ? report.documentType : null)
+      .filter((item) => item.id !== 'frontElevation');
+    if (!window.PhotoWalk.isGuided(items)) return null;
+    const captures = await DB.getCaptures(jobId);
+    const done = new Set(captures.filter((c) => c.zone).map((c) => c.zone));
+    const saved = report && report.sections ? report.sections.walkthrough : null;
+    if (!saved && !done.size) return null;
+    return window.PhotoWalk.outstanding(items, saved || {}, done);
+  }
+
+  async function renderWalkTodo() {
+    const list = document.getElementById('report-section-list');
+    if (!list || !currentReport) return;
+    let card = document.getElementById('walk-todo');
+    const jobId = currentJobId;
+    let todo = null;
+    try { todo = await walkOutstandingFor(jobId, currentReport); } catch (e) { todo = null; }
+    if (jobId !== currentJobId) return; // another report was opened meanwhile
+    if (todo === null || currentReport.finalizedAt) { if (card) card.remove(); return; }
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'walk-todo';
+      card.className = 'card walk-todo-card';
+    }
+    const anchor = document.getElementById('report-progress') || list;
+    if (card.nextSibling !== anchor) anchor.parentNode.insertBefore(card, anchor);
+    card.classList.toggle('walk-todo-clear', !todo.length);
+    card.innerHTML = '';
+    const head = document.createElement('strong');
+    head.id = 'walk-todo-title';
+    head.textContent = todo.length
+      ? `Walk-through: ${todo.length} still to do`
+      : '✓ Walk-through complete: every spot photographed or ticked';
+    card.appendChild(head);
+    if (!todo.length) return;
+    const byArea = new Map();
+    for (const t of todo) {
+      if (!byArea.has(t.areaTitle)) byArea.set(t.areaTitle, []);
+      byArea.get(t.areaTitle).push(t.label);
+    }
+    for (const [area, labels] of byArea) {
+      const p = document.createElement('p');
+      p.className = 'walk-todo-line';
+      const b = document.createElement('b');
+      b.textContent = area + ': ';
+      p.appendChild(b);
+      p.appendChild(document.createTextNode(labels.join(', ')));
+      card.appendChild(p);
+    }
+    const hint = document.createElement('p');
+    hint.className = 'walk-todo-hint';
+    hint.textContent = 'Go back to the job and tap Start Inspection to finish these.';
+    card.appendChild(hint);
+  }
+
   // ---------- Report load / prefill ----------
   async function loadOrCreateReport(jobId, wantedDocumentType) {
     let report = await DB.getReport(jobId);
@@ -1133,6 +1199,37 @@
       }
       return true;
     },
+    // The walk's own record (v143): which spots were marked OK, Issue or Not
+    // here, and the two area answers. Kept under `sections.walkthrough`, which
+    // is not a section of any schema: nothing renders or prints it yet, but
+    // sections are what sync, so the office and a second phone see it. Not
+    // audited tap by tap; the answers it leads to are. Calls are queued so two
+    // quick taps cannot overwrite each other. Refused on a finalized report.
+    recordWalkState(jobId, walkState) {
+      const run = async () => {
+        const report = await loadOrCreateReport(jobId);
+        if (report.finalizedAt) return false;
+        const s = walkState || {};
+        report.sections.walkthrough = {
+          results: s.results || {},
+          skipped: Array.isArray(s.skipped) ? s.skipped : [],
+          answers: s.answers || {},
+          notesSaved: !!s.notesSaved,
+          updatedAt: Date.now(),
+        };
+        await DB.saveReport(report);
+        if (currentJobId === jobId && currentReport) {
+          currentReport.sections.walkthrough = report.sections.walkthrough;
+          renderWalkTodo();
+        }
+        return true;
+      };
+      walkStateQueue = walkStateQueue.then(run, run);
+      return walkStateQueue;
+    },
+    // What the walk still needs for a job: [] when finished, null when this
+    // job has no walk (not a timber pest inspection) or it was never started.
+    walkOutstanding: (jobId) => walkOutstandingFor(jobId),
     // The subfloor and roof void questions of the photo walk. Each has three
     // answers, because "no" meant two different things a report must keep
     // apart: there is none (a slab, a flat roof), or there is one and it could
@@ -2087,6 +2184,7 @@
     }
 
     renderReportProgress(doneCount, displayNumber, firstOpen);
+    renderWalkTodo();
     finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt;
     finalizeBtn.textContent = currentReport.finalizedAt ? '✓ Report Finalized' : 'Finalize Report';
     finalizeHint.classList.toggle('hidden', allRequiredGreen);

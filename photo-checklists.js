@@ -25,48 +25,110 @@
   // void. `area` makes this a guided walk (photo-walk.js) rather than a row of
   // chips to remember: one shot at a time, with `hint` saying what to capture.
   //
-  // The inside gets no photo steps. What blocks the view indoors is the same
-  // furniture, fixtures and stored belongings on nearly every job, so it is a
-  // set of ticks written into the report (photo-walk.js INSIDE_NOTES), and a
-  // photo inside is only worth taking when there is damage or damp to show.
-  // `hidden` keeps the old Kitchen / Bathroom label filing photos already
-  // taken against it, without asking for it any more.
+  // The inside gets no photo steps: clients do not want their cupboards and
+  // belongings photographed. What blocks the view indoors is a set of ticks
+  // written into the report (photo-walk.js INSIDE_NOTES), the rooms are
+  // `tick` checks, and a photo inside is only taken when there is an issue.
   const CONDUCIVE = { schemaSection: 'conducive', schemaField: 'conducivePhotos' };
   const ACCESS = { schemaSection: 'access', schemaField: 'accessPhotos' };
+  // v143: the list Tal agreed on 15 Nov 2026, drawn from what he photographed
+  // and commented on across his last 60 Formitize inspections. Each step ends
+  // as a photo marked OK or Issue, or as "Not here" (photo-walk.js).
+  //
+  // A label is also the zone its photos are filed under, so a label is never
+  // reworded: a step that was split or replaced stays in the list `hidden`,
+  // still filing the photos already taken against it.
+  //
+  // `tick: true` (the inside) is a check with no photo: OK or Issue, and a
+  // photo only when there is an issue to show.
   const TERMITE_CHECKLIST = [
     { id: 'frontElevation', label: 'Front Elevation', area: 'outside' }, // handled by the existing front-photo prompt at Start Inspection
     { id: 'meterBox', label: 'Meter Box', area: 'outside', schemaSection: 'findings', schemaField: 'durableNoticePhotos',
       hint: 'Open it and photograph the inside of the door. The termite durable notice is usually there.' },
     { id: 'slabEdge', label: 'Slab Edge', area: 'outside', ...CONDUCIVE,
-      hint: 'Anywhere the slab edge is covered by soil, paving, render or garden beds.' },
+      hint: 'Each side of the house. Issue if the slab edge is covered by soil, paving, render or garden beds.' },
     { id: 'weepHoles', label: 'Weep Holes', area: 'outside', ...CONDUCIVE,
-      hint: 'Weep holes that are blocked, buried or bridged.' },
-    { id: 'airCon', label: 'Air Con Unit', area: 'outside', ...CONDUCIVE,
-      hint: 'The outdoor unit and where its drain drips. Water against a wall draws termites.' },
+      hint: 'Issue if weep holes are blocked, buried or bridged.' },
     { id: 'hotWater', label: 'Hot Water System', area: 'outside', ...CONDUCIVE,
       hint: 'The relief valve overflow, and where it drains to.' },
-    { id: 'waterTanks', label: 'Water Tanks / Downpipes', area: 'outside', ...CONDUCIVE,
-      hint: 'Tanks and their overflow, and any downpipe that drains against the house.' },
-    { id: 'gardenBeds', label: 'Garden Beds Against Walls', area: 'outside', ...CONDUCIVE,
-      hint: 'Garden beds, mulch or soil built up against the walls.' },
-    { id: 'exteriorTimbers', label: 'External Timbers', area: 'outside', ...CONDUCIVE,
-      hint: 'Fences, retaining walls, sleepers, decks, pergolas: any timber touching the ground.' },
+    { id: 'airCon', label: 'Air Con Unit', area: 'outside', ...CONDUCIVE,
+      hint: 'The outdoor unit and where its drain drips. Water against a wall draws termites.' },
+    { id: 'outsideTaps', label: 'Outside Taps', area: 'outside', ...CONDUCIVE,
+      hint: 'Leaking taps, and whether there is a drain underneath.' },
+    { id: 'downpipes', label: 'Downpipes & Gutters', area: 'outside', ...CONDUCIVE,
+      hint: 'Downpipes connected to stormwater, not draining against the house. Leaking gutters.' },
+    { id: 'waterTank', label: 'Water Tank', area: 'outside', ...CONDUCIVE,
+      hint: 'The tank and where its overflow drains to.' },
+    { id: 'siteDrainage', label: 'Ground Levels & Drainage', area: 'outside', ...CONDUCIVE,
+      hint: 'Ground falling toward the house, ponding, garden beds or paving built up against the walls.' },
+    { id: 'subfloorVents', label: 'Subfloor Vents', area: 'outside', ...CONDUCIVE,
+      hint: 'Vents in the outside walls. Issue if they are blocked, buried or too few.' },
     { id: 'trees', label: 'Trees & Stumps', area: 'outside', schemaSection: 'conducive', schemaField: 'treePhotos',
-      hint: 'Trees close to the house, and any old stumps.' },
-    { id: 'outbuildings', label: 'Sheds & Stored Items', area: 'outside', ...CONDUCIVE,
-      hint: 'Sheds, cubbies, and timber or rubbish stored against the house.' },
+      hint: 'Trees close to the house, and any old stumps. Get close to any mud or nest.' },
+    { id: 'fences', label: 'Fences & Retaining Walls', area: 'outside', ...CONDUCIVE,
+      hint: 'Timber fences, sleepers and retaining walls: decay or termite damage.' },
+    { id: 'decksPosts', label: 'Decks, Pergolas & Posts', area: 'outside', ...CONDUCIVE,
+      hint: 'Decks, pergolas and verandah posts, especially any timber in or on the ground.' },
+    { id: 'sheds', label: 'Sheds & Detached Garage', area: 'outside', ...CONDUCIVE,
+      hint: 'Sheds, cubbies and a detached garage: damage, and timber stored inside.' },
+    { id: 'baitStations', label: 'Bait / Monitoring Stations', area: 'outside', ...CONDUCIVE,
+      hint: 'Any termite stations in the ground or on the walls, and their condition.' },
+    { id: 'storedGoods', label: 'Stored Goods Against Walls', area: 'outside', ...ACCESS,
+      hint: 'Timber, firewood or belongings stacked against the house. One photo can show several.' },
+    { id: 'surroundings', label: 'Surroundings', area: 'outside', ...CONDUCIVE,
+      hint: 'What is next door or behind: bushland or large trees within about 75 metres.' },
     { id: 'subfloorEntry', label: 'Subfloor Entry', area: 'subfloor', ...ACCESS,
-      hint: 'The way in, then the view across the subfloor from it.',
+      hint: 'The way in, and how much clearance there is.',
       blockedHint: 'Show why you could not get in: no access hatch, too low, blocked or unsafe.' },
+    { id: 'subfloorGeneral', label: 'Subfloor General View', area: 'subfloor', ...ACCESS,
+      hint: 'The view across the subfloor, showing ducting, plumbing or stored goods in the way.' },
     { id: 'antCapping', label: 'Piers & Ant Capping', area: 'subfloor', ...CONDUCIVE,
-      hint: 'Piers and ant caps that are missing, damaged or bridged.' },
-    { id: 'subfloorConditions', label: 'Subfloor Damp / Ventilation', area: 'subfloor', ...CONDUCIVE,
-      hint: 'Damp soil, leaking pipes, poor airflow, timber debris on the ground.' },
+      hint: 'Issue if ant caps are missing, rusted, damaged or bridged.' },
+    { id: 'subfloorTimbers', label: 'Bearers & Joists', area: 'subfloor', ...ACCESS,
+      hint: 'Bearers, joists and flooring from below. Get close to any damage, mud leads or decay.' },
+    { id: 'subfloorSoil', label: 'Subfloor Soil & Drainage', area: 'subfloor', ...CONDUCIVE,
+      hint: 'Issue if the soil is damp or water is ponding.' },
+    { id: 'subfloorVentilation', label: 'Subfloor Ventilation', area: 'subfloor', ...CONDUCIVE,
+      hint: 'Airflow from one side to the other. Issue if vents are blocked or the air is stale and damp.' },
+    { id: 'subfloorPlumbing', label: 'Plumbing Under Wet Areas', area: 'subfloor', ...CONDUCIVE,
+      hint: 'Pipes under the bathroom, kitchen and laundry. Issue if anything is leaking.' },
+    { id: 'subfloorDebris', label: 'Timber on Subfloor Ground', area: 'subfloor', ...CONDUCIVE,
+      hint: 'Offcuts, formwork or stored timber lying on the soil.' },
     { id: 'roofVoidEntry', label: 'Roof Void Entry', area: 'roof', ...ACCESS,
-      hint: 'The manhole, then the view across the roof void from it.',
+      hint: 'The manhole, and anything that limits getting in or moving about.',
       blockedHint: 'Show why you could not get in: no manhole, sealed, too small, or unsafe.' },
+    { id: 'roofGeneral', label: 'Roof Void General View', area: 'roof', ...ACCESS,
+      hint: 'The view across the roof void from the manhole.' },
     { id: 'roofTimbers', label: 'Roof Timbers', area: 'roof', ...ACCESS,
-      hint: 'Rafters, battens and trusses. Get close to any damage or mud leads.' },
+      hint: 'Rafters, battens, trusses and top plates. Get close to any damage or mud leads.' },
+    { id: 'roofObstructions', label: 'Insulation, Sarking & Ducting', area: 'roof', schemaSection: 'access', schemaField: 'obstructionPhotos',
+      hint: 'Whatever covers the timbers. One photo can show several obstructions.' },
+    { id: 'roofEdges', label: 'Roof Void Outer Edges', area: 'roof', ...ACCESS,
+      hint: 'Toward the eaves, where clearance runs out.' },
+    { id: 'roofLeaks', label: 'Roof Leak Signs', area: 'roof', ...CONDUCIVE,
+      hint: 'Water staining on timbers, sarking or the ceiling.' },
+    { id: 'inBathrooms', label: 'Bathrooms & Showers', area: 'inside', tick: true, ...CONDUCIVE,
+      hint: 'Moisture reading on the walls, and any leaks.' },
+    { id: 'inKitchen', label: 'Kitchen', area: 'inside', tick: true, ...CONDUCIVE,
+      hint: 'Under the sink: leaks, and any treatment sticker.' },
+    { id: 'inLaundry', label: 'Laundry', area: 'inside', tick: true, ...CONDUCIVE,
+      hint: 'Moisture reading, and any leaks.' },
+    { id: 'inSkirtings', label: 'Skirtings & Architraves', area: 'inside', tick: true, ...ACCESS,
+      hint: 'Sounded (tapped) for hollow or damaged timber.' },
+    { id: 'inDoorsWindows', label: 'Door Frames & Window Sills', area: 'inside', tick: true, ...ACCESS,
+      hint: 'Checked for damage or decay.' },
+    { id: 'inWetWalls', label: 'Walls Behind Wet Areas', area: 'inside', tick: true, ...CONDUCIVE,
+      hint: 'Moisture reading on the other side of showers and baths.' },
+    { id: 'inGarage', label: 'Attached Garage', area: 'inside', tick: true, ...ACCESS,
+      hint: 'Slab edge, and goods stored against the walls.' },
+    { id: 'inMould', label: 'Mould', area: 'inside', tick: true, ...CONDUCIVE,
+      hint: 'Issue if mould growth was seen anywhere inside.' },
+    // Replaced by the steps above in v143; still file photos already taken.
+    { id: 'waterTanks', label: 'Water Tanks / Downpipes', area: 'outside', hidden: true, ...CONDUCIVE },
+    { id: 'gardenBeds', label: 'Garden Beds Against Walls', area: 'outside', hidden: true, ...CONDUCIVE },
+    { id: 'exteriorTimbers', label: 'External Timbers', area: 'outside', hidden: true, ...CONDUCIVE },
+    { id: 'outbuildings', label: 'Sheds & Stored Items', area: 'outside', hidden: true, ...CONDUCIVE },
+    { id: 'subfloorConditions', label: 'Subfloor Damp / Ventilation', area: 'subfloor', hidden: true, ...CONDUCIVE },
     { id: 'wetAreas', label: 'Kitchen / Bathroom', area: 'inside', hidden: true, ...CONDUCIVE },
   ];
 

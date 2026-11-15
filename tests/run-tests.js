@@ -3964,10 +3964,18 @@
     assert(ranks.every((r) => r >= 0), 'every step belongs to a known area');
     assert(ranks.every((r, k) => k === 0 || r >= ranks[k - 1]), 'outside first, then subfloor, then roof void, never back again');
     assert(visible.every((i) => i.hint && i.hint.length > 10), 'every photo step says what to capture');
-    for (const id of ['airCon', 'hotWater', 'waterTanks', 'subfloorEntry', 'roofVoidEntry']) {
+    for (const id of ['airCon', 'hotWater', 'waterTank', 'downpipes', 'outsideTaps', 'subfloorEntry', 'subfloorTimbers', 'roofVoidEntry', 'roofObstructions']) {
       assert(visible.some((i) => i.id === id), id + ' is asked for');
     }
-    assert(!visible.some((i) => i.area === 'inside'), 'nothing inside is a photo step');
+    assert(!visible.some((i) => i.area === 'inside' && !i.tick), 'nothing inside is a photo step: the rooms are ticks');
+    assert(visible.filter((i) => i.tick).length >= 6 && visible.filter((i) => i.tick).every((i) => i.area === 'inside'),
+      'and only the inside has tick-only checks (v143)');
+    const labels = items.map((i) => i.label);
+    assertEqual(new Set(labels).size, labels.length, 'no two steps share a label, since a label is where its photos are filed');
+    for (const old of ['Water Tanks / Downpipes', 'Garden Beds Against Walls', 'External Timbers', 'Sheds & Stored Items', 'Subfloor Damp / Ventilation']) {
+      const was = items.find((i) => i.label === old);
+      assert(was && was.hidden && was.schemaField, `photos already taken as "${old}" still file into the report`);
+    }
     const legacy = items.find((i) => i.label === 'Kitchen / Bathroom');
     assert(legacy && legacy.hidden && legacy.schemaField === 'conducivePhotos',
       'photos already taken as Kitchen / Bathroom still file into the report, though it is no longer asked for');
@@ -3994,9 +4002,76 @@
     const outsideIds = items.filter((i) => i.area === 'outside' && !i.hidden).map((i) => i.id);
     const done = new Set(['Meter Box']);
     const skipped = outsideIds.filter((id) => id !== 'meterBox');
-    const at = PW.firstOpenIndex(noSub, done, { ...slab, skipped });
+    const photoOnly = PW.firstOpenIndex(noSub, done, { ...slab, skipped });
+    assertEqual(noSub[photoOnly].item.id, 'meterBox', 'a photo nobody has marked OK or Issue is not finished (v143)');
+    const at = PW.firstOpenIndex(noSub, done, { ...slab, skipped, results: { meterBox: { r: 'ok', at: 1 } } });
     assertEqual(noSub[at].kind, 'question', 'with the outside done or skipped and the subfloor answered...');
     assertEqual(noSub[at].area, 'roof', '...it resumes at the roof void question');
+  });
+
+  test('Photo walk: what is still to do is listed by area, and shrinks as spots are dealt with (v143)', () => {
+    const win = frame.contentWindow;
+    const PW = win.PhotoWalk;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection')
+      .filter((i) => i.id !== 'frontElevation');
+    const outsideIds = items.filter((i) => i.area === 'outside' && !i.hidden).map((i) => i.id);
+    const ticks = items.filter((i) => i.tick);
+
+    const start = PW.outstanding(items, {}, new Set());
+    assert(start.some((t) => t.id === 'meterBox' && /photo/.test(t.need)), 'a spot with no photo asks for one, or Not here');
+    assert(start.some((t) => t.kind === 'question' && t.area === 'subfloor'), 'an unanswered area question is listed');
+    assert(start.some((t) => t.kind === 'checks' && /rooms/.test(t.label)), 'the inside checks are one line');
+    assert(start.every((t) => t.areaTitle), 'every line says which area it is in');
+
+    const photoNoVerdict = PW.outstanding(items, {}, new Set(['Meter Box']));
+    assert(photoNoVerdict.some((t) => t.id === 'meterBox' && /OK or Issue/.test(t.need)), 'a photo with no verdict asks for OK or Issue');
+
+    const results = { meterBox: { r: 'issue', at: 5, note: 'No durable notice' } };
+    for (const t of ticks) results[t.id] = { r: 'ok', at: 5 };
+    const finished = PW.outstanding(items, {
+      skipped: outsideIds.filter((id) => id !== 'meterBox'),
+      answers: { subfloor: 'no', roof: 'no' },
+      results,
+      notesSaved: true,
+    }, new Set(['Meter Box']));
+    assertEqual(finished.length, 0, 'nothing is left once every spot is OK, Issue or Not here and the areas are answered');
+
+    const blocked = PW.outstanding(items, { answers: { subfloor: 'blocked', roof: 'no' }, skipped: outsideIds, results, notesSaved: true },
+      new Set(['Subfloor Entry']));
+    assertEqual(blocked.length, 0, 'the photo of why an area could not be entered needs no OK or Issue');
+
+    const merged = PW.mergeStates(
+      { skipped: ['slabEdge'], answers: { subfloor: 'yes' }, results: { meterBox: { r: 'ok', at: 10 } } },
+      { skipped: ['meterBox', 'weepHoles'], answers: { subfloor: 'no', roof: 'no' }, results: { meterBox: { r: 'issue', at: 20 }, slabEdge: { r: 'ok', at: 3 } } });
+    assertEqual(merged.results.meterBox.r, 'issue', 'two phones: the later tap on a spot wins');
+    assertEqual(merged.answers.subfloor, 'yes', 'this phone keeps its own answer to an area question');
+    assertEqual(merged.answers.roof, 'no', 'and takes one it has not answered');
+    assert(merged.skipped.includes('weepHoles') && !merged.skipped.includes('meterBox') && !merged.skipped.includes('slabEdge'),
+      'a spot with a verdict is not also "not here"');
+    assertEqual(PW.mergeStates({ results: { x: { r: 'maybe', at: 1 } } }, null).results.x, undefined, 'a result that is not OK or Issue is dropped');
+  });
+
+  test('Photo walk: its record is kept in the report so it syncs, but a finalized report is left alone (v143)', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Walk Record Job', jobType: 'termite' });
+    assertEqual(await win.ReportUI.walkOutstanding(job.id), null, 'a job nobody has walked is not nagged about it');
+    const a = win.ReportUI.recordWalkState(job.id, { skipped: ['slabEdge'], answers: {}, results: { meterBox: { r: 'ok', at: 1 } } });
+    const b = win.ReportUI.recordWalkState(job.id, { skipped: ['slabEdge'], answers: { subfloor: 'no' }, results: { meterBox: { r: 'issue', at: 2, note: 'Sticker torn' } } });
+    await Promise.all([a, b]);
+    let report = await win.DB.getReport(job.id);
+    assertEqual(report.sections.walkthrough.results.meterBox.r, 'issue', 'two quick taps land in order, the later one last');
+    assertEqual(report.sections.walkthrough.results.meterBox.note, 'Sticker torn', 'with the note');
+    assertEqual(report.sections.walkthrough.answers.subfloor, 'no', 'and the area answers');
+    const todo = await win.ReportUI.walkOutstanding(job.id);
+    assert(Array.isArray(todo) && todo.some((t) => t.id === 'meterBox'), 'the report can say what the walk still needs (no photo of the meter box yet)');
+    assert(!todo.some((t) => t.id === 'slabEdge'), 'and not what was marked Not here');
+    assert(!todo.some((t) => t.area === 'subfloor'), 'nor a subfloor the house does not have');
+
+    report.finalizedAt = Date.now();
+    await win.DB.saveReport(report);
+    assertEqual(await win.ReportUI.recordWalkState(job.id, { skipped: [], answers: {}, results: {} }), false, 'refused once finalized');
+    report = await win.DB.getReport(job.id);
+    assertEqual(report.sections.walkthrough.results.meterBox.r, 'issue', 'and nothing was changed');
   });
 
   test('Photo walk: can\'t get in keeps one photo step, of why', () => {
@@ -4131,14 +4206,39 @@
       assert(/Meter Box/.test(walk.textContent), 'and names the next shot');
       assertEqual(doc.getElementById('inspection-zone-input').value, 'Meter Box', 'photos now go to that step');
       const button = (re) => Array.from(walk.querySelectorAll('button')).find((b) => re.test(b.textContent));
-      assert(button(/skip/i), 'before a photo, the step can be skipped');
+      assert(button(/Not here/), 'before a photo, the spot can be marked Not here');
+      assertEqual(walk.querySelectorAll('[data-area]').length, 4, 'the four areas are buttons along the top (v143)');
 
       await snap(win, doc);
-      await waitFor(() => !!button(/Next/), 'walk step', 4000);
-      button(/Next/).click();
-      assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'Next moves to the following step');
-      button(/skip/i).click();
-      assertEqual(doc.getElementById('inspection-zone-input').value, 'Weep Holes', 'and so does Skip');
+      await waitFor(() => !!walk.querySelector('[data-result="ok"]'), 'walk step', 4000);
+      assert(/What does it show\?/.test(walk.textContent) && walk.querySelector('[data-result="issue"]'),
+        'a photo asks what it shows: OK or Issue');
+      walk.querySelector('[data-result="ok"]').click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'OK moves to the following step');
+      await waitFor(async () => {
+        const r = await win.DB.getReport(job.id);
+        return !!(r && r.sections.walkthrough && r.sections.walkthrough.results.meterBox
+          && r.sections.walkthrough.results.meterBox.r === 'ok');
+      }, 'the OK reaches the report', 3000);
+      button(/Not here/).click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Weep Holes', 'and so does Not here');
+
+      // Out of order: straight to the inside, tick the rooms, and back out.
+      walk.querySelector('[data-area="inside"]').click();
+      assert(/Inside: tick each one/.test(walk.textContent), 'an area button jumps straight to that area');
+      const rows = walk.querySelectorAll('.walk-check');
+      assert(rows.length >= 6, 'each room and check is a row');
+      assert(button(/^Next/).disabled, 'which cannot be passed until every row is ticked');
+      rows[0].querySelector('[data-result="issue"]').click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Bathrooms & Showers', 'an issue inside files the next photo under that room');
+      assert(/Photograph it now/.test(walk.textContent), 'and says to photograph it');
+      walk.querySelector('[data-action="all-ok"]').click();
+      assert(!button(/^Next/).disabled, 'Rest are OK ticks what is left');
+      const st = win.PhotoWalk.loadState(job.id);
+      assertEqual(st.results.inBathrooms.r, 'issue', 'keeping the one marked as an issue');
+      assertEqual(st.results.inKitchen.r, 'ok', 'and marking the others OK');
+      walk.querySelector('[data-area="outside"]').click();
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Weep Holes', 'back outside, it returns to the first spot still open');
       button(/‹/).click();
       assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'Back goes back');
 
