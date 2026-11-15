@@ -4225,6 +4225,82 @@
     }
   });
 
+  test('Photo walk: the AI suggests OK or Issue for a shot, and only the technician\'s tap answers it (v148)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const box = doc.createElement('div');
+    doc.body.appendChild(box);
+    const jobId = 'tip-test-' + Date.now();
+    const done = new Set();
+    let saved = null;
+    const asked = [];
+    let reply = null;
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const walk = win.PhotoWalk.mount({
+      container: box, jobId, items, done: () => done, setZone: () => {},
+      saveNotes: async () => true, saveAnswer: async () => true, saveResults: (s) => { saved = s; },
+      suggest: (blob, item) => { asked.push(item.id); return new Promise((res, rej) => { reply = { res, rej }; }); },
+    });
+    try {
+      walk.start();
+      // An issue suggested on timber: wording and kind are offered, not saved.
+      walk.zoneChanged('Trees & Stumps');
+      done.add('Trees & Stumps');
+      walk.photoSaved({ fake: 'photo' });
+      assertEqual(asked.join(','), 'trees', 'the photo of the spot is sent for a suggestion');
+      assert(box.querySelector('[data-tip="wait"]'), 'while it looks, the card says so');
+      assert(box.querySelector('[data-result="ok"]') && box.querySelector('[data-result="issue"]'), 'and the answer buttons are already there: nobody waits for the AI');
+      reply.res({ verdict: 'issue', reason: 'Mud tubes on the stump.', note: 'Termite workings on the stump. Remove it.', kinds: ['workings', 'nonsense'] });
+      await tick();
+      assert(/AI suggests: Issue/.test(box.querySelector('[data-tip="issue"]').textContent), 'the suggestion is shown as a suggestion');
+      assert(box.querySelector('[data-result="issue"]').classList.contains('suggested'), 'and points at the Issue button');
+      assert(!saved || !saved.results.trees, 'but nothing is answered until the technician taps');
+      box.querySelector('[data-result="issue"]').click();
+      assertEqual(box.querySelector('.walk-issue-note').value, 'Termite workings on the stump. Remove it.', 'tapping Issue offers the AI\'s wording to edit');
+      assert(box.querySelector('[data-kind="workings"]').classList.contains('chosen-issue'), 'and its kind, ticked ready to untick');
+      box.querySelector('.walk-issue-save').click();
+      assertEqual(saved.results.trees.r, 'issue');
+      assertEqual(saved.results.trees.ai, 'issue', 'what the AI said is kept beside the answer');
+
+      // The technician can disagree: the AI says OK, they tap Issue.
+      walk.zoneChanged('Slab Edge');
+      done.add('Slab Edge');
+      walk.photoSaved({ fake: 'photo' });
+      reply.res({ verdict: 'ok', reason: 'Bare concrete edge visible.', note: 'ignored', kinds: [] });
+      await tick();
+      assert(box.querySelector('[data-result="ok"]').classList.contains('suggested'), 'an OK suggestion points at OK');
+      box.querySelector('[data-result="issue"]').click();
+      assertEqual(box.querySelector('.walk-issue-note').value, '', 'no wording is offered when the AI did not suggest an issue');
+      box.querySelector('.walk-issue-save').click();
+      assertEqual(saved.results.slabEdge.r, 'issue', 'the tap wins');
+      assertEqual(saved.results.slabEdge.ai, 'ok', 'and the disagreement is on record');
+
+      // A failed check leaves the card exactly as it was before v148.
+      walk.zoneChanged('Weep Holes');
+      done.add('Weep Holes');
+      walk.photoSaved({ fake: 'photo' });
+      reply.rej(new Error('offline'));
+      await tick();
+      assert(!box.querySelector('[data-tip]'), 'a failed check says nothing');
+      assert(!box.querySelector('.suggested'), 'and points at nothing');
+      box.querySelector('[data-result="ok"]').click();
+      assertEqual(saved.results.weepHoles.r, 'ok');
+      assert(!('ai' in saved.results.weepHoles), 'no suggestion, nothing recorded as one');
+
+      // An answered spot is not sent again when another photo is added.
+      const before = asked.length;
+      walk.zoneChanged('Slab Edge');
+      walk.photoSaved({ fake: 'photo' });
+      assertEqual(asked.length, before, 'a spot already answered is not re-checked');
+      assertEqual(win.PhotoWalk.mergeStates(saved, null).results.trees.ai, 'issue', 'the record survives a save and reload');
+    } finally {
+      walk.destroy();
+      box.remove();
+      try { win.localStorage.removeItem('scope-photo-walk:' + jobId); } catch (e) { /* nothing to clean */ }
+    }
+  });
+
   test('PDF: "What We Inspected" lists each area and every item with what was seen, and claims nothing that was not recorded (v146)', async () => {
     const win = frame.contentWindow;
     const job = await win.DB.addJob({ name: 'What We Inspected Job', jobType: 'termite' });

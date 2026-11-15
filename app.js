@@ -1927,6 +1927,14 @@
             try { await window.ReportUI.recordWalkState(startJobId, walkState); }
             catch (err) { if (window.ErrorLog) window.ErrorLog.note(err, 'photo walk: results'); }
           },
+          // The AI's suggestion for one shot (v148). Off the air, in the
+          // demo, or on any failure there is simply no suggestion.
+          suggest: (blob, item) => {
+            if (!(window.AI && window.AI.checkShot) || navigator.onLine === false) return null;
+            if (window.IS_TEST || window.IS_DEMO || !window.supabaseClient) return null;
+            const kinds = window.WalkRollup ? window.WalkRollup.kindsFor(item) : [];
+            return window.AI.checkShot(blob, item, kinds);
+          },
           setZone: (label) => {
             inspectionZoneInput.value = label;
             inspectionZoneInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2109,7 +2117,7 @@
         inspectionChecklistDone.add(zone);
         renderInspectionChecklist();
       }
-      if (photoWalk) photoWalk.photoSaved();
+      if (photoWalk) photoWalk.photoSaved(blob);
       toast('Photo saved');
       return;
     }

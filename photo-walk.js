@@ -79,6 +79,8 @@
     return Array.isArray(items) && items.length > 0 && items.every((i) => !!i.area);
   }
 
+  const TIPS = ['ok', 'issue', 'unsure'];
+
   function blankState() { return { skipped: [], answers: {}, results: {}, notesSaved: false, notes: null }; }
 
   // Anything stored (this phone, or the report) made safe to use.
@@ -97,6 +99,9 @@
           const kinds = r.kinds.filter((k) => typeof k === 'string').slice(0, 8);
           if (kinds.length) results[id].kinds = kinds;
         }
+        // What the AI suggested for this spot (v148), kept beside what the
+        // technician tapped so the two can be compared later.
+        if (TIPS.includes(r.ai)) results[id].ai = r.ai;
       }
     }
     return {
@@ -241,7 +246,7 @@
   // saveAnswer(area, value) does the same for a question's answer.
   // saveResults(state): told after every change, to copy the walk into the
   // report. remote: the report's copy of the walk, if it has one.
-  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, remote, visible: startVisible }) {
+  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, suggest, remote, visible: startVisible }) {
     let state = remote ? mergeStates(loadState(jobId), remote) : loadState(jobId);
     let steps = buildSteps(items, state);
     let index = firstOpenIndex(steps, done(), state);
@@ -251,6 +256,38 @@
     let saving = false;
     let noteOpenFor = null; // the item whose Issue note box is showing
     let draft = null;       // { id, note, kinds } being filled in there
+    // The AI's suggestion per spot (v148): { wait } while it looks, then
+    // { verdict, reason, note, kinds }. Never stored and never an answer:
+    // it points at a button, the technician taps one.
+    const tips = {};
+    let tipSeq = 0;
+
+    function askTip(item, blob) {
+      if (!suggest || !blob) return;
+      const mine = ++tipSeq;
+      tips[item.id] = { wait: true, seq: mine };
+      let asked;
+      try { asked = suggest(blob, item); } catch (e) { asked = null; }
+      if (!asked || typeof asked.then !== 'function') { delete tips[item.id]; return; }
+      const settle = (tip) => {
+        // A newer photo of the same spot has been sent since: that one wins.
+        if (!tips[item.id] || tips[item.id].seq !== mine) return;
+        if (tip) tips[item.id] = tip; else delete tips[item.id];
+        const step = steps[index];
+        if (step && step.kind === 'photo' && step.item.id === item.id) render();
+      };
+      asked.then((r) => {
+        if (!r || !TIPS.includes(r.verdict)) { settle(null); return; }
+        settle({
+          verdict: r.verdict, seq: mine,
+          reason: typeof r.reason === 'string' ? r.reason.slice(0, 200) : '',
+          note: typeof r.note === 'string' ? r.note.slice(0, 300) : '',
+          kinds: Array.isArray(r.kinds) ? r.kinds.filter((k) => typeof k === 'string') : [],
+        });
+      }, () => settle(null));
+    }
+
+    function tipFor(id) { const t = tips[id]; return t && !t.wait ? t : null; }
 
     function persist() {
       saveState(jobId, state);
@@ -329,6 +366,8 @@
 
     function setResult(id, r, note, kinds) {
       state.results[id] = { r, at: Date.now() };
+      const tip = tipFor(id);
+      if (tip && r !== 'nophoto') state.results[id].ai = tip.verdict;
       if (note && note.trim()) state.results[id].note = note.trim().slice(0, 300);
       if (r === 'issue' && Array.isArray(kinds) && kinds.length) state.results[id].kinds = kinds.slice();
       state.skipped = state.skipped.filter((x) => x !== id);
@@ -427,14 +466,33 @@
           container.appendChild(el('div', 'walk-got', verdict
             ? (verdict.r === 'ok' ? 'Photo saved, marked OK.' : 'Photo saved, marked as an issue' + (verdict.note ? ': ' + verdict.note : '.'))
             : 'Photo saved. What does it show?'));
+          const waiting = tips[step.item.id] && tips[step.item.id].wait;
+          const tip = tipFor(step.item.id);
+          if (!verdict && waiting) {
+            const line = el('div', 'walk-tip walk-tip-wait', 'AI is looking at the photo… you do not have to wait.');
+            line.dataset.tip = 'wait';
+            container.appendChild(line);
+          } else if (!verdict && tip) {
+            const says = tip.verdict === 'ok' ? 'AI suggests: ' + (step.item.okLabel || 'OK') + '.'
+              : tip.verdict === 'issue' ? 'AI suggests: ' + (step.item.issueLabel || 'Issue') + '.'
+                : 'AI cannot tell from this photo.';
+            const line = el('div', 'walk-tip walk-tip-' + tip.verdict, says + (tip.reason ? ' ' + tip.reason : ''));
+            line.dataset.tip = tip.verdict;
+            container.appendChild(line);
+            if (tip.verdict !== 'unsure') container.appendChild(el('div', 'walk-tip-own', 'Check it yourself, then tap your answer.'));
+          }
           if (noteOpenFor === step.item.id) {
-            container.appendChild(noteBox(step.item, result && result.note,
+            // The AI's wording is offered as a start, only where nothing was
+            // written yet; it is saved only when the technician taps Save.
+            const fromTip = tip && tip.verdict === 'issue' && !(result && result.r === 'issue');
+            container.appendChild(noteBox(step.item, (result && result.note) || (fromTip ? tip.note : ''),
               (note, kinds) => { setResult(step.item.id, 'issue', note, kinds); next(); },
-              { kinds: result && result.kinds }));
+              { kinds: (result && result.kinds) || (fromTip ? tip.kinds : null) }));
           } else {
-            const ok = btn('✓ ' + (step.item.okLabel || 'OK'), 'walk-primary' + (result && result.r === 'ok' ? ' chosen' : ''), () => { setResult(step.item.id, 'ok'); next(); });
+            const points = !verdict && tip ? tip.verdict : '';
+            const ok = btn('✓ ' + (step.item.okLabel || 'OK'), 'walk-primary' + (result && result.r === 'ok' ? ' chosen' : '') + (points === 'ok' ? ' suggested' : ''), () => { setResult(step.item.id, 'ok'); next(); });
             ok.dataset.result = 'ok';
-            const issue = btn('⚠ ' + (step.item.issueLabel || 'Issue'), 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : ''), () => { noteOpenFor = step.item.id; draft = null; render(); });
+            const issue = btn('⚠ ' + (step.item.issueLabel || 'Issue'), 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : '') + (points === 'issue' ? ' suggested' : ''), () => { noteOpenFor = step.item.id; draft = null; render(); });
             issue.dataset.result = 'issue';
             actions.appendChild(ok);
             actions.appendChild(issue);
@@ -601,9 +659,15 @@
         render();
         return nextName;
       },
-      photoSaved() {
+      photoSaved(blob) {
         // A photo of a spot that had been marked "not here" means it is here.
         const step = steps[index];
+        // Ask the AI what it shows (v148), unless the spot is already answered
+        // or it is the "why I could not get in" photo of a blocked area.
+        if (step && step.kind === 'photo' && !step.blocked && done().has(step.item.label)) {
+          const had = state.results[step.item.id];
+          if (!had || had.r === 'nophoto') askTip(step.item, blob);
+        }
         if (step && step.kind === 'photo' && done().has(step.item.label) && state.skipped.includes(step.item.id)) {
           state.skipped = state.skipped.filter((x) => x !== step.item.id);
           persist();
