@@ -91,6 +91,7 @@ const PROMPT_VERSIONS: Record<string, string> = {
   'identify-tree': 'identify-tree@2026-10-13',
   'sort-photos': 'sort-photos@2026-10-13',
   'trace-building': 'trace-building@2026-10-13',
+  'check-shot': 'check-shot@2026-11-15',
 };
 
 // What the app records next to an answer. `model` is what the API says served
@@ -361,6 +362,65 @@ Respond with ONLY a JSON object, no other text, no markdown fences, in exactly t
   return json({ identifications, ai: aiStamp('identify-pest', servedModel, usage) });
 }
 
+// 'check-shot' (v147): one photo of one spot on the inspection walk, and one
+// question about it: does it look OK, or is there an issue? A suggestion the
+// technician confirms with a tap, never an answer in its own right. Kept
+// small and cautious on purpose: "unsure" is a good answer, and the lessons
+// of the October 2026 photo trial (not everything brown is termite mud; a
+// photo cannot prove termites) are restated here because this prompt is
+// read on its own.
+async function handleCheckShot(body: any) {
+  const img = body.image;
+  if (!img || !img.base64) return json({ error: 'check-shot requires image' }, 400);
+  const spot = String(body.spot || '').slice(0, 80);
+  if (!spot) return json({ error: 'check-shot requires spot' }, 400);
+  const hint = String(body.hint || '').slice(0, 300);
+  const okMeans = String(body.okLabel || 'OK').slice(0, 40);
+  const issueMeans = String(body.issueLabel || 'Issue').slice(0, 40);
+  const kinds: { id: string; label: string }[] = (Array.isArray(body.kinds) ? body.kinds : [])
+    .filter((k: any) => k && typeof k.id === 'string' && typeof k.label === 'string').slice(0, 8);
+
+  const systemPrompt = `You are assisting a licensed Australian timber pest inspector during a termite inspection (AS 3660.2 / AS 4349.3). The inspector has just photographed one spot on the property and must mark it "${okMeans}" or "${issueMeans}". You suggest which; the inspector decides.
+
+The spot: "${spot}".
+What the inspector was told to photograph and look for: ${hint || '(no further guidance)'}
+
+Answer about THIS spot only, from what is actually visible in the photograph.
+
+- "verdict": "ok" if the photo shows the spot and nothing of concern for it; "issue" if the photo shows a problem for this spot; "unsure" if the photo is dark, blurred, too far away, shows something else, or you cannot tell. "unsure" is a good answer. Never guess to be helpful.
+- "reason": one short plain sentence naming what you can see that led to the verdict.
+- "note": only when the verdict is "issue": one or two plain sentences the inspector could put in the report, saying what is wrong and, where obvious, what should be done. Empty string otherwise.
+${kinds.length ? `- "kinds": only when the verdict is "issue": which of these the photo shows, as a list of ids, possibly empty: ${JSON.stringify(kinds)}.` : ''}
+
+RULES LEARNED FROM REAL INSPECTION PHOTOS.
+- Not everything brown is termite mud. Rust stains, mortar smears, render, dirt splash, mould, spider webbing and ant nests are far more common. Only call termite workings when you can see mud tubes or leads, mud packing in timber, or galleried timber with mud.
+- A photograph cannot prove live termites. Only choose a "live termites" kind if insects that are plainly termites are visible in the photo.
+- Hollowed, crumbling or cubed timber with no mud is more likely fungal decay than termite damage. Weathered grey timber is not decay by itself.
+- A slab edge is an issue when soil, garden beds, paving, render or cladding cover it so the edge of the concrete cannot be seen. A visible band of bare concrete is OK.
+- Weep holes are an issue when blocked, buried or bridged. Open gaps in the brickwork just above the slab are OK.
+- A hot water relief valve, air conditioner drain, tap or downpipe is an issue when water discharges onto the ground beside the building or the fitting leaks, and OK when piped to a drain or away from the wall.
+- Ant capping is an issue when missing, rusted through, damaged or bridged.
+- For a meter box: "ok" means a termite treatment durable notice or sticker is visible; "issue" means the photo clearly shows the inside of the box with no such notice; otherwise "unsure".
+
+Respond with ONLY a JSON object, no other text, no markdown fences, in exactly this shape:
+{ "verdict": "ok" | "issue" | "unsure", "reason": "...", "note": "..."${kinds.length ? ', "kinds": ["..."]' : ''} }`;
+
+  const userContent: unknown[] = [
+    { type: 'image', source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.base64 } },
+    { type: 'text', text: `This is the photo for "${spot}". What do you suggest?` },
+  ];
+  const { parsed, model: servedModel, usage } = await callClaudeJson(systemPrompt, userContent);
+  const verdict = ['ok', 'issue', 'unsure'].includes(parsed.verdict) ? parsed.verdict : 'unsure';
+  const allowed = new Set(kinds.map((k) => k.id));
+  return json({
+    verdict,
+    reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 300) : '',
+    note: verdict === 'issue' && typeof parsed.note === 'string' ? parsed.note.slice(0, 300) : '',
+    kinds: verdict === 'issue' && Array.isArray(parsed.kinds) ? parsed.kinds.filter((k: any) => allowed.has(k)) : [],
+    ai: aiStamp('check-shot', servedModel, usage),
+  });
+}
+
 // 'identify-tree': reads a photograph of a tree (or stump) near the property
 // and identifies its species and termite susceptibility — feeding directly
 // into the Conducive Conditions section, since a susceptible or dead tree
@@ -612,8 +672,9 @@ Deno.serve(async (req) => {
     if (body.action === 'identify-pest') return await handleIdentifyPest(body);
     if (body.action === 'identify-tree') return await handleIdentifyTree(body);
     if (body.action === 'sort-photos') return await handleSortPhotos(body);
+    if (body.action === 'check-shot') return await handleCheckShot(body);
 
-    return json({ error: 'Unknown action — expected "draft-report", "trace-building", "identify-pest", "identify-tree", or "sort-photos"' }, 400);
+    return json({ error: 'Unknown action — expected "draft-report", "trace-building", "identify-pest", "identify-tree", "sort-photos", or "check-shot"' }, 400);
   } catch (err) {
     console.error(err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);

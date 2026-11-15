@@ -31,6 +31,12 @@
     if (/unknown action/i.test(raw)) {
       return 'This AI feature is not switched on yet — the app has it, the server still needs updating. Nothing you did wrong.';
     }
+    // The AI provider turned Scope's own key away (v147). Checked before the
+    // sign-in case below, because it also carries a 401 and used to tell the
+    // technician to log out and in again, which could never fix it.
+    if (/authentication_error|invalid x-api-key/i.test(raw)) {
+      return 'The AI service is not accepting Scope’s key, so AI features are off for now. Nothing you did wrong: the business owner needs to renew the Anthropic key.';
+    }
     if (/not authenticated|jwt|\b401\b/i.test(raw)) {
       return 'You have been signed out. Log out and back in, then try again.';
     }
@@ -315,9 +321,24 @@
     return invoke({ action: 'sort-photos', images, targets: targets || [] });
   }
 
+  // One photo of one spot on the inspection walk (photo-walk.js, v147):
+  // does it look OK, or is there an issue? Returns { verdict: 'ok' | 'issue'
+  // | 'unsure', reason, note, kinds, ai }. A suggestion only: the technician
+  // taps the answer.
+  async function checkShot(photoBlob, item, kinds) {
+    if (!photoBlob) throw new Error('No photo to check.');
+    const image = imagePart(await blobToDataUrl(photoBlob));
+    return invoke({
+      action: 'check-shot', image,
+      spot: item.label, hint: item.hint || '',
+      okLabel: item.okLabel || '', issueLabel: item.issueLabel || '',
+      kinds: (kinds || []).map((k) => ({ id: k.id, label: k.label })),
+    });
+  }
+
   window.AI = {
     analyzeInspectionPhotos, analyzeSectionPhotos, traceBuildingOutline,
-    identifyPest, identifyTree, sortGeneralPhotos,
+    identifyPest, identifyTree, sortGeneralPhotos, checkShot,
     // Exported so report.js formats its own catch blocks the same way,
     // rather than keeping a second copy of this logic in sync.
     humanError,

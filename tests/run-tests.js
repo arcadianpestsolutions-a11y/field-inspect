@@ -7267,7 +7267,7 @@
     const win = frame.contentWindow;
     const src = await (await fetch('../supabase/functions/analyze-inspection/index.ts', { cache: 'reload' })).text();
     assert(/const AI_MODEL = 'claude-[a-z0-9-]+';/.test(src), 'one place for the model');
-    for (const action of ['draft-report', 'identify-pest', 'identify-tree', 'sort-photos', 'trace-building']) {
+    for (const action of ['draft-report', 'identify-pest', 'identify-tree', 'sort-photos', 'trace-building', 'check-shot']) {
       // A same-day revision takes a letter (draft-report@2026-10-21b).
       assert(new RegExp(`'${action}': '${action}@\\d{4}-\\d{2}-\\d{2}[a-z]?'`).test(src), `${action} has a prompt version`);
       assert(new RegExp(`aiStamp\\('${action}', servedModel, usage\\)`).test(src), `and stamps its answer with it, and what it cost (v142)`);
@@ -7405,6 +7405,17 @@
     const shown = win.AIMessages.humanError(new Error('Anthropic returned 529 overloaded_error'));
     assert(shown.length > 0, 'a mystery message still beats no message');
     assert(/busy|overload/i.test(shown), `an overload should be recognised as busy, got: ${shown}`);
+  });
+
+  test('AI errors: a key the AI service rejects is the owner\'s to renew, not a reason to log out and in (v147)', () => {
+    const win = frame.contentWindow;
+    // The exact text seen on 15 Nov 2026, when every AI feature was down.
+    const shown = win.AIMessages.humanError(new Error(
+      'Claude API call failed: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'));
+    assert(/key/i.test(shown) && /owner/i.test(shown), `says the key needs renewing by the owner, got: ${shown}`);
+    assert(!/signed out|log out/i.test(shown), 'and does not send the technician to log out and in');
+    assert(/signed out/i.test(win.AIMessages.humanError(new Error('Not authenticated'))), 'a real sign-out still says so');
+    assert(typeof win.AI.checkShot === 'function', 'the app can ask for a check of one walk photo');
   });
 
   test('Calendar feed: a missing migration reads as a setup problem, not raw Postgres', () => {
