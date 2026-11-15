@@ -4074,6 +4074,120 @@
     assertEqual(report.sections.walkthrough.results.meterBox.r, 'issue', 'and nothing was changed');
   });
 
+  // ---------- Walk roll-up (walk-rollup.js, v145) ----------
+  test('Walk roll-up: every spot answers a real question of the report, with answers the report offers', () => {
+    const win = frame.contentWindow;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection');
+    const field = (s, f) => (win.REPORT_SCHEMA.find((x) => x.id === s).fields || []).find((x) => x.id === f);
+    let checked = 0;
+    for (const item of items) {
+      const r = item.rollup;
+      if (!r) continue;
+      checked++;
+      if (r.set) {
+        const f = field(r.set[0], r.set[1]);
+        assert(f, `${item.id}: ${r.set.join('.')} is a field of the report`);
+        const options = f.type === 'yesno' ? ['Yes', 'No'] : f.options;
+        assert(options.includes(r.ok) && options.includes(r.issue), `${item.id}: OK and Issue are answers that field offers`);
+        if (r.details) assert(field(r.set[0], r.details), `${item.id}: its details box exists`);
+        if (r.photos) assert(field(r.set[0], r.photos).type === 'photos', `${item.id}: its photo field exists`);
+        if (r.present) assert(field(r.present[0], r.present[1]), `${item.id}: its "is there one" question exists`);
+      }
+      if (r.leak) assert(field('conducive', 'waterLeakAreas').options.includes(r.leak), `${item.id}: "${r.leak}" is one of the leak areas`);
+    }
+    assert(checked >= 25, 'most spots feed the report');
+    for (const k of win.WalkRollup.KINDS) {
+      assert(field(k.section, k.found).type === 'yesno', `${k.id}: its found question exists`);
+      assert(field(k.section, k.photos).photoRequired === true, `${k.id}: and its photo is one the rules demand`);
+      if (k.areas) {
+        for (const name of Object.values(win.WalkRollup.AREA_NAMES)) {
+          assert(field(k.section, k.areas).options.includes(name), `${k.id}: "${name}" is one of its areas`);
+        }
+      }
+    }
+  });
+
+  test('Walk roll-up: an Issue answers the question, all clear answers it the other way, and a typed answer is never overwritten', () => {
+    const win = frame.contentWindow;
+    const R = win.WalkRollup;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const activeIds = items.filter((i) => !i.hidden).map((i) => i.id);
+    const defaults = { 'conducive.siteDrainage': 'Adequate', 'conducive.ventilation': 'Adequate', 'conducive.weepHolesClear': 'Yes' };
+    const run = (state, sections, wrote) => R.compute({ items, activeIds, state, sections, defaults, wrote });
+    const get = (out, f) => out.changes.find((c) => c.fieldId === f);
+
+    let out = run({ results: { hotWater: { r: 'issue', at: 1, note: 'Drips onto the ground at the wall' }, airCon: { r: 'ok', at: 1 } }, skipped: [] }, {}, {});
+    assertEqual(get(out, 'waterLeaksFound').to, 'Yes', 'a leaking hot water system is a water leak');
+    assertEqual(get(out, 'waterLeakAreas').to.join(','), 'Hot Water Service relief valve', 'in the hot water relief valve');
+    assertEqual(get(out, 'waterLeakDetails').to, 'Hot Water System: Drips onto the ground at the wall', 'with what was typed');
+    assert(!get(out, 'workingsFound') && !get(out, 'liveTermitesFound'), 'and says nothing about termites');
+
+    const leakIds = items.filter((i) => i.rollup && i.rollup.leak).map((i) => i.id);
+    const allOk = {};
+    for (const id of leakIds) allOk[id] = { r: 'ok', at: 2 };
+    out = run({ results: allOk, skipped: [] }, { conducive: { waterLeaksFound: 'Yes', waterLeakAreas: ['Hot Water Service relief valve', 'Gutters'] } },
+      { 'conducive.waterLeaksFound': 'Yes', 'conducive.waterLeakAreas': ['Hot Water Service relief valve'] });
+    assertEqual(get(out, 'waterLeaksFound').to, 'No', 'every leak spot OK turns its own Yes into No');
+    assertEqual(get(out, 'waterLeakAreas').to.join(','), 'Gutters', 'and takes back only the area it added, keeping the one the technician ticked');
+
+    out = run({ results: { hotWater: { r: 'ok', at: 1 } }, skipped: [] }, {}, {});
+    assert(!get(out, 'waterLeaksFound'), 'with leak spots still to check it does not say No yet');
+
+    out = run({ results: { siteDrainage: { r: 'ok', at: 1 } }, skipped: [] }, { conducive: { siteDrainage: 'Inadequate' } }, {});
+    assert(!get(out, 'siteDrainage'), 'an answer the technician chose in the report is left alone');
+    out = run({ results: { siteDrainage: { r: 'issue', at: 1 } }, skipped: [] }, { conducive: { siteDrainage: 'Adequate' } }, {});
+    assertEqual(get(out, 'siteDrainage').to, 'Inadequate', 'but one still at the form default is the walk\'s to set');
+
+    out = run({ results: { waterTank: { r: 'ok', at: 1 } }, skipped: [] }, {}, {});
+    assertEqual(get(out, 'waterTankPresent').to, 'Yes', 'a photographed tank is a tank that is there');
+    out = run({ results: {}, skipped: ['waterTank'] }, {}, {});
+    assertEqual(get(out, 'waterTankPresent').to, 'No', 'and Not here means there is none');
+
+    out = run({ results: { roofTimbers: { r: 'issue', at: 1, kinds: ['workings', 'decay'] } }, skipped: [] }, {}, {});
+    assertEqual(get(out, 'workingsFound').to, 'Yes', 'termite damage in the roof timbers is workings found');
+    assertEqual(get(out, 'workingsAreas').to.join(','), 'Roof Void', 'in the roof void');
+    assertEqual(get(out, 'fungalDecayFound').to, 'Yes', 'and decay is decay');
+    const wrote = out.wrote;
+    out = run({ results: { roofTimbers: { r: 'ok', at: 2 } }, skipped: [] },
+      { findings: { workingsFound: 'Yes', workingsAreas: ['Roof Void'] }, conducive: { fungalDecayFound: 'Yes' } }, wrote);
+    assertEqual(get(out, 'workingsFound').to, undefined, 'changing it to OK takes the Yes back to unanswered...');
+    assert(!out.changes.some((c) => c.to === 'No' && ['workingsFound', 'liveTermitesFound', 'borersFound', 'fungalDecayFound'].includes(c.fieldId)),
+      '...and the walk never records "No" for a timber pest by itself');
+
+    out = run({ results: { roofTimbers: { r: 'issue', at: 1 } }, skipped: [] }, {}, {});
+    assert(!get(out, 'workingsFound'), 'an Issue with no kind chosen claims nothing');
+
+    const t = (id, result) => R.photoTargets(items.find((i) => i.id === id), result).map((x) => x.field).join(',');
+    assertEqual(t('hotWater', { r: 'ok' }), 'conducivePhotos', 'an OK photo stays in the general photos');
+    assertEqual(t('hotWater', { r: 'issue' }), 'waterLeakPhotos', 'a leak photo goes to the water leak photos');
+    assertEqual(t('roofTimbers', { r: 'issue', kinds: ['workings', 'borers'] }), 'damagePhotos,borerPhotos', 'timber damage goes to each kind it shows');
+    assertEqual(t('inWetWalls', { r: 'issue' }), 'moisturePhotos', 'a high moisture reading to its own photos');
+  });
+
+  test('Walk roll-up: ticks on the walk fill the report, logged; "none found" is recorded only when the technician confirms it', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Rollup Job', jobType: 'termite' });
+    await win.ReportUI.recordWalkState(job.id, {
+      skipped: [], answers: { subfloor: 'no', roof: 'yes' },
+      results: { slabEdge: { r: 'issue', at: 1, note: 'Garden bed covers the slab on the east side' }, weepHoles: { r: 'ok', at: 1 },
+        fences: { r: 'issue', at: 1, kinds: ['decay'] } },
+    });
+    let report = await win.DB.getReport(job.id);
+    assertEqual(report.sections.conducive.slabEdgeComplies, 'No', 'a covered slab edge answers the slab edge question');
+    assertEqual(report.sections.conducive.slabEdgeDetails, 'Slab Edge: Garden bed covers the slab on the east side', 'with the note as its details');
+    assertEqual(report.sections.conducive.fungalDecayFound, 'Yes', 'decay in a fence is fungal decay found');
+    assert(report.auditLog.some((e) => e.via === 'photo walk' && e.fieldId === 'slabEdgeComplies'), 'each answer is in the audit trail');
+    assert(!report.sections.findings || report.sections.findings.workingsFound === undefined, 'nothing is said yet about termite damage');
+
+    await win.ReportUI.confirmWalkNoneFound(job.id);
+    report = await win.DB.getReport(job.id);
+    assertEqual(report.sections.findings.workingsFound, 'No', 'confirming records No for termite damage');
+    assertEqual(report.sections.findings.liveTermitesFound, 'No', 'and live termites');
+    assertEqual(report.sections.conducive.fungalDecayFound, 'Yes', 'but leaves the Yes that was found');
+    assert(report.sections.walkthrough.confirmedNone && report.sections.walkthrough.confirmedNone.fields.includes('workingsFound'),
+      'and keeps a record that the technician confirmed it');
+  });
+
   // ---------- Mandatory photos (v144) ----------
   test('Mandatory photos: a finding, a durable notice or an obstruction outside the living space needs a photo, or the reason there is none', () => {
     const win = frame.contentWindow;

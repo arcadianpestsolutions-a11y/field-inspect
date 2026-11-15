@@ -633,6 +633,70 @@
     return window.PhotoWalk.outstanding(items, saved || {}, done);
   }
 
+  // The checklist of the walk for a job, or null when it has no guided walk.
+  function walkItemsFor(job, report) {
+    if (!window.PhotoWalk || !window.PhotoChecklists || !job || job.jobType !== 'termite') return null;
+    const items = window.PhotoChecklists.forJob(job, null, report ? report.documentType : null)
+      .filter((item) => item.id !== 'frontElevation');
+    return window.PhotoWalk.isGuided(items) ? items : null;
+  }
+
+  function walkSchemaDefaults() {
+    const out = {};
+    for (const section of window.REPORT_SCHEMA || []) {
+      for (const field of section.fields || []) {
+        if (field.default !== undefined) out[section.id + '.' + field.id] = field.default;
+      }
+    }
+    return out;
+  }
+
+  // Mutates report.sections (audited); the caller saves. True if it changed.
+  async function applyWalkRollup(job, report) {
+    const items = walkItemsFor(job, report);
+    const walk = report.sections.walkthrough;
+    if (!items || !walk || !window.WalkRollup) return false;
+    const activeIds = [];
+    for (const step of window.PhotoWalk.buildSteps(items, walk)) {
+      if (step.kind === 'photo' && !step.blocked) activeIds.push(step.item.id);
+      if (step.kind === 'checks') for (const i of step.items) activeIds.push(i.id);
+    }
+    const { changes, wrote } = window.WalkRollup.compute({
+      items, activeIds, state: walk, sections: report.sections, defaults: walkSchemaDefaults(), wrote: walk.wrote || {},
+    });
+    const changed = applyWalkChanges(report, changes);
+    report.sections.walkthrough = { ...report.sections.walkthrough, wrote };
+    return changed;
+  }
+
+  // The timber-pest questions (and the nest) the walk never answers No to by
+  // itself. Once the walk is finished and none was marked, the technician is
+  // asked once, and their confirmation is what records it.
+  const WALK_NONE_FOUND = [
+    ['findings', 'liveTermitesFound', 'live termites'],
+    ['findings', 'nestFound', 'a termite nest'],
+    ['findings', 'workingsFound', 'termite workings or damage'],
+    ['findings', 'borersFound', 'borers'],
+    ['conducive', 'fungalDecayFound', 'fungal decay'],
+  ];
+  function walkNoneFoundOpen(report) {
+    return WALK_NONE_FOUND.filter(([sec, f]) => {
+      const v = (report.sections[sec] || {})[f];
+      return v === undefined || v === null || v === '';
+    });
+  }
+  async function confirmWalkNoneFound(jobId) {
+    const report = await loadOrCreateReport(jobId);
+    if (report.finalizedAt) return false;
+    const open = walkNoneFoundOpen(report);
+    if (!open.length) return true;
+    applyWalkChanges(report, open.map(([sectionId, fieldId]) => ({ sectionId, fieldId, to: 'No' })));
+    report.sections.walkthrough = { ...(report.sections.walkthrough || {}), confirmedNone: { at: Date.now(), fields: open.map(([, f]) => f) } };
+    await DB.saveReport(report);
+    if (currentJobId === jobId) { currentReport = report; renderSectionList(); }
+    return true;
+  }
+
   async function renderWalkTodo() {
     const list = document.getElementById('report-section-list');
     if (!list || !currentReport) return;
@@ -669,7 +733,27 @@
       ? `Walk-through: ${todo.length} still to do`
       : '✓ Walk-through complete: every spot photographed or ticked';
     card.appendChild(head);
-    if (!todo.length) return;
+    if (!todo.length) {
+      const open = walkNoneFoundOpen(currentReport);
+      if (open.length) {
+        const p = document.createElement('p');
+        p.className = 'walk-todo-line';
+        p.textContent = 'Nothing on the walk was marked as ' + open.map(([, , words]) => words).join(', ').replace(/, ([^,]*)$/, ' or $1')
+          + '. If none was found anywhere on the property, record that now.';
+        card.appendChild(p);
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.id = 'walk-confirm-none';
+        b.className = 'btn btn-outline full';
+        b.textContent = 'Confirm: none found';
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          try { await confirmWalkNoneFound(jobId); } catch (e) { b.disabled = false; toast(DB.describeSaveFailure(e, 'That answer')); }
+        });
+        card.appendChild(b);
+      }
+      return;
+    }
     const byArea = new Map();
     for (const t of todo) {
       if (!byArea.has(t.areaTitle)) byArea.set(t.areaTitle, []);
@@ -985,6 +1069,7 @@
       const report = await loadOrCreateReport(jobId);
       const items = window.PhotoChecklists.forJob(job, jobCategory, report.documentType).filter((item) => item.schemaField);
       if (!items.length) return;
+      const walkResults = (report.sections.walkthrough && report.sections.walkthrough.results) || {};
 
       const captures = await DB.getCaptures(jobId);
       if (!captures.length) return;
@@ -993,15 +1078,27 @@
       for (const item of items) {
         const matches = captures.filter((c) => c.photoBlob && c.zone === item.label);
         if (!matches.length) continue;
-        const section = { ...(report.sections[item.schemaSection] || {}) };
-        const existing = Array.isArray(section[item.schemaField]) ? section[item.schemaField] : [];
-        const existingIds = new Set(existing.map((p) => p.captureId).filter(Boolean));
-        const additions = matches
-          .filter((c) => !existingIds.has(c.id))
-          .map((c) => ({ id: DB.uid(), captureId: c.id, blob: c.photoBlob }));
-        if (!additions.length) continue;
-        section[item.schemaField] = [...existing, ...additions];
-        report.sections[item.schemaSection] = section;
+        // v145: the photos of an Issue go where the rules demand a photo
+        // (water leak photos, damage photos...), not the general field.
+        const targets = window.WalkRollup
+          ? window.WalkRollup.photoTargets(item, walkResults[item.id])
+          : [{ section: item.schemaSection, field: item.schemaField }];
+        // Already filed anywhere in the report: leave it where it is, so a
+        // photo is not printed twice when its spot later becomes an Issue.
+        const filed = new Set();
+        for (const vals of Object.values(report.sections)) {
+          for (const v of Object.values(vals || {})) {
+            if (Array.isArray(v)) for (const p of v) if (p && p.captureId) filed.add(p.captureId);
+          }
+        }
+        const fresh = matches.filter((c) => !filed.has(c.id));
+        if (!fresh.length) continue;
+        for (const t of targets) {
+          const section = { ...(report.sections[t.section] || {}) };
+          const existing = Array.isArray(section[t.field]) ? section[t.field] : [];
+          section[t.field] = [...existing, ...fresh.map((c) => ({ id: DB.uid(), captureId: c.id, blob: c.photoBlob }))];
+          report.sections[t.section] = section;
+        }
         changed = true;
       }
       if (!changed) return;
@@ -1228,17 +1325,25 @@
         const report = await loadOrCreateReport(jobId);
         if (report.finalizedAt) return false;
         const s = walkState || {};
+        const before = report.sections.walkthrough || {};
         report.sections.walkthrough = {
           results: s.results || {},
           skipped: Array.isArray(s.skipped) ? s.skipped : [],
           answers: s.answers || {},
           notesSaved: !!s.notesSaved,
+          wrote: before.wrote || {},
+          confirmedNone: before.confirmedNone || null,
           updatedAt: Date.now(),
         };
+        // v145: what the ticks mean for the whole-house answers
+        // (walk-rollup.js). Logged like any edit, via the photo walk.
+        const job = await DB.getJob(jobId);
+        await applyWalkRollup(job, report);
         await DB.saveReport(report);
         if (currentJobId === jobId && currentReport) {
-          currentReport.sections.walkthrough = report.sections.walkthrough;
-          renderWalkTodo();
+          // The roll-up may have changed answers too, so take the whole report.
+          currentReport = report;
+          renderSectionList();
         }
         return true;
       };
@@ -1248,6 +1353,7 @@
     // What the walk still needs for a job: [] when finished, null when this
     // job has no walk (not a timber pest inspection) or it was never started.
     walkOutstanding: (jobId) => walkOutstandingFor(jobId),
+    confirmWalkNoneFound: (jobId) => confirmWalkNoneFound(jobId),
     // The subfloor and roof void questions of the photo walk. Each has three
     // answers, because "no" meant two different things a report must keep
     // apart: there is none (a slab, a flat roof), or there is one and it could

@@ -91,7 +91,12 @@
         if (!r || !RESULTS.includes(r.r)) continue;
         results[id] = { r: r.r, at: Number(r.at) || 0 };
         if (typeof r.note === 'string' && r.note.trim()) results[id].note = r.note.trim().slice(0, 300);
-        if (r.r === 'nophoto' && !results[id].note) delete results[id];
+        if (r.r === 'nophoto' && !results[id].note) { delete results[id]; continue; }
+        // What kind of issue (walk-rollup.js KINDS), for timber.
+        if (r.r === 'issue' && Array.isArray(r.kinds)) {
+          const kinds = r.kinds.filter((k) => typeof k === 'string').slice(0, 8);
+          if (kinds.length) results[id].kinds = kinds;
+        }
       }
     }
     return {
@@ -320,9 +325,10 @@
       next();
     }
 
-    function setResult(id, r, note) {
+    function setResult(id, r, note, kinds) {
       state.results[id] = { r, at: Date.now() };
       if (note && note.trim()) state.results[id].note = note.trim().slice(0, 300);
+      if (r === 'issue' && Array.isArray(kinds) && kinds.length) state.results[id].kinds = kinds.slice();
       state.skipped = state.skipped.filter((x) => x !== id);
       persist();
     }
@@ -342,9 +348,30 @@
       return row;
     }
 
+    // "What kind of issue?" for timber (walk-rollup.js): any number of them.
+    function kindChips(item, chosen, onChange) {
+      const kinds = window.WalkRollup ? window.WalkRollup.kindsFor(item) : [];
+      if (!kinds.length) return null;
+      const row = el('div', 'walk-kinds');
+      row.appendChild(el('div', 'walk-kinds-ask', 'What is it? Tick any that apply.'));
+      for (const k of kinds) {
+        const b = btn(k.label, 'walk-kind' + (chosen.includes(k.id) ? ' chosen-issue' : ''), () => {
+          const at = chosen.indexOf(k.id);
+          if (at === -1) chosen.push(k.id); else chosen.splice(at, 1);
+          b.classList.toggle('chosen-issue', chosen.includes(k.id));
+          if (onChange) onChange(chosen);
+        });
+        b.dataset.kind = k.id;
+        row.appendChild(b);
+      }
+      return row;
+    }
+
     function noteBox(item, existing, onSave, opts) {
       const o = opts || {};
       const wrap = el('div', 'walk-issue');
+      const picked = (o.kinds || []).slice();
+      if (!o.required) { const chips = kindChips(item, picked); if (chips) wrap.appendChild(chips); }
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'walk-other walk-issue-note';
@@ -354,7 +381,7 @@
       wrap.appendChild(input);
       const save = btn(o.saveLabel || 'Save issue, next ›', 'walk-primary walk-issue-save', () => {
         if (o.required && !input.value.trim()) { input.focus(); return; }
-        onSave(input.value);
+        onSave(input.value, picked);
       });
       wrap.appendChild(save);
       return wrap;
@@ -394,11 +421,13 @@
             ? (verdict.r === 'ok' ? 'Photo saved, marked OK.' : 'Photo saved, marked as an issue' + (verdict.note ? ': ' + verdict.note : '.'))
             : 'Photo saved. What does it show?'));
           if (noteOpenFor === step.item.id) {
-            container.appendChild(noteBox(step.item, result && result.note, (note) => { setResult(step.item.id, 'issue', note); next(); }));
+            container.appendChild(noteBox(step.item, result && result.note,
+              (note, kinds) => { setResult(step.item.id, 'issue', note, kinds); next(); },
+              { kinds: result && result.kinds }));
           } else {
-            const ok = btn('✓ OK', 'walk-primary' + (result && result.r === 'ok' ? ' chosen' : ''), () => { setResult(step.item.id, 'ok'); next(); });
+            const ok = btn('✓ ' + (step.item.okLabel || 'OK'), 'walk-primary' + (result && result.r === 'ok' ? ' chosen' : ''), () => { setResult(step.item.id, 'ok'); next(); });
             ok.dataset.result = 'ok';
-            const issue = btn('⚠ Issue', 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : ''), () => { noteOpenFor = step.item.id; render(); });
+            const issue = btn('⚠ ' + (step.item.issueLabel || 'Issue'), 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : ''), () => { noteOpenFor = step.item.id; render(); });
             issue.dataset.result = 'issue';
             actions.appendChild(ok);
             actions.appendChild(issue);
@@ -448,7 +477,7 @@
           const ok = btn('OK', 'walk-mini' + (result && result.r === 'ok' ? ' chosen-ok' : ''), () => { setResult(item.id, 'ok'); noteOpenFor = null; render(); });
           ok.dataset.result = 'ok';
           const issue = btn('Issue', 'walk-mini' + (result && result.r === 'issue' ? ' chosen-issue' : ''), () => {
-            setResult(item.id, 'issue', result && result.note);
+            setResult(item.id, 'issue', result && result.note, result && result.kinds);
             noteOpenFor = item.id;
             // The next photo is of this issue, so it is filed under it.
             setZone(item.label);
@@ -467,7 +496,10 @@
             input.maxLength = 300;
             input.placeholder = 'What is wrong? (optional)';
             input.value = (result && result.note) || '';
-            input.addEventListener('change', () => { setResult(item.id, 'issue', input.value); });
+            const pickedKinds = ((result && result.kinds) || []).slice();
+            const chips = kindChips(item, pickedKinds, (k) => { setResult(item.id, 'issue', input.value, k); });
+            if (chips) wrap.appendChild(chips);
+            input.addEventListener('change', () => { setResult(item.id, 'issue', input.value, pickedKinds); });
             wrap.appendChild(input);
             list.appendChild(wrap);
           }

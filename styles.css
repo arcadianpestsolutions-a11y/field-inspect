@@ -3320,6 +3320,12 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .walk-todo-item { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; padding: 6px 12px; line-height: 1.25; }
 .walk-todo-need { font-size: 0.72rem; font-weight: 400; color: rgba(226, 232, 240, 0.7); }
 
+/* v145: what kind of issue, on timber. */
+.walk-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.walk-kinds-ask { flex: 1 0 100%; font-size: 0.78rem; color: rgba(226, 232, 240, 0.8); }
+.walk-kind { min-height: 38px; padding: 0 10px; font-size: 0.78rem; }
+.walk-kind.chosen-issue { background: #fbbf24; border-color: #fbbf24; color: #2b1a00; }
+
 /* v144: a photo that must be taken, and the one way round it. */
 .photo-required { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .photo-required-note { margin: 0; font-size: 0.8rem; color: var(--text-dim); }
