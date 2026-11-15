@@ -3320,6 +3320,12 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .walk-todo-item { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; padding: 6px 12px; line-height: 1.25; }
 .walk-todo-need { font-size: 0.72rem; font-weight: 400; color: rgba(226, 232, 240, 0.7); }
 
+/* v144: a photo that must be taken, and the one way round it. */
+.photo-required { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.photo-required-note { margin: 0; font-size: 0.8rem; color: var(--text-dim); }
+.photo-required-toggle { background: none; border: 0; padding: 4px 0; min-height: 32px; font-size: 0.82rem; color: var(--accent); text-decoration: underline; }
+.photo-required-reason { width: 100%; }
+
 /* The same list on the report screen. */
 .walk-todo-card { margin-bottom: 12px; border-left: 4px solid #d97706; }
 .walk-todo-card.walk-todo-clear { border-left-color: var(--accent); }

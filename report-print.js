@@ -133,7 +133,13 @@
           if (field.type === 'sketchData') continue; // marker data, not printable
           if (field.type === 'photos') {
             const photos = val || [];
-            if (!photos.length) continue;
+            if (!photos.length) {
+              // A mandatory photo that could not be taken: say so, and why.
+              const utils = window.ReportSchemaUtils;
+              const why = utils && utils.photoRequiredNow && utils.photoRequiredNow(field, values) ? utils.noPhotoReason(field, values) : '';
+              if (why) html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">No photograph was taken: ${escapeHtml(why)}</div></div>`;
+              continue;
+            }
             html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="photos">`;
             for (const p of photos) {
               const url = URL.createObjectURL(p.blob);

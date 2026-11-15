@@ -201,7 +201,7 @@ const REPORT_SCHEMA = [
       { id: 'subfloorObstructions', label: 'Subfloor Obstructions', type: 'multiselect', options: ['Low Clearance', 'Stored Articles', 'Plumbing', 'Ducting', 'Insulation', 'No access to subfloor'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'roofVoidObstructions', label: 'Roof Void Obstructions', type: 'multiselect', options: ['Insulation', 'Sarking', 'Low Clearance', 'Air conditioning ducting', 'Stored articles', 'Low clearance at the outside edges', 'Height restrictions', 'No manhole / access blocked', 'Skillion roof (no void)'], showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'otherHinderedDetails', label: 'Other hindered area details', type: 'textarea', showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
-      { id: 'obstructionPhotos', label: 'Obstruction Photos', type: 'photos', showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
+      { id: 'obstructionPhotos', label: 'Obstruction Photos', type: 'photos', photoRequired: { anyTicked: ['exteriorObstructions', 'subfloorObstructions', 'roofVoidObstructions'] }, showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'restrictedAccess', label: 'Were there any normally accessible areas that had restricted access?', type: 'yesno', required: true, aiFillable: true },
       { id: 'restrictedAccessDetails', label: 'Restricted Access Details', type: 'textarea', showIf: { field: 'restrictedAccess', equals: 'Yes' }, aiFillable: true },
       { id: 'highRiskAreas', label: 'Were there any High Risk Area(s) to which access should be gained or fully gained?', type: 'yesno', required: true, aiFillable: true },
@@ -224,13 +224,14 @@ const REPORT_SCHEMA = [
       { id: 'riskOfAssociatedDamage', label: 'Potential for associated damage arising from this activity', type: 'select', options: ['Low', 'Moderate', 'High'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'liveTermitesAreas', label: 'Termites were found but not necessarily limited to the following areas', type: 'multiselect', options: ['Tree stumps', 'The Interior', 'The Exterior', 'Subfloor', 'Roof Void', 'Outbuildings', 'The Site', 'Fences', 'Retaining Walls', 'Landscaping Timbers'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'liveTermitesLocation', label: 'Location details', type: 'textarea', showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'liveTermitesPhotos', label: 'Live Termite Photos', type: 'photos', photoRequired: true, showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'nestFound', label: 'Was a termite nest found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'nestLocation', label: 'Nest Location(s)', type: 'textarea', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
-      { id: 'nestPhotos', label: 'Nest Photos', type: 'photos', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'nestPhotos', label: 'Nest Photos', type: 'photos', photoRequired: true, showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
       { id: 'workingsFound', label: 'Was evidence of termite workings or damage found?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'workingsAreas', label: 'Areas where workings/damage were found', type: 'multiselect', options: ['The Exterior', 'The Interior', 'The Site', 'Landscaping Timbers', 'Trees', 'Subfloor', 'Roof Void', 'Fences', 'Retaining Walls', 'Outbuildings', 'Monitoring station'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'evidenceDetails', label: 'Details of the nature of the evidence found', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
-      { id: 'damagePhotos', label: 'Damage Photos', type: 'photos', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'damagePhotos', label: 'Damage Photos', type: 'photos', photoRequired: true, showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'damageSeverity', label: 'Damage appears to be', type: 'select', options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive', 'Extensive to Severe', 'Severe'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'findingsAdditionalComments', label: 'Additional Comments', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
@@ -266,7 +267,7 @@ const REPORT_SCHEMA = [
       // A durable notice or treatment sticker (commonly in the meter box or
       // subfloor) is evidence, not just a checkbox — the photo is what a
       // client or a later inspector actually needs to see.
-      { id: 'durableNoticePhotos', label: 'Durable Notice Photos', type: 'photos', showIf: { field: 'durableNoticeFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'durableNoticePhotos', label: 'Durable Notice Photos', type: 'photos', photoRequired: true, showIf: { field: 'durableNoticeFound', equals: 'Yes' }, aiFillable: true },
       { id: 'durableNoticeDate', label: 'Date of treatment (if known)', type: 'text', showIf: { field: 'durableNoticeFound', equals: 'Yes' } },
       { id: 'durableNoticeDetails', label: 'Durable notice: comments', type: 'textarea', showIf: { field: 'durableNoticeFound', equals: 'Yes' } },
       // AS 4349.3-2010 covers FOUR timber pest categories: subterranean
@@ -297,7 +298,7 @@ const REPORT_SCHEMA = [
         options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive'],
         showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true,
       },
-      { id: 'borerPhotos', label: 'Borer Damage Photos', type: 'photos', showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'borerPhotos', label: 'Borer Damage Photos', type: 'photos', photoRequired: true, showIf: { field: 'borersFound', equals: 'Yes' }, aiFillable: true },
       // AS 4349.3 requires a Major Safety Hazard arising from timber pest
       // damage to be reported (Tal's Formitize TPI form asked it for termite
       // damage, borers and fungal decay separately; one question covers all
@@ -331,16 +332,19 @@ const REPORT_SCHEMA = [
       { id: 'waterLeaksFound', label: 'Were water leaks found at the time of inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'waterLeakAreas', label: 'Visible leaks were located in the following areas', type: 'multiselect', options: ['Down Pipes', 'Gutters', 'Air conditioning overflow', 'Taps', 'Hot Water Service relief valve', 'Bathroom', 'Kitchen', 'Laundry', 'Shower', 'Plumbing under floor', 'Garage', 'Roof'], showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
       { id: 'waterLeakDetails', label: 'Water leaks: details & recommendations', type: 'textarea', showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'waterLeakPhotos', label: 'Water Leak Photos', type: 'photos', photoRequired: true, showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
       { id: 'waterTankPresent', label: 'Was a water tank(s) located at the time of inspection?', type: 'yesno', aiFillable: true },
       { id: 'tankDrainageWorkNeeded', label: 'Is there a need for work to rectify overflow drainage?', type: 'yesno', showIf: { field: 'waterTankPresent', equals: 'Yes' }, aiFillable: true },
       { id: 'tankDetails', label: 'Overflow drainage: details & recommendations', type: 'textarea', showIf: { field: 'tankDrainageWorkNeeded', equals: 'Yes' }, aiFillable: true },
       { id: 'highMoistureFound', label: 'Were high moisture readings found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'moistureMeterType', label: 'Moisture meter used', type: 'text', default: '"TRAMEX" encounter moisture meter', showIf: { field: 'highMoistureFound', equals: 'Yes' } },
       { id: 'moistureDetails', label: 'Details & Recommendations', type: 'textarea', showIf: { field: 'highMoistureFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'moisturePhotos', label: 'High Moisture Reading Photos', type: 'photos', photoRequired: true, showIf: { field: 'highMoistureFound', equals: 'Yes' }, aiFillable: true },
       { id: 'fungalDecayFound', label: 'Was evidence of Fungal Decay found at the time of the inspection?', type: 'yesno', required: true, aiFillable: true },
       { id: 'fungalDecayAreas', label: 'Visible decay appears to be located in the following areas', type: 'multiselect', options: ['Fence Posts', 'Landscaping Timbers', 'Decorative Timbers', 'Timber Joists', 'Timber Bearers', 'Pergola / Verandah Post(s)', 'Verandah / Deck', 'Retaining Wall', 'Fascia Boards', 'Barge Boards', 'Door Jambs', 'Window frames / sills', 'Wall cladding'], showIf: { field: 'fungalDecayFound', equals: 'Yes' }, aiFillable: true },
       { id: 'fungalDecayLocation', label: 'Fungal decay: location(s)', type: 'textarea', showIf: { field: 'fungalDecayFound', equals: 'Yes' }, aiFillable: true },
       { id: 'fungalDecayComments', label: 'Fungal decay: comments', type: 'textarea', showIf: { field: 'fungalDecayFound', equals: 'Yes' } },
+      { id: 'fungalDecayPhotos', label: 'Fungal Decay Photos', type: 'photos', photoRequired: true, showIf: { field: 'fungalDecayFound', equals: 'Yes' }, aiFillable: true },
       { id: 'mouldFound', label: 'Was evidence of mould growth found at the time of inspection?', type: 'yesno', aiFillable: true },
       { id: 'mouldDetails', label: 'Mould: details & recommendations', type: 'textarea', showIf: { field: 'mouldFound', equals: 'Yes' }, aiFillable: true },
       { id: 'siteDrainage', label: 'Site drainage appears to be generally', type: 'select', options: ['Adequate', 'Inadequate'], aiFillable: true, default: 'Adequate' },
@@ -553,12 +557,45 @@ function isFieldVisible(field, values) {
 // A rule that merely warns gets ignored at 4pm on a Friday. These block
 // finalisation, and each one says what it wants and why.
 
+// `photoRequired: true` on a photos field: a photo is needed whenever the
+// field is on screen (its showIf is the "Yes" that makes it necessary).
+// `photoRequired: { anyTicked: [fieldIds] }`: needed once any of those tick
+// lists has something in it. Interior obstructions are deliberately never in
+// such a list: clients do not want their belongings photographed.
+function photoRequiredNow(field, values) {
+  if (!field || field.type !== 'photos' || !field.photoRequired) return false;
+  const v = values || {};
+  if (!isFieldVisible(field, v)) return false;
+  if (field.photoRequired === true) return true;
+  const lists = field.photoRequired.anyTicked || [];
+  return lists.some((id) => Array.isArray(v[id]) && v[id].length > 0);
+}
+
+// Where the reason a photo could not be taken is kept: beside the field, in
+// the same section, so it saves, syncs and prints with it.
+function noPhotoReasonKey(field) { return field.id + 'NoPhotoReason'; }
+function noPhotoReason(field, values) {
+  return String((values || {})[noPhotoReasonKey(field)] || '').trim();
+}
+
 function fieldValidationErrors(field, values) {
   const errors = [];
   if (!isFieldVisible(field, values)) return errors;
   const value = values[field.id];
   const blank = value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
+
+  // v144, Tal's rule: what was found, a durable notice, and anything outside
+  // the living space that blocked the view must each have a photo. The one
+  // way round it is to say why a photo could not be taken, and that reason
+  // is printed in the report where the photo would have been.
+  if (blank && photoRequiredNow(field, values) && !noPhotoReason(field, values)) {
+    errors.push({
+      fieldId: field.id, label: field.label, kind: 'missingPhoto',
+      message: `${field.label}: a photo is required, or the reason one could not be taken.`,
+    });
+    return errors;
+  }
 
   if (field.required && blank) {
     errors.push({ fieldId: field.id, label: field.label, kind: 'missing', message: `${field.label} is required.` });
@@ -711,7 +748,13 @@ function defaultValuesForSection(section, org) {
 //       (the method cannot be justified without it), what else was offered,
 //       what the system does NOT protect against, and the service life of
 //       the treated zone as a fact separate from the commercial warranty
-const SCHEMA_VERSION = 7;
+//   8 — termite inspection: photos made mandatory (photoRequired) for live
+//       termites, nest, damage, borers, durable notice, fungal decay, water
+//       leaks, high moisture and obstructions outside the living space; new
+//       photo fields liveTermitesPhotos, waterLeakPhotos, moisturePhotos and
+//       fungalDecayPhotos; "<field>NoPhotoReason" records why one could not
+//       be taken
+const SCHEMA_VERSION = 8;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;
@@ -806,4 +849,5 @@ window.ReportSchemaUtils = {
   isFieldVisible, isSectionVisible, visibleSchema,
   computeSectionStatus, defaultValuesForSection, YES_NO,
   fieldValidationErrors, sectionValidationErrors, reportValidationErrors,
+  photoRequiredNow, noPhotoReason, noPhotoReasonKey,
 };

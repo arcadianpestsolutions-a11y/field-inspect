@@ -608,6 +608,12 @@
 
   // ---------- The walk's "still to do" list (v143) ----------
   let walkStateQueue = Promise.resolve();
+  // v144: an unfinished walk locks Finalize, the same as a missing answer.
+  // Remembered per job so the button does not flicker open between renders.
+  let walkBlock = { jobId: null, count: 0 };
+  function walkBlocksFinalize() {
+    return !!currentReport && !currentReport.finalizedAt && walkBlock.jobId === currentJobId && walkBlock.count > 0;
+  }
 
   // [] when the walk is finished; null when this job has no guided walk, or
   // nobody has started it (a report typed up in the office is not nagged
@@ -635,6 +641,18 @@
     let todo = null;
     try { todo = await walkOutstandingFor(jobId, currentReport); } catch (e) { todo = null; }
     if (jobId !== currentJobId) return; // another report was opened meanwhile
+    walkBlock = { jobId, count: todo ? todo.length : 0 };
+    const fb = document.getElementById('finalize-report-btn');
+    const fh = document.getElementById('finalize-hint');
+    if (fb && !currentReport.finalizedAt) {
+      if (walkBlocksFinalize()) {
+        fb.disabled = true;
+        if (fh) { fh.classList.remove('hidden'); fh.textContent = 'Finish the walk-through (listed above) and get a green tick on every section before the report can be finalized.'; }
+      } else if (fh) {
+        fh.textContent = 'All sections need a green tick before the report can be finalized.';
+        if (fb.dataset.sectionsGreen === '1') { fb.disabled = false; fh.classList.add('hidden'); }
+      }
+    }
     if (todo === null || currentReport.finalizedAt) { if (card) card.remove(); return; }
     if (!card) {
       card = document.createElement('div');
@@ -2185,9 +2203,10 @@
 
     renderReportProgress(doneCount, displayNumber, firstOpen);
     renderWalkTodo();
-    finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt;
+    finalizeBtn.dataset.sectionsGreen = allRequiredGreen ? '1' : '0';
+    finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt || walkBlocksFinalize();
     finalizeBtn.textContent = currentReport.finalizedAt ? '✓ Report Finalized' : 'Finalize Report';
-    finalizeHint.classList.toggle('hidden', allRequiredGreen);
+    finalizeHint.classList.toggle('hidden', allRequiredGreen && !walkBlocksFinalize());
     // Send/Save only make sense once the report is actually finalized —
     // stays visible on reopen too, so a technician can come back and send
     // it later without having to re-finalize.
@@ -2202,6 +2221,13 @@
 
   finalizeBtn.addEventListener('click', async () => {
     if (finalizeBtn.disabled) return;
+    // Asked again at the moment of signing, not trusted from the last render.
+    const walkLeft = await walkOutstandingFor(currentJobId, currentReport).catch(() => null);
+    if (walkLeft && walkLeft.length) {
+      toast(`The walk-through still has ${walkLeft.length} to do. Finish it before finalizing.`);
+      renderWalkTodo();
+      return;
+    }
     if (!await askConfirm(
       'You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.',
       { title: 'Finalize this report?', okLabel: 'Finalize' })) return;
@@ -3261,6 +3287,39 @@
     wrap.appendChild(buttonRow);
     wrap.appendChild(cameraInput);
     wrap.appendChild(importInput);
+
+    // v144: a photo that must be taken says so, and has one way out: the
+    // reason it could not be, which prints where the photo would have been.
+    if (field.photoRequired) {
+      const utils = window.ReportSchemaUtils;
+      const key = utils.noPhotoReasonKey(field);
+      const must = document.createElement('div');
+      must.className = 'photo-required';
+      const note = document.createElement('p');
+      note.className = 'photo-required-note';
+      note.textContent = field.photoRequired === true
+        ? 'A photo is required here before the report can be finalized.'
+        : 'A photo is required if anything outside the living space blocked the view. One photo can show several.';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'btn-link photo-required-toggle';
+      toggle.textContent = 'Could not photograph it?';
+      const reason = document.createElement('input');
+      reason.type = 'text';
+      reason.maxLength = 200;
+      reason.className = 'photo-required-reason';
+      reason.placeholder = 'Why not? e.g. client asked for no photos, unsafe to reach';
+      reason.setAttribute('aria-label', 'Reason no photo could be taken: ' + field.label);
+      reason.value = pendingSectionValues[key] || '';
+      reason.classList.toggle('hidden', !reason.value);
+      toggle.addEventListener('click', () => { reason.classList.remove('hidden'); reason.focus(); });
+      reason.addEventListener('input', () => {
+        const v = reason.value.trim();
+        if (v) pendingSectionValues[key] = v; else delete pendingSectionValues[key];
+      });
+      must.append(note, toggle, reason);
+      wrap.appendChild(must);
+    }
 
     // A focused species-level read of one field's photos, separate from
     // triggersAiFill's whole-section drafting above — see identifiesInsects

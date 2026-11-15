@@ -4074,6 +4074,73 @@
     assertEqual(report.sections.walkthrough.results.meterBox.r, 'issue', 'and nothing was changed');
   });
 
+  // ---------- Mandatory photos (v144) ----------
+  test('Mandatory photos: a finding, a durable notice or an obstruction outside the living space needs a photo, or the reason there is none', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const section = (id) => win.REPORT_SCHEMA.find((s) => s.id === id);
+    const errs = (id, values) => U.sectionValidationErrors(section(id), values).filter((e) => e.kind === 'missingPhoto').map((e) => e.fieldId);
+    const photo = [{ id: 'p1', blob: new win.Blob(['x'], { type: 'image/jpeg' }) }];
+
+    assertEqual(errs('findings', { workingsFound: 'No', durableNoticeFound: 'No' }).length, 0, 'nothing found, nothing to photograph');
+    const found = { liveTermitesFound: 'Yes', nestFound: 'Yes', workingsFound: 'Yes', borersFound: 'Yes', durableNoticeFound: 'Yes' };
+    assertEqual(errs('findings', found).sort().join(','), 'borerPhotos,damagePhotos,durableNoticePhotos,liveTermitesPhotos,nestPhotos',
+      'every Yes in Findings asks for its photo');
+    assertEqual(errs('findings', { ...found, damagePhotos: photo, nestPhotos: photo, borerPhotos: photo, liveTermitesPhotos: photo }).join(','),
+      'durableNoticePhotos', 'a photo settles it');
+    assertEqual(errs('findings', { ...found, damagePhotos: photo, nestPhotos: photo, borerPhotos: photo, liveTermitesPhotos: photo,
+      durableNoticePhotosNoPhotoReason: 'Meter box locked by the energy company' }).length, 0, 'and so does the reason one could not be taken');
+    assertEqual(errs('findings', { ...found, damagePhotos: photo, nestPhotos: photo, borerPhotos: photo, liveTermitesPhotos: photo,
+      durableNoticePhotosNoPhotoReason: '   ' }).length, 1, 'but not an empty reason');
+
+    assertEqual(errs('conducive', { waterLeaksFound: 'Yes', highMoistureFound: 'Yes', fungalDecayFound: 'Yes' }).sort().join(','),
+      'fungalDecayPhotos,moisturePhotos,waterLeakPhotos', 'leaks, high moisture and decay each ask for a photo');
+
+    const access = { hinderedObstructions: 'Yes' };
+    assertEqual(errs('access', { ...access, interiorObstructions: ['Furniture', 'Items/belongings stored in cupboards'] }).length, 0,
+      'obstructions inside the house never need a photo');
+    assertEqual(errs('access', { ...access, roofVoidObstructions: ['Insulation', 'Sarking'] }).join(','), 'obstructionPhotos',
+      'insulation and sarking in the roof void do');
+    assertEqual(errs('access', { ...access, exteriorObstructions: ['Air conditioning unit'], roofVoidObstructions: ['Insulation'], obstructionPhotos: photo }).length, 0,
+      'and one photo can cover several obstructions');
+    assertEqual(U.computeSectionStatus(section('access'),
+      { ...access, restrictedAccess: 'No', highRiskAreas: 'No', invasiveRecommended: 'No', subfloorObstructions: ['Ducting'] }), 'yellow',
+      'a missing mandatory photo keeps the section from its green tick, which is what locks Finalize');
+    assert(!section('access').fields.find((f) => f.id === 'obstructionPhotos').photoRequired.anyTicked.includes('interiorObstructions'),
+      'the interior list is not one that can demand a photo');
+  });
+
+  test('Mandatory photos: the reason no photo was taken is printed where the photo would have been', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'No Photo Reason Job', jobType: 'termite' });
+    await win.ReportUI.prefillFieldValue(job.id, 'findings', 'durableNoticeFound', 'Yes');
+    await win.ReportUI.prefillFieldValue(job.id, 'findings', 'durableNoticePhotosNoPhotoReason', 'Client asked for no photos');
+    const report = await win.DB.getReport(job.id);
+    const html = win.ReportPrint.buildBodyHtml(job, report, []);
+    assert(/No photograph was taken: Client asked for no photos/.test(html), 'the report says a photo was not taken, and why');
+    report.sections.findings.durableNoticeFound = 'No';
+    assert(!/No photograph was taken/.test(win.ReportPrint.buildBodyHtml(job, report, [])), 'and says nothing when no photo was needed');
+  });
+
+  test('Mandatory photos: a spot that cannot be photographed counts only with a reason, and an unfinished walk locks Finalize', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const PW = win.PhotoWalk;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const withReason = PW.outstanding(items, { results: { meterBox: { r: 'nophoto', at: 1, note: 'Locked' } } }, new Set());
+    assert(!withReason.some((t) => t.id === 'meterBox'), 'cannot photograph, with a reason, deals with the spot');
+    const noReason = PW.outstanding(items, { results: { meterBox: { r: 'nophoto', at: 1 } } }, new Set());
+    assert(noReason.some((t) => t.id === 'meterBox'), 'without a reason it does not');
+
+    const job = await win.DB.addJob({ name: 'Walk Lock Job', jobType: 'termite' });
+    await win.ReportUI.recordWalkState(job.id, { skipped: ['slabEdge'], answers: {}, results: {} });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => !!doc.getElementById('walk-todo'), 'the still-to-do card shows on the report', 4000);
+    assert(/still to do/.test(doc.getElementById('walk-todo-title').textContent), 'saying how much of the walk is left');
+    assert(doc.getElementById('finalize-report-btn').disabled, 'Finalize is locked');
+    await waitFor(() => /walk-through/.test(doc.getElementById('finalize-hint').textContent), 'and the hint says the walk is why', 3000);
+  });
+
   test('Photo walk: can\'t get in keeps one photo step, of why', () => {
     const win = frame.contentWindow;
     const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection')

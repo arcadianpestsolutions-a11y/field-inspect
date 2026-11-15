@@ -71,7 +71,9 @@
 
   const INSIDE_ZONE = 'Inside';
   const KEY = (jobId) => 'scope-photo-walk:' + jobId;
-  const RESULTS = ['ok', 'issue'];
+  // 'nophoto' (v144): the spot is here but could not be photographed. It
+  // only counts with a reason, which the report prints.
+  const RESULTS = ['ok', 'issue', 'nophoto'];
 
   function isGuided(items) {
     return Array.isArray(items) && items.length > 0 && items.every((i) => !!i.area);
@@ -89,6 +91,7 @@
         if (!r || !RESULTS.includes(r.r)) continue;
         results[id] = { r: r.r, at: Number(r.at) || 0 };
         if (typeof r.note === 'string' && r.note.trim()) results[id].note = r.note.trim().slice(0, 300);
+        if (r.r === 'nophoto' && !results[id].note) delete results[id];
       }
     }
     return {
@@ -171,6 +174,7 @@
     const results = state.results || {};
     if (step.kind === 'photo') {
       if (state.skipped.includes(step.item.id)) return true;
+      if (results[step.item.id] && results[step.item.id].r === 'nophoto') return true;
       if (!done.has(step.item.label)) return false;
       return step.blocked ? true : !!results[step.item.id];
     }
@@ -338,16 +342,21 @@
       return row;
     }
 
-    function noteBox(item, existing, onSave) {
+    function noteBox(item, existing, onSave, opts) {
+      const o = opts || {};
       const wrap = el('div', 'walk-issue');
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'walk-other walk-issue-note';
       input.maxLength = 300;
-      input.placeholder = 'What is wrong? (optional)';
+      input.placeholder = o.placeholder || 'What is wrong? (optional)';
       input.value = existing || '';
       wrap.appendChild(input);
-      wrap.appendChild(btn('Save issue, next ›', 'walk-primary walk-issue-save', () => onSave(input.value)));
+      const save = btn(o.saveLabel || 'Save issue, next ›', 'walk-primary walk-issue-save', () => {
+        if (o.required && !input.value.trim()) { input.focus(); return; }
+        onSave(input.value);
+      });
+      wrap.appendChild(save);
       return wrap;
     }
 
@@ -380,8 +389,9 @@
           container.appendChild(el('div', 'walk-got', 'Photo saved. Take another, or go on.'));
           actions.appendChild(btn('Next ›', 'walk-primary', next));
         } else if (got) {
-          container.appendChild(el('div', 'walk-got', result
-            ? (result.r === 'ok' ? 'Photo saved, marked OK.' : 'Photo saved, marked as an issue' + (result.note ? ': ' + result.note : '.'))
+          const verdict = result && result.r !== 'nophoto' ? result : null;
+          container.appendChild(el('div', 'walk-got', verdict
+            ? (verdict.r === 'ok' ? 'Photo saved, marked OK.' : 'Photo saved, marked as an issue' + (verdict.note ? ': ' + verdict.note : '.'))
             : 'Photo saved. What does it show?'));
           if (noteOpenFor === step.item.id) {
             container.appendChild(noteBox(step.item, result && result.note, (note) => { setResult(step.item.id, 'issue', note); next(); }));
@@ -393,11 +403,21 @@
             actions.appendChild(ok);
             actions.appendChild(issue);
           }
+        } else if (noteOpenFor === step.item.id) {
+          container.appendChild(noteBox(step.item, result && result.note,
+            (note) => { setResult(step.item.id, 'nophoto', note); next(); },
+            { required: true, placeholder: 'Why could it not be photographed?', saveLabel: 'Save reason, next ›' }));
         } else {
           if (state.skipped.includes(step.item.id)) container.appendChild(el('div', 'walk-got', 'Marked as not here. Take a photo if that was wrong.'));
+          if (result && result.r === 'nophoto') container.appendChild(el('div', 'walk-got', 'No photo: ' + result.note));
           const none = btn('Not here', 'walk-secondary', skip);
           none.dataset.result = 'nothere';
           actions.appendChild(none);
+          if (!step.blocked) {
+            const cant = btn('Can’t photo', 'walk-secondary', () => { noteOpenFor = step.item.id; render(); });
+            cant.dataset.result = 'nophoto';
+            actions.appendChild(cant);
+          }
         }
       } else if (step.kind === 'question') {
         container.appendChild(el('div', 'walk-title', step.ask));
@@ -547,6 +567,12 @@
         const step = steps[index];
         if (step && step.kind === 'photo' && done().has(step.item.label) && state.skipped.includes(step.item.id)) {
           state.skipped = state.skipped.filter((x) => x !== step.item.id);
+          persist();
+        }
+        // Likewise a photo of a spot marked "can't photograph".
+        if (step && step.kind === 'photo' && done().has(step.item.label)
+          && state.results[step.item.id] && state.results[step.item.id].r === 'nophoto') {
+          delete state.results[step.item.id];
           persist();
         }
         render();
