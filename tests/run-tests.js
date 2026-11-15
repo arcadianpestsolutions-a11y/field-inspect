@@ -4225,6 +4225,39 @@
     }
   });
 
+  test('PDF: "What We Inspected" lists each area and every item with what was seen, and claims nothing that was not recorded (v146)', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'What We Inspected Job', jobType: 'termite' });
+    assertEqual(win.ReportPrint.buildWalkHtml(job, { sections: {}, documentType: null }), '', 'a report with no walk prints no such part');
+    await win.ReportUI.recordWalkState(job.id, {
+      skipped: ['waterTank'], answers: { subfloor: 'no', roof: 'blocked' },
+      results: {
+        meterBox: { r: 'ok', at: Date.UTC(2026, 10, 15, 0, 5) },
+        slabEdge: { r: 'issue', at: Date.UTC(2026, 10, 15, 0, 30), note: 'Garden bed covers the east side' },
+        trees: { r: 'issue', at: 1, kinds: ['workings'], note: 'Mud leads on the stump' },
+        hotWater: { r: 'nophoto', at: 1, note: 'Behind a locked gate' },
+        inKitchen: { r: 'ok', at: 1 },
+      },
+    });
+    const report = await win.DB.getReport(job.id);
+    const html = win.ReportPrint.buildBodyHtml(job, report, []);
+    const part = win.ReportPrint.buildWalkHtml(job, report);
+    assert(html.includes(part) && /What We Inspected/.test(part), 'the part is in the report');
+    assert(html.indexOf('What We Inspected') > html.indexOf('Areas We Were Unable to Inspect'), 'straight after what could not be inspected');
+    const row = (label) => { const m = part.match(new RegExp('<td>' + label + '</td><td>([^<]*)</td>')); return m ? m[1] : null; };
+    assertEqual(row('Meter Box'), 'Notice found', 'the meter box says a notice was found');
+    assertEqual(row('Slab Edge'), 'Issue. Garden bed covers the east side', 'an issue prints with its note');
+    assertEqual(row('Trees &amp; Stumps'), 'Issue: termite damage or workings. Mud leads on the stump', 'and with what kind it was');
+    assertEqual(row('Hot Water System'), 'Inspected. No photograph could be taken: Behind a locked gate', 'a spot that could not be photographed says why');
+    assertEqual(row('Water Tank'), 'Not present at this property.', 'Not here prints as not present');
+    assertEqual(row('Kitchen'), 'Inspected. No issue seen.', 'an OK prints as inspected');
+    assertEqual(row('Weep Holes'), 'Not recorded.', 'a spot nobody dealt with is never printed as clear');
+    assert(/No subfloor: the building is on a concrete slab/.test(part), 'a slab home says there is no subfloor');
+    assert(/roof void could not be accessed/.test(part) && !/<td>Roof Timbers<\/td>/.test(part), 'an area that could not be entered says so and lists no items');
+    assert(/Completed at 11:30\s?am/i.test(part), 'each area shows when it was completed, in Sydney time');
+    assert(/sounding/.test(part) && /moisture meter/.test(part), 'and how it was inspected');
+  });
+
   // ---------- Mandatory photos (v144) ----------
   test('Mandatory photos: a finding, a durable notice or an obstruction outside the living space needs a photo, or the reason there is none', () => {
     const win = frame.contentWindow;

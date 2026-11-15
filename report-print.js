@@ -201,8 +201,90 @@
         }
       }
       html += `</div>`;
+      // v146: straight after what could NOT be inspected, what was.
+      if (section.id === 'access' && !isPestTreatment) html += buildWalkHtml(job, report);
     }
     html += buildAmendmentsAppendixHtml(report);
+    return html;
+  }
+
+  // "What we inspected" (v146, agreed with Tal on 15 Nov 2026): the walk
+  // (photo-walk.js) set out area by area, every spot with its result, so a
+  // report with little to find still shows the work that was done. Built
+  // only from what the technician recorded on the walk. Nothing here is
+  // inferred: a spot nobody dealt with is listed as not recorded, never as
+  // clear. Prints nothing for a report that had no walk.
+  const WALK_METHODS = {
+    outside: 'Visual inspection of accessible areas; sounding of accessible timbers.',
+    subfloor: 'Visual inspection by torchlight; sounding of accessible timbers.',
+    roof: 'Visual inspection by torchlight; sounding of accessible timbers.',
+    inside: 'Visual inspection; sounding of skirtings, architraves and door frames; moisture meter readings to wet areas.',
+  };
+  const WALK_NOT_THERE = {
+    subfloor: 'No subfloor: the building is on a concrete slab.',
+    roof: 'No roof void.',
+  };
+  const WALK_BLOCKED = {
+    subfloor: 'The subfloor could not be accessed at the time of inspection. See Areas We Were Unable to Inspect.',
+    roof: 'The roof void could not be accessed at the time of inspection. See Areas We Were Unable to Inspect.',
+  };
+
+  function walkTime(ms) {
+    try {
+      return new Date(ms).toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit' });
+    } catch (e) { return ''; }
+  }
+
+  function buildWalkHtml(job, report) {
+    const walk = report && report.sections ? report.sections.walkthrough : null;
+    if (!walk || !window.PhotoWalk || !window.PhotoChecklists || !job || job.jobType !== 'termite') return '';
+    const items = window.PhotoChecklists.forJob(job, null, report.documentType).filter((i) => i.id !== 'frontElevation');
+    if (!window.PhotoWalk.isGuided(items)) return '';
+    const results = walk.results || {};
+    const skipped = new Set(walk.skipped || []);
+    const answers = walk.answers || {};
+    if (!Object.keys(results).length && !skipped.size && !Object.keys(answers).length) return '';
+    const kinds = (window.WalkRollup && window.WalkRollup.KINDS) || [];
+    const kindLabel = (id) => { const k = kinds.find((x) => x.id === id); return k ? k.label.toLowerCase() : id; };
+
+    function resultText(item) {
+      const r = results[item.id];
+      if (r && r.r === 'ok') return item.okLabel ? item.okLabel : 'Inspected. No issue seen.';
+      if (r && r.r === 'issue') {
+        const what = (r.kinds || []).map(kindLabel).join(', ');
+        const head = item.issueLabel ? item.issueLabel : ('Issue' + (what ? ': ' + what : ''));
+        return head + (r.note ? '. ' + r.note : '.');
+      }
+      if (r && r.r === 'nophoto') return 'Inspected. No photograph could be taken: ' + r.note;
+      if (skipped.has(item.id)) return 'Not present at this property.';
+      return 'Not recorded.';
+    }
+
+    let html = `<div class="section"><div class="section-head" style="background:#0f766e"><h2>What We Inspected</h2></div>`;
+    html += `<p>Each area of the property, with every item checked and what was seen. Photographs are in the sections that follow.</p>`;
+    for (const area of window.PhotoWalk.AREAS) {
+      const mine = items.filter((i) => i.area === area.id && !i.hidden);
+      if (!mine.length) continue;
+      html += `<div class="field"><div class="field-label">${escapeHtml(area.title)}</div>`;
+      const answer = answers[area.id];
+      if (area.ask && answer === 'no') {
+        html += `<div class="field-value">${escapeHtml(WALK_NOT_THERE[area.id] || 'Not present.')}</div></div>`;
+        continue;
+      }
+      if (area.ask && answer === 'blocked') {
+        html += `<div class="field-value">${escapeHtml(WALK_BLOCKED[area.id] || 'Could not be accessed.')}</div></div>`;
+        continue;
+      }
+      const times = mine.map((i) => results[i.id] && results[i.id].at).filter(Boolean);
+      const when = times.length ? walkTime(Math.max(...times)) : '';
+      html += `<div class="field-value">${escapeHtml(WALK_METHODS[area.id] || '')}${when ? ' Completed at ' + escapeHtml(when) + '.' : ''}</div>`;
+      html += `<table class="product-pdf-table"><thead><tr><th>Item</th><th>Result</th></tr></thead><tbody>`;
+      for (const item of mine) {
+        html += `<tr><td>${escapeHtml(item.label)}</td><td>${escapeHtml(resultText(item))}</td></tr>`;
+      }
+      html += `</tbody></table></div>`;
+    }
+    html += `</div>`;
     return html;
   }
 
@@ -310,6 +392,7 @@
   window.ReportPrint = {
     init,
     buildBodyHtml: (job, report, trackedUrls) => buildReportBodyHtml(job, report, trackedUrls),
+    buildWalkHtml,
     buildAmendmentsAppendixHtml,
     openPrintWindow,
     generatePdfBlob: generateReportPdfBlob,
