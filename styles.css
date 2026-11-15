@@ -1661,6 +1661,35 @@ select {
 .slot-job-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot-job-meta { font-size: 0.74rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Drag the bottom edge of a job to change how long it takes (v149). The
+   handle lies along the bottom of the job's last hour. */
+.slot-row { position: relative; }
+.slot-resize {
+  position: absolute; left: 62px; right: 0; bottom: -4px; height: 16px;
+  cursor: ns-resize; touch-action: none; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+}
+.slot-resize::after {
+  content: ''; width: 44px; height: 4px; border-radius: 2px;
+  background: var(--accent); opacity: 0.55;
+}
+.slot-resize:hover::after, .slot-resizing .slot-resize::after { opacity: 1; width: 72px; }
+.slot-resizing { user-select: none; -webkit-user-select: none; }
+.slot-resize-preview > :not(.slot-hour):not(.slot-resize) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.slot-resize-drop > :not(.slot-hour):not(.slot-resize) { box-shadow: inset 0 -4px 0 var(--accent); }
+
+/* "Send client booking details?" (booking-notice.js, v149) */
+.booking-notice-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 12px 0; font-size: 0.9rem; }
+.booking-notice-facts dt { color: var(--text-dim); }
+.booking-notice-facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.booking-notice-actions { display: flex; flex-direction: column; gap: 8px; }
+.booking-notice-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin: 8px 0; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--warning); background: var(--card); font-size: 0.86rem;
+}
+.booking-notice-text { color: var(--warning); font-weight: 600; }
+
 .slot-continued {
   flex: 1;
   display: flex;

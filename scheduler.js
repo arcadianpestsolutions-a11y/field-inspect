@@ -261,6 +261,7 @@
     for (let hour = DAY_START_HOUR; hour < DAY_END_HOUR; hour++) {
       const row = document.createElement('div');
       row.className = 'slot-row';
+      row.dataset.hour = String(hour);
 
       const label = document.createElement('span');
       label.className = 'slot-hour';
@@ -268,6 +269,9 @@
       row.appendChild(label);
 
       const entry = occupiedBy.get(hour);
+      const next = occupiedBy.get(hour + 1);
+      // The job's last hour on the grid: its bottom edge can be dragged.
+      const isLastRow = entry && (!next || next.job.id !== entry.job.id || next.isStart);
       if (entry && entry.isStart) {
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -284,7 +288,10 @@
         const who = technicians.size >= 2 && entry.job.assignedTo
           ? (window.technicianDisplayName ? window.technicianDisplayName(entry.job.assignedTo) : entry.job.assignedTo)
           : null;
-        meta.textContent = [fmtTime(entry.job.scheduledAt), `${durationOf(entry.job)} min`, entry.job.address, who]
+        // "Not sent": the client has not been told about this time yet
+        // (booking-notice.js). Read here so a day shows who still needs it.
+        const unsent = window.BookingNotice && window.BookingNotice.needsSending(entry.job) ? '✉ client not told yet' : null;
+        meta.textContent = [fmtTime(entry.job.scheduledAt), `${durationOf(entry.job)} min`, unsent, entry.job.address, who]
           .filter(Boolean).join(' · ');
         btn.appendChild(meta);
         btn.addEventListener('click', () => {
@@ -327,6 +334,7 @@
         row.appendChild(free);
       }
 
+      if (isLastRow) row.appendChild(resizeHandle(entry.job));
       slotsEl.appendChild(row);
     }
 
@@ -353,6 +361,96 @@
       row.appendChild(btn);
       slotsEl.appendChild(row);
     }
+  }
+
+  // ---------- dragging a job longer or shorter (v149) ----------
+  // The bottom edge of a booked job is a handle. Drag it down over the next
+  // hours to give the job more time, or up to give some back. The grid is
+  // hourly, so the job ends on the hour it is dropped in.
+  function endHourFor(job) {
+    const start = new Date(job.scheduledAt);
+    return start.getHours() + Math.max(1, Math.ceil((start.getMinutes() + durationOf(job)) / 60));
+  }
+
+  // The job now ends at endHour o'clock. Asks before running into another
+  // job, exactly as booking does. Returns the new minutes, or null.
+  async function resizeJob(job, endHour) {
+    const start = new Date(job.scheduledAt);
+    const startMins = start.getHours() * 60 + start.getMinutes();
+    const last = Math.max(start.getHours() + 1, Math.min(DAY_END_HOUR, endHour));
+    const mins = Math.max(30, last * 60 - startMins);
+    if (mins === durationOf(job)) return null;
+    if (mins > durationOf(job) && !(await confirmNoOverlap(job.id, job.scheduledAt, mins))) return null;
+    await DB.updateJob(job.id, { scheduledDurationMins: mins });
+    toast(`${job.name}: now ${fmtHours(mins)}, finishing ${fmtHour(last)}`);
+    await refresh();
+    return mins;
+  }
+
+  function resizeHandle(job) {
+    const handle = document.createElement('div');
+    handle.className = 'slot-resize';
+    handle.dataset.resize = job.id;
+    handle.setAttribute('role', 'slider');
+    handle.setAttribute('aria-label', `Drag to change how long ${job.name} takes`);
+    handle.title = 'Drag to make this job longer or shorter';
+    const startHour = new Date(job.scheduledAt).getHours();
+    let dragging = false;
+    let target = null;
+
+    const paint = () => {
+      slotsEl.querySelectorAll('.slot-row').forEach((r) => {
+        const h = Number(r.dataset.hour);
+        r.classList.toggle('slot-resize-preview', dragging && target !== null && h >= startHour && h < target);
+        r.classList.toggle('slot-resize-drop', dragging && target !== null && h === target - 1);
+      });
+    };
+    const hourAt = (x, y) => {
+      const under = document.elementFromPoint(x, y);
+      const row = under && under.closest ? under.closest('.slot-row[data-hour]') : null;
+      return row ? Number(row.dataset.hour) : null;
+    };
+
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      target = endHourFor(job);
+      try { handle.setPointerCapture(e.pointerId); } catch (err) { /* older browsers still get the events */ }
+      slotsEl.classList.add('slot-resizing');
+      paint();
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const h = hourAt(e.clientX, e.clientY);
+      if (h === null) return;
+      target = Math.max(startHour + 1, h + 1);
+      paint();
+    });
+    const finish = async (commit) => {
+      if (!dragging) return;
+      dragging = false;
+      slotsEl.classList.remove('slot-resizing');
+      const to = target;
+      target = null;
+      paint();
+      if (commit && to !== null) await resizeJob(job, to);
+    };
+    handle.addEventListener('pointerup', () => finish(true));
+    handle.addEventListener('pointercancel', () => finish(false));
+    // The handle sits on the job: a drag must not also open the job.
+    handle.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+    return handle;
+  }
+
+  // Ask whether the client should be told (booking-notice.js). Never awaited
+  // by the booking itself: the job is booked whatever is answered.
+  function offerBookingNotice(jobId) {
+    if (!window.BookingNotice) return;
+    DB.getJob(jobId).then((fresh) => {
+      if (!fresh) return null;
+      return window.BookingNotice.offer(fresh).then(() => refresh());
+    }).catch((err) => { if (window.ErrorLog) window.ErrorLog.note(err, 'diary: ask to send booking'); });
   }
 
   // ---------- booking into a specific slot ----------
@@ -415,6 +513,7 @@
     closePicker();
     toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtHour(hour)} (${mins} min)`);
     await refresh();
+    offerBookingNotice(job.id);
   }
 
   // ---------- backlog ----------
@@ -534,6 +633,7 @@
     await DB.updateJob(job.id, { scheduledAt: slot.startAt, scheduledDurationMins: mins });
     toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtTime(slot.startAt)}`);
     await refresh();
+    offerBookingNotice(job.id);
   }
 
   // Shared by every booking path in this file. Returns true if it's clear to
@@ -702,6 +802,8 @@
     // asks the same question with the same wording, instead of each writing
     // its own half of a conflict check.
     confirmNoOverlap,
+    // Exposed for the suite: what a drag of the bottom edge ends up doing.
+    resizeJob,
     // Exposed so the estimate itself can be tested against known distances,
     // rather than only through the booking flow that consumes it.
     travelMinutesBetween,

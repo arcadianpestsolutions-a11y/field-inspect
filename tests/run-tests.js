@@ -2632,6 +2632,121 @@
     assertEqual(visible[0].id, 'view-login', 'the login view should be the one showing');
   });
 
+  test('Scheduler: dragging the bottom edge of a job makes it longer or shorter, and asks before running into the next one (v149)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const d = dayThisMonth(9, 9);
+    const job = await win.DB.addJob({ name: 'Stretch Job', scheduledAt: d.getTime(), scheduledDurationMins: 60 });
+    const later = dayThisMonth(9, 13);
+    await win.DB.addJob({ name: 'After Lunch Job', scheduledAt: later.getTime(), scheduledDurationMins: 60 });
+
+    await win.Scheduler.open();
+    await wait(300);
+    Array.from(doc.querySelectorAll('.cal-cell:not(.cal-blank)'))
+      .find((c) => c.querySelector('.cal-daynum').textContent === String(dayThisMonth(9).getDate())).click();
+    await wait(300);
+
+    const handleRow = () => doc.querySelector(`[data-resize="${job.id}"]`).closest('.slot-row');
+    assertEqual(handleRow().dataset.hour, '9', 'a one-hour job carries its handle on its own row');
+
+    // Dropped in the 11am row: the job now ends at midday.
+    assertEqual(await win.Scheduler.resizeJob(await win.DB.getJob(job.id), 12), 180, 'three hours, 9 to 12');
+    assertEqual((await win.DB.getJob(job.id)).scheduledDurationMins, 180);
+    await wait(200);
+    assertEqual(handleRow().dataset.hour, '11', 'the handle moves to the new last hour');
+    assert(Array.from(doc.querySelectorAll('.slot-row')).some((r) => r.dataset.hour === '10' && /continues/.test(r.textContent)),
+      'and the hours between read as taken');
+
+    // Dragged back up: shorter needs no question.
+    assertEqual(await win.Scheduler.resizeJob(await win.DB.getJob(job.id), 10), 60, 'back to one hour');
+    assertEqual(await win.Scheduler.resizeJob(await win.DB.getJob(job.id), 4), null, 'never shorter than its first hour: no change');
+
+    // Dragged over the 1pm job: the clash question, and No leaves it alone.
+    const asking = win.Scheduler.resizeJob(await win.DB.getJob(job.id), 14);
+    await wait(300);
+    const dialog = doc.querySelector('.app-dialog');
+    assert(dialog && /After Lunch Job/.test(dialog.textContent), 'running into the next job is asked about, by name');
+    Array.from(dialog.querySelectorAll('button')).find((b) => !/Book anyway/.test(b.textContent)).click();
+    assertEqual(await asking, null, 'answering no changes nothing');
+    assertEqual((await win.DB.getJob(job.id)).scheduledDurationMins, 60);
+  });
+
+  test('Booking notice: a booking asks before the client is told, and the job keeps saying so until they are (v149)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const BN = win.BookingNotice;
+    const ahead = Date.now() + 3 * 24 * 3600 * 1000;
+    const base = { id: 'bn1', name: 'Notice Client', clientEmail: 'client@example.test', address: '1 Test St', scheduledAt: ahead };
+
+    assert(BN.needsSending(base), 'a time ahead that the client has not been sent');
+    assert(!BN.needsSending({ ...base, confirmationSentForAt: ahead }), 'sent for this time: nothing to chase');
+    assert(BN.needsSending({ ...base, confirmationSentForAt: ahead - 3600000 }), 'sent for the OLD time: the new one still needs sending');
+    assert(!BN.needsSending({ ...base, scheduledAt: Date.now() - 1000 }), 'a time that has passed is not chased');
+    assert(!BN.needsSending({ ...base, commsOptOut: true }), 'nor a client who turned messages off');
+    assert(!BN.needsSending({ ...base, scheduledAt: null }), 'nor a job with no time');
+
+    const sent = [];
+    const send = async (job, opts) => { sent.push([job.id, !!opts.agreement]); return true; };
+    const opened = [];
+    const openJob = async (id) => { opened.push(id); };
+    const pick = async (choice) => {
+      await wait(50);
+      const box = doc.querySelector('.booking-notice');
+      assert(box, 'the question is on screen');
+      return { box, click: () => box.querySelector(`[data-choice="${choice}"]`).click() };
+    };
+
+    // Yes: it goes, with exactly what was shown.
+    let asking = BN.offer(base, { send, openJob, agreement: true });
+    let q = await pick('send');
+    assert(/Send client booking details\?/.test(q.box.textContent), 'it asks in Tal\'s words');
+    assert(/client@example\.test/.test(q.box.textContent) && /1 Test St/.test(q.box.textContent) && /Notice Client/.test(q.box.textContent),
+      'and shows who, where and the address it will go to, to be checked first');
+    assertEqual(q.box.querySelectorAll('[data-choice]').length, 3, 'yes, not yet, or change the details');
+    q.click();
+    assertEqual(await asking, 'send');
+    assertEqual(JSON.stringify(sent), '[["bn1",true]]', 'only Yes sends');
+    assert(!doc.querySelector('.booking-notice'), 'and the question closes');
+
+    // Not yet: nothing goes.
+    asking = BN.offer(base, { send, openJob });
+    (await pick('later')).click();
+    assertEqual(await asking, 'later');
+    assertEqual(sent.length, 1, 'Not yet sends nothing');
+
+    // Change the details: nothing goes, the job opens.
+    asking = BN.offer(base, { send, openJob });
+    (await pick('edit')).click();
+    assertEqual(await asking, 'edit');
+    assertEqual(sent.length, 1, 'changing the details sends nothing');
+    assertEqual(opened.join(','), 'bn1', 'and opens the job to fix');
+
+    // No email on file: it cannot offer to send, only to add one.
+    asking = BN.offer({ ...base, clientEmail: '' }, { send, openJob });
+    q = await pick('later');
+    assert(!q.box.querySelector('[data-choice="send"]'), 'with no email there is nothing to say yes to');
+    assert(/No email address/.test(q.box.textContent), 'and it says why');
+    q.click();
+    await asking;
+
+    // The reminder on the job.
+    const anchor = doc.createElement('div');
+    doc.body.appendChild(anchor);
+    try {
+      const row = BN.renderReminder(base, { anchor, send, openJob });
+      assert(row && /have not been sent/.test(row.textContent), 'an unsent booking says so on the job');
+      assertEqual(BN.renderReminder({ ...base, confirmationSentForAt: ahead }, { anchor, send, openJob }), null, 'and stops once it has gone');
+      assert(!doc.getElementById('booking-notice-row'), 'the old reminder is taken down');
+    } finally { anchor.remove(); }
+
+    // The real booking paths ask rather than send.
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(!/showJobView\(job\.id\);\s*confirmBookingByEmail\(/.test(app), 'saving a new job no longer emails the client by itself');
+    assert(/BookingNotice\.offer\(job, \{ agreement: wantsAgreement \}\)/.test(app), 'it asks instead');
+    const sched = await (await fetch('../scheduler.js', { cache: 'reload' })).text();
+    assertEqual((sched.match(/offerBookingNotice\(job\.id\)/g) || []).length, 2, 'and so do both ways of booking from the diary');
+  });
+
   test('Scheduler: booking into a chosen slot uses that hour and duration', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

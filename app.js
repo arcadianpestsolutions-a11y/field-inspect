@@ -524,6 +524,7 @@
     await renderAssignedToButton(job);
     renderJobPermissions(job);
     renderCommsRow(job);
+    renderBookingNotice(job);
     renderPlanRow(job);
     if (window.JobDetails) {
       window.JobDetails.render(job, {
@@ -532,6 +533,7 @@
           jobTitleEl.textContent = saved.name;
           jobSubtitleEl.textContent = addressAndWhen(saved);
           renderCommsRow(saved);
+          renderBookingNotice(saved);
           toast('Details saved');
         },
       });
@@ -611,6 +613,20 @@
       if (error) return null;
       return (data || []).find((r) => phoneTail(r.phone_e164) === tail) || null;
     } catch (e) { return null; }
+  }
+
+  // "Booking details have not been sent to the client" (booking-notice.js,
+  // v149): on the job until the confirmation has gone for the time booked.
+  function renderBookingNotice(job) {
+    if (!window.BookingNotice) return;
+    window.BookingNotice.renderReminder(job, {
+      canEdit: canEditJob(job),
+      anchor: document.getElementById('job-comms-row') || jobSubtitleEl,
+      after: async () => {
+        const fresh = await DB.getJob(job.id);
+        if (fresh && currentJobId === job.id) renderBookingNotice(fresh);
+      },
+    });
   }
 
   function renderCommsRow(job) {
@@ -1288,8 +1304,16 @@
     });
     hide(jobForm);
     await renderJobList();
-    showJobView(job.id);
-    confirmBookingByEmail(job, { agreement: wantsAgreement });
+    await showJobView(job.id);
+    // Asked, never sent on its own (v149): part of the job may be wrong.
+    if (job.scheduledAt && window.BookingNotice) {
+      window.BookingNotice.offer(job, { agreement: wantsAgreement })
+        .then(async () => {
+          const fresh = await DB.getJob(job.id);
+          if (fresh && currentJobId === job.id) renderBookingNotice(fresh);
+        })
+        .catch((err) => { if (window.ErrorLog) window.ErrorLog.note(err, 'booking: ask to send'); });
+    }
   }
 
   jobFormSave.addEventListener('click', async () => {
@@ -1319,8 +1343,8 @@
   // (client-agreement.js). If the link cannot be made, the confirmation still
   // goes, just without it, and the technician is told.
   async function confirmBookingByEmail(job, { agreement = false } = {}) {
-    if (!job || !job.scheduledAt || !job.clientEmail) return;
-    if (!window.CommsService) return;
+    if (!job || !job.scheduledAt || !job.clientEmail) return false;
+    if (!window.CommsService) { toast('Not sent: this copy of Scope does not send email (demo or test).'); return false; }
     try {
       if (window.Sync && window.Sync.pushJob) await window.Sync.pushJob(job);
     } catch (e) { /* reported below as job-not-found */ }
@@ -1339,8 +1363,15 @@
         ? 'Booking confirmation emailed, with the inspection agreement to sign'
         : 'Booking confirmation emailed to the client'
           + (agreement ? '. The agreement link could not be made: send it from Client link.' : ''));
-    } else if (result.message) toast(result.message);
+      // The server has stamped the job with the time it wrote about; this
+      // copy is stamped the same so the reminder goes away without a sync.
+      try { await DB.updateJob(job.id, { confirmationSentForAt: job.scheduledAt }); } catch (e) { /* the next sync brings it */ }
+      return true;
+    }
+    if (result.message) toast(result.message);
+    return false;
   }
+  window.confirmBookingByEmail = confirmBookingByEmail;
 
   // The agreement option only means something for a timber pest inspection.
   function syncAgreementRow() {
