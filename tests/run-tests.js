@@ -1721,6 +1721,20 @@
       assert(/=== 'PAID' \|\| !!i\.paid_at/.test(src), `${fn}: cash marked paid reads as paid`);
       assert(/\.order\('created_at', \{ ascending: false \}\)/.test(src), `${fn}: the newest invoice, not any one`);
     }
+    const fnSrc = await (await fetch('../supabase/functions/client-portal/index.ts', { cache: 'reload' })).text();
+    const page = await (await fetch('../portal.html', { cache: 'reload' })).text();
+    assert(/prePurchase: \/\^pre-purchase\/i/.test(fnSrc) && /!d\.visit\.prePurchase\s*\?\s*'Termite inspection'/.test(page),
+      'the page calls a 3660 inspection a termite inspection, and only a pre-purchase one a timber pest inspection');
+  });
+
+  test('Email: names what is attached, the way the PDF does (v157)', async () => {
+    const fn = await (await fetch('../supabase/functions/send-report-email/index.ts', { cache: 'reload' })).text();
+    assert(/const reportLabel = givenTitle \|\|/.test(fn), 'a report email uses the title printed on the PDF');
+    assert(/taxInvoice === false \? 'Invoice' : 'Tax Invoice'/.test(fn), 'not registered for GST: never called a tax invoice');
+    const report = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assert(/documentTitle: reportTitleFor\(job\.jobType, currentReport\)/.test(report), 'the app sends the report title');
+    const inv = await (await fetch('../invoice-ui.js', { cache: 'reload' })).text();
+    assert(/taxInvoice: totals\.gstRegistered/.test(inv), 'and the invoice says whether GST applies');
   });
 
   test('Business: a client who ignored the reminder is counted separately from merely overdue', () => {
@@ -1821,8 +1835,18 @@
     const notes = swmsRow(doc, 'subfloorNotes').querySelector('textarea');
     notes.value = 'Discarded on purpose';
     notes.dispatchEvent(new Event('input', { bubbles: true }));
+    // v157: Back asks before throwing a change away, as the report does.
+    const realConfirm = win.confirm;
+    let asked = 0;
+    win.confirm = () => { asked++; return false; };
+    doc.getElementById('swms-section-back-btn').click();
+    await wait(300);
+    assertEqual(asked, 1, 'Back with a change asks first');
+    assert(!doc.getElementById('swms-section-fields').closest('.hidden'), 'and Cancel stays on the section');
+    win.confirm = () => { asked++; return true; };
     doc.getElementById('swms-section-back-btn').click();
     await wait(400);
+    win.confirm = realConfirm;
     let stored = await win.DB.getSwms(await idOf());
     assert(!(stored.sections.swmsSubfloor && stored.sections.swmsSubfloor.subfloorNotes),
       'backing out of a section must not write it');

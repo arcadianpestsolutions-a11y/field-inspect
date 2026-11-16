@@ -169,6 +169,10 @@
   }
 
   // ---------- one section ----------
+  // What the section held when it was opened, to tell whether Back would
+  // throw anything away.
+  let openedAs = '';
+
   function openSection(sectionId) {
     const section = findSection(sectionId);
     if (!section) return;
@@ -191,6 +195,7 @@
     // vanishing on save.
     renderer.setValues(pendingValues);
     renderer.renderSection(section);
+    openedAs = JSON.stringify(pendingValues);
     show(sectionView);
   }
 
@@ -271,10 +276,14 @@
   newBtn.addEventListener('click', createStatement);
   deleteBtn.addEventListener('click', deleteStatement);
   sectionSaveBtn.addEventListener('click', saveSection);
-  sectionBackBtn.addEventListener('click', () => {
-    // Back discards, exactly like the report's section editor. Save is the
-    // only thing that writes, so there is one rule to remember rather than
-    // two screens with different ones.
+  sectionBackBtn.addEventListener('click', async () => {
+    // Back discards, like the report's section editor, and like it (v157)
+    // asks first when something was changed. It used to throw away a
+    // half-written hazard list without a word.
+    if (JSON.stringify(pendingValues) !== openedAs && !await window.Common.askConfirm(
+      'What you changed in this section has not been saved. Tap Cancel to go back and use Save instead.',
+      { title: 'Discard unsaved work?', okLabel: 'Discard', danger: true }
+    )) return;
     currentSectionId = null;
     renderSectionList();
     show(docView);

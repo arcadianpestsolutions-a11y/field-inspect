@@ -305,6 +305,9 @@ async function handleGet(req: Request) {
     client: { name: job.name || '', address: job.address || '' },
     visit: {
       jobType: job.job_type === 'pest_treatment' ? 'pest_treatment' : 'termite',
+      // Whether this was a pre-purchase inspection (AS 4349.3), so the page
+      // names it the way the report does (v157). One yes/no, not the section.
+      prePurchase: /^pre-purchase/i.test(String(report?.sections?.clientDetails?.inspectionClassification || '')),
       date: job.inspection_date || null,
       completedAt: job.inspection_ended_at || null,
       nextDueAt: job.next_due_at || null,

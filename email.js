@@ -51,10 +51,13 @@
   // whatever went wrong rather than assuming success.
   // documentKind distinguishes an invoice from a report so the subject line,
   // body and attachment filename read correctly for what's actually attached.
-  async function sendReportEmail({ recipientEmail, recipientName, jobName, jobType, documentKind, pdfBlob }) {
+  // documentTitle is the title printed on the PDF ("Timber Pest Inspection
+  // Report" for a pre-purchase one), and taxInvoice is false for a business
+  // not registered for GST (v157), so the email names what is attached.
+  async function sendReportEmail({ recipientEmail, recipientName, jobName, jobType, documentKind, documentTitle, taxInvoice, pdfBlob }) {
     const pdfBase64 = await blobToBase64(pdfBlob);
     const { data, error } = await supabaseClient.functions.invoke('send-report-email', {
-      body: { recipientEmail, recipientName, jobName, jobType, documentKind, pdfBase64 },
+      body: { recipientEmail, recipientName, jobName, jobType, documentKind, documentTitle, taxInvoice, pdfBase64 },
     });
     if (error) throw await failureFrom(error, 'Could not send the email.');
     if (data && data.error) throw new Error(data.error);

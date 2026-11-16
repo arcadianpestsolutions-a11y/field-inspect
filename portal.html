@@ -467,7 +467,11 @@
   function render(d, token) {
     const parts = [];
     parts.push(`<p class="biz">${esc(d.business.name)}</p>`);
-    parts.push(`<h1>${esc(SERVICE[d.visit.jobType] || 'Your service')}</h1>`);
+    // Named as the report is (v157): a termite inspection under AS 3660.2,
+    // a timber pest inspection only when it was a pre-purchase one.
+    const service = d.visit.jobType === 'termite' && !d.visit.prePurchase
+      ? 'Termite inspection' : SERVICE[d.visit.jobType];
+    parts.push(`<h1>${esc(service || 'Your service')}</h1>`);
     parts.push(`<p class="addr">${esc(d.client.address || d.client.name)}</p>`);
 
     // First, because before the visit it is the one thing to do here.

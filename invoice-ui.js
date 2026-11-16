@@ -479,6 +479,7 @@
         recipientName: current.clientName,
         jobName: `${current.number}`,
         documentKind: 'invoice',
+        taxInvoice: totals.gstRegistered,
         pdfBlob,
       });
       // Same reasoning as report.js's emailReport: the id Resend hands back

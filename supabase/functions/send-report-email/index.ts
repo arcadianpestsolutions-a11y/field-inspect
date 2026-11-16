@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
     const bizHtml = escapeHtml(biz.name);
 
     const body = await req.json();
-    const { recipientEmail, recipientName, jobName, jobType, documentKind, pdfBase64 } = body;
+    const { recipientEmail, recipientName, jobName, jobType, documentKind, documentTitle, taxInvoice, pdfBase64 } = body;
 
     if (!recipientEmail || !EMAIL_PATTERN.test(recipientEmail)) {
       return json({ error: 'A valid recipientEmail is required' }, 400);
@@ -100,28 +100,35 @@ Deno.serve(async (req) => {
     const isInvoice = documentKind === 'invoice';
     const isPestTreatment = jobType === 'pest_treatment';
 
-    const reportLabel = isPestTreatment ? 'General Pest Treatment Report' : 'Termite Inspection Report';
+    // The title printed on the PDF when the app sends it (v157): a
+    // pre-purchase report is a Timber Pest Inspection Report, and the email
+    // called it a termite one. Plain words only, and short.
+    const givenTitle = typeof documentTitle === 'string'
+      ? documentTitle.replace(/[^A-Za-z0-9 &()'.,-]/g, '').trim().slice(0, 80) : '';
+    const reportLabel = givenTitle || (isPestTreatment ? 'General Pest Treatment Report' : 'Termite Inspection Report');
+    // Not registered for GST: not a tax invoice, and must not be called one.
+    const invoiceWord = taxInvoice === false ? 'Invoice' : 'Tax Invoice';
     const subject = isInvoice
-      ? `Tax Invoice${jobName ? ' ' + jobName : ''} — ${biz.name}`
+      ? `${invoiceWord}${jobName ? ' ' + jobName : ''} — ${biz.name}`
       : `${reportLabel}${jobName ? ' — ' + jobName : ''}`;
 
     const html = isInvoice
       ? `
       <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
-      <p>Please find attached your tax invoice from ${bizHtml}.</p>
+      <p>Please find attached your ${invoiceWord.toLowerCase()} from ${bizHtml}.</p>
       <p>If you have any questions about this invoice, please get in touch.</p>
       <p>Kind regards,<br>${bizHtml}</p>
     `
       : `
       <p>Hi${recipientName ? ' ' + recipientName : ''},</p>
-      <p>Please find attached your ${isPestTreatment ? 'pest treatment report' : 'termite inspection report'} from ${bizHtml}.</p>
+      <p>Please find attached your ${escapeHtml(reportLabel.toLowerCase())} from ${bizHtml}.</p>
       <p>If you have any questions about this report, please get in touch.</p>
       <p>Kind regards,<br>${bizHtml}</p>
     `;
 
     const attachmentFilename = isInvoice
       ? `${(jobName || 'invoice').replace(/[^A-Za-z0-9._-]/g, '-')}.pdf`
-      : (isPestTreatment ? 'pest-treatment-report.pdf' : 'termite-inspection-report.pdf');
+      : `${reportLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'report'}.pdf`;
 
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',

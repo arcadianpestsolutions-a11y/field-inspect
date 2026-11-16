@@ -2480,6 +2480,7 @@
           recipientName: clientDetails.clientName || job.name,
           jobName: job.name,
           jobType: job.jobType,
+          documentTitle: reportTitleFor(job.jobType, currentReport),
           pdfBlob,
         });
       } finally {
