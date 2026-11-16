@@ -9359,6 +9359,32 @@
     assert(f.majorSafetyHazard.confirmBeforeUse, 'a safety hazard answer from the AI must be confirmed by the inspector');
   });
 
+  // ---------- One business cannot reach another's (migrations 042, 043) ----------
+  test('Businesses: photos, business records, new businesses and SharePoint are all tied to the caller\'s own organisation', async () => {
+    const walls = await (await fetch('../supabase-migration-042-org-walls.sql', { cache: 'reload' })).text();
+    for (const cmd of ['select', 'insert', 'update', 'delete']) {
+      const policy = new RegExp(`on storage\\.objects for ${cmd} to authenticated[\\s\\S]*?;`).exec(walls);
+      assert(policy && /media_in_my_org\(name, (true|false)\)/.test(policy[0]), `storage ${cmd} is limited to files under the caller's own jobs`);
+    }
+    assert(/for insert to authenticated\s+with check \(bucket_id = 'inspection-media' and public\.media_in_my_org\(name, false\)\)/.test(walls),
+      'an upload needs a live job, not a deleted one');
+    assert(/j\.org_id = public\.my_org_id\(\)/.test(walls) && /d\.org_id = public\.my_org_id\(\)/.test(walls), 'the job, or its tombstone, must be in the caller\'s organisation');
+    assert(/revoke execute on function public\.media_in_my_org\(text, boolean\) from public, anon/.test(walls), 'and the check is not callable signed out');
+    assert(/for select to authenticated\s+using \(id = public\.my_org_id\(\)\)/.test(walls), 'a member reads only their own business record');
+    assert(/using \(public\.is_admin\(\) and id = public\.my_org_id\(\)\)/.test(walls), 'an admin edits only their own business');
+    assert(!/using \(true\)/.test(walls), 'nothing is left open to "anyone signed in"');
+
+    const create = await (await fetch('../supabase-migration-043-create-business.sql', { cache: 'reload' })).text();
+    assert(/revoke execute on function public\.create_business\(text, text\) from public, anon, authenticated/.test(create),
+      'nobody signed in to the app can create a business');
+    assert(/already belongs to a business/.test(create), 'one login, one business');
+
+    const sp = await (await fetch('../supabase/functions/sharepoint-files/index.ts', { cache: 'reload' })).text();
+    assert(/if \(!\(await ownsSharePoint\(orgId\)\)\) return json\(\{ configured: false \}\);/.test(sp),
+      'only the business the SharePoint connection belongs to can file into it');
+    assert(sp.indexOf('ownsSharePoint(orgId)') < sp.indexOf("body.action === 'copy-job'"), 'and that is decided before any copy');
+  });
+
   // ---------- SharePoint client folders (v141, sharepoint-files, migration 038) ----------
   let __sp = null;
   const spMod = async () => (__sp || (__sp = await import('../supabase/functions/_shared/sharepoint-names.js')));

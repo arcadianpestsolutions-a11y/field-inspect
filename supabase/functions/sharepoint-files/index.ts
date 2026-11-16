@@ -267,6 +267,18 @@ async function copyInvoice(body: Row, orgId: string) {
   return json({ configured: true, folder, copied: 1 });
 }
 
+// Whether this organisation is the one the system-wide SharePoint secrets
+// belong to: the earliest organisation. A lookup that fails answers no.
+async function ownsSharePoint(orgId: string) {
+  try {
+    const { data, error } = await admin.from('organisations').select('id').order('created_at', { ascending: true }).limit(1).maybeSingle();
+    if (error || !data) return false;
+    return data.id === orgId;
+  } catch {
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
@@ -276,6 +288,11 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* empty */ }
 
   if (!configured()) return json({ configured: false });
+  // The SharePoint connection is ONE Microsoft tenant, set for the whole
+  // system: the first business's. Until each business can connect its own,
+  // nobody else's reports and photos may be filed into it. A business that is
+  // not the first is told the same thing as one with no connection at all.
+  if (!(await ownsSharePoint(orgId))) return json({ configured: false });
   try {
     if (body.action === 'status') {
       const { siteUrl } = await drive();
