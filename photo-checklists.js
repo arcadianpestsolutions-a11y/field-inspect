@@ -45,7 +45,7 @@
     { id: 'frontElevation', label: 'Front Elevation', area: 'outside' }, // handled by the existing front-photo prompt at Start Inspection
     { id: 'meterBox', label: 'Meter Box', area: 'outside', schemaSection: 'findings', schemaField: 'durableNoticePhotos',
       hint: 'Open it and photograph the inside of the door. The termite durable notice is usually there.',
-      okLabel: 'Notice found', issueLabel: 'No notice', rollup: { set: ['findings', 'durableNoticeFound'], ok: 'Yes', issue: 'No' } },
+      okLabel: 'Notice found', issueLabel: 'No notice', photoWhen: 'ok', rollup: { set: ['findings', 'durableNoticeFound'], ok: 'Yes', issue: 'No' } },
     { id: 'slabEdge', label: 'Slab Edge', area: 'outside', ...CONDUCIVE,
       hint: 'Each side of the house. Issue if the slab edge is covered by soil, paving, render or garden beds.',
       rollup: { set: ['conducive', 'slabEdgeComplies'], ok: 'Yes', issue: 'No', details: 'slabEdgeDetails' } },
@@ -159,6 +159,52 @@
     { id: 'subfloorConditions', label: 'Subfloor Damp / Ventilation', area: 'subfloor', hidden: true, ...CONDUCIVE },
     { id: 'wetAreas', label: 'Kitchen / Bathroom', area: 'inside', hidden: true, ...CONDUCIVE },
   ];
+
+  // What the client reads beside an item ticked OK (v151). Tal: an OK should
+  // still tell the client something typical, without the technician typing.
+  // Every sentence says what was SEEN on the day in the places that could be
+  // inspected; none of them says a pest is absent.
+  const OK_TEXT = {
+    slabEdge: 'The slab edge was visible and not covered by soil, paving or garden beds where inspected.',
+    weepHoles: 'Weep holes were open and clear where inspected.',
+    hotWater: 'The relief valve overflow was piped to a drain or away from the building.',
+    airCon: 'The unit’s drain was directed to a drain or away from the building.',
+    outsideTaps: 'No leaking taps were seen, and taps drained away from the building.',
+    downpipes: 'Downpipes and gutters appeared connected and were not discharging against the building.',
+    waterTank: 'No leak or overflow against the building was seen.',
+    siteDrainage: 'The ground fell away from the building and no ponding was seen.',
+    subfloorVents: 'Subfloor vents were open and unobstructed where inspected.',
+    trees: 'No evidence of timber pest activity was seen in the trees and stumps inspected.',
+    fences: 'No evidence of timber pest activity or damage was seen in the fences and retaining walls inspected.',
+    decksPosts: 'No evidence of timber pest activity or damage was seen in the decks, pergolas and posts inspected.',
+    sheds: 'No evidence of timber pest activity or damage was seen in the outbuildings inspected.',
+    baitStations: 'The stations seen were in place and in serviceable condition.',
+    storedGoods: 'Nothing was stored against the outside walls where inspected.',
+    surroundings: 'No bushland or large trees close to the building were noted.',
+    subfloorEntry: 'The subfloor was entered and inspected where clearance allowed.',
+    subfloorGeneral: 'The accessible subfloor was inspected.',
+    antCapping: 'Ant capping was in place and in sound condition where it could be seen.',
+    subfloorTimbers: 'No evidence of timber pest activity or damage was seen in the bearers, joists and flooring that could be inspected.',
+    subfloorSoil: 'The subfloor soil was dry and no ponding was seen.',
+    subfloorVentilation: 'Subfloor ventilation appeared adequate.',
+    subfloorPlumbing: 'No leaks were seen in the plumbing under the wet areas.',
+    subfloorDebris: 'No loose timber was seen lying on the subfloor ground.',
+    roofVoidEntry: 'The roof void was entered and inspected where clearance allowed.',
+    roofGeneral: 'The accessible roof void was inspected.',
+    roofTimbers: 'No evidence of timber pest activity or damage was seen in the roof timbers that could be inspected.',
+    roofObstructions: 'Nothing covered the roof timbers where inspected.',
+    roofEdges: 'The outer edges of the roof void were inspected as far as clearance allowed.',
+    roofLeaks: 'No water staining was seen on the roof timbers, sarking or ceiling.',
+    inBathrooms: 'No leaks were seen and moisture readings were normal.',
+    inKitchen: 'No leaks were seen under the sink.',
+    inLaundry: 'No leaks were seen and moisture readings were normal.',
+    inSkirtings: 'Skirtings and architraves sounded solid where they could be reached.',
+    inDoorsWindows: 'No damage or decay was seen in the door frames and window sills inspected.',
+    inWetWalls: 'Moisture readings on the walls behind the wet areas were normal.',
+    inGarage: 'No issue was seen in the attached garage.',
+    inMould: 'No mould growth was seen inside.',
+  };
+  for (const item of TERMITE_CHECKLIST) { if (OK_TEXT[item.id]) item.okText = OK_TEXT[item.id]; }
 
   // A termite job's single report can represent any one of four document
   // types (see DOCUMENT_TYPES in report.js) — an inspection, an action

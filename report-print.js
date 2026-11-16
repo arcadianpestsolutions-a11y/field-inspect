@@ -247,13 +247,17 @@
     const kinds = (window.WalkRollup && window.WalkRollup.KINDS) || [];
     const kindLabel = (id) => { const k = kinds.find((x) => x.id === id); return k ? k.label.toLowerCase() : id; };
 
+    // An Issue (or a found notice) with no photograph says why (v151).
+    function noPhotoText(r) { return r && r.noPhoto ? ' No photograph was taken: ' + r.noPhoto : ''; }
+
     function resultText(item) {
       const r = results[item.id];
-      if (r && r.r === 'ok') return item.okLabel ? item.okLabel : 'Inspected. No issue seen.';
+      // An OK prints the item's standard sentence (photo-checklists.js OK_TEXT).
+      if (r && r.r === 'ok') return (item.okLabel ? item.okLabel + '.' : (item.okText || 'Inspected. No issue seen.')) + noPhotoText(r);
       if (r && r.r === 'issue') {
         const what = (r.kinds || []).map(kindLabel).join(', ');
         const head = item.issueLabel ? item.issueLabel : ('Issue' + (what ? ': ' + what : ''));
-        return head + (r.note ? '. ' + r.note : '.');
+        return head + (r.note ? '. ' + r.note : '.') + noPhotoText(r);
       }
       if (r && r.r === 'nophoto') return 'Inspected. No photograph could be taken: ' + r.note;
       if (skipped.has(item.id)) return 'Not present at this property.';
@@ -261,7 +265,7 @@
     }
 
     let html = `<div class="section"><div class="section-head" style="background:#0f766e"><h2>What We Inspected</h2></div>`;
-    html += `<p>Each area of the property, with every item checked and what was seen. Photographs are in the sections that follow.</p>`;
+    html += `<p>Each area of the property, with every item checked and what was seen. Issues are photographed; the photographs are in the sections that follow.</p>`;
     for (const area of window.PhotoWalk.AREAS) {
       const mine = items.filter((i) => i.area === area.id && !i.hidden);
       if (!mine.length) continue;

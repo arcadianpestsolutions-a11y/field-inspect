@@ -3360,6 +3360,11 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .walk-check-label { font-size: 0.88rem; font-weight: 600; line-height: 1.25; }
 .walk-check-hint { font-size: 0.72rem; line-height: 1.3; color: rgba(226, 232, 240, 0.7); }
 .walk-mini { flex: 0 0 auto; min-height: 40px; min-width: 52px; padding: 0 10px; font-size: 0.8rem; }
+.walk-mini-na { min-width: 44px; opacity: 0.75; }
+.walk-mini.chosen-na { background: var(--bg-elev); border-color: var(--text-dim); color: var(--text); opacity: 1; }
+.walk-check-gone .walk-check-label { text-decoration: line-through; opacity: 0.6; }
+.walk-check-need { font-size: 0.72rem; font-weight: 700; color: #fbbf24; }
+.walk-tip-use { align-self: flex-start; min-height: 36px; }
 .walk-mini.chosen-ok { background: #3dff88; border-color: #3dff88; color: #032012; }
 .walk-mini.chosen-issue { background: #fbbf24; border-color: #fbbf24; color: #2b1a00; }
 .walk-todo { display: flex; flex-direction: column; gap: 6px; }

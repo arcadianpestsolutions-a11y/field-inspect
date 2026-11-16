@@ -27,6 +27,15 @@
 // ReportUI.recordAccessAnswer): floor type, subfloor drainage, and a
 // restricted-access line for an area that could not be entered.
 //
+// v151, Tal on 16 Nov 2026 after walking it on his phone: 37 photos is too
+// many for a report. Photograph ISSUES, not everything. So every area is now
+// ONE screen of ticks (the way Inside always was): OK, Issue or N/A per item,
+// and "Rest are OK" for the remainder. Only an Issue asks for a photo. The
+// photos that stay mandatory: the front (its own prompt), the durable notice
+// when one is found (`photoWhen: 'ok'`), any Issue, and why an area could not
+// be entered. An OK item prints a standard sentence for the client
+// (`okText`, photo-checklists.js), so the technician types nothing.
+//
 // Each step sets the zone for the photos taken on it, exactly as tapping its
 // chip does, so filing them into the report is unchanged. Back goes back, the
 // chips still jump anywhere, and a zone typed by hand still works for
@@ -102,6 +111,8 @@
         // What the AI suggested for this spot (v148), kept beside what the
         // technician tapped so the two can be compared later.
         if (TIPS.includes(r.ai)) results[id].ai = r.ai;
+        // Why an Issue (or a found notice) has no photo (v151).
+        if (typeof r.noPhoto === 'string' && r.noPhoto.trim()) results[id].noPhoto = r.noPhoto.trim().slice(0, 300);
       }
     }
     return {
@@ -165,16 +176,29 @@
       if (area.ask) steps.push({ kind: 'question', area: area.id, areaTitle: area.title, ask: area.ask, answers: area.answers });
       const answer = area.ask ? st.answers[area.id] : null;
       if (answer === 'no') continue;
-      for (const item of photos) {
-        if (answer === 'blocked') {
+      if (answer === 'blocked') {
+        // Could not get in: one photo of why, and nothing to tick.
+        for (const item of photos) {
           if (item.blockedHint) steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item, hint: item.blockedHint, blocked: true });
-        } else {
-          steps.push({ kind: 'photo', area: area.id, areaTitle: area.title, item, hint: item.hint });
         }
+      } else {
+        // The whole area on one screen (v151): tick each, photograph issues.
+        steps.push({ kind: 'checks', area: area.id, areaTitle: area.title, items: photos });
       }
     }
     steps.push({ kind: 'done', area: 'done', areaTitle: 'Done' });
     return steps;
+  }
+
+  // Whether this answer has to be backed by a photo (v151): any Issue, and
+  // an OK that means "found it" (the durable notice). A typed reason for
+  // having no photo stands in for one.
+  function needsPhoto(item, result) {
+    if (!result || result.noPhoto) return false;
+    // For the durable notice the answers run the other way: "found" is the
+    // one to photograph, and "no notice" has nothing to show.
+    if (item.photoWhen === 'ok') return result.r === 'ok';
+    return result.r === 'issue';
   }
 
   // A photo step is finished when the spot is not here, or it has a photo AND
@@ -189,7 +213,13 @@
       return step.blocked ? true : !!results[step.item.id];
     }
     if (step.kind === 'question') return !!state.answers[step.area];
-    if (step.kind === 'checks') return step.items.every((i) => !!results[i.id]);
+    if (step.kind === 'checks') {
+      return step.items.every((i) => {
+        if (state.skipped.includes(i.id)) return true;
+        if (!results[i.id]) return false;
+        return !needsPhoto(i, results[i.id]) || done.has(i.label);
+      });
+    }
     if (step.kind === 'notes') return !!state.notesSaved;
     return false;
   }
@@ -215,9 +245,16 @@
       } else if (step.kind === 'question') {
         out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'question', id: step.area, label: step.ask, need: 'answer' });
       } else if (step.kind === 'checks') {
-        const left = step.items.filter((i) => !st.results[i.id]);
-        out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'checks', id: 'checks',
-          label: left.length === 1 ? left[0].label : `${left.length} rooms and checks`, need: 'tick OK or Issue' });
+        const left = step.items.filter((i) => !st.results[i.id] && !st.skipped.includes(i.id));
+        if (left.length) {
+          out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'checks', id: 'checks',
+            label: left.length === 1 ? left[0].label : `${left.length} ${step.area === 'inside' ? 'rooms and checks' : 'items'}`, need: 'tick OK or Issue' });
+        }
+        for (const i of step.items) {
+          if (st.skipped.includes(i.id) || !needsPhoto(i, st.results[i.id]) || doneSet.has(i.label)) continue;
+          out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'checks', id: i.id, label: i.label,
+            need: st.results[i.id].r === 'issue' ? 'photo of the issue' : 'photo of it' });
+        }
       } else if (step.kind === 'notes') {
         out.push({ area: step.area, areaTitle: step.areaTitle, kind: 'notes', id: 'notes', label: 'What blocked the view inside', need: 'save the ticks' });
       }
@@ -273,8 +310,13 @@
         // A newer photo of the same spot has been sent since: that one wins.
         if (!tips[item.id] || tips[item.id].seq !== mine) return;
         if (tip) tips[item.id] = tip; else delete tips[item.id];
+        // On a tick list the answer is already in: keep what the AI made of
+        // the photo beside it.
+        const res = state.results[item.id];
+        if (tip && res && res.r !== 'nophoto' && res.ai !== tip.verdict) { res.ai = tip.verdict; persist(); }
         const step = steps[index];
         if (step && step.kind === 'photo' && step.item.id === item.id) render();
+        if (step && step.kind === 'checks' && noteOpenFor === item.id) render();
       };
       asked.then((r) => {
         if (!r || !TIPS.includes(r.verdict)) { settle(null); return; }
@@ -298,7 +340,8 @@
 
     function zoneFor(step) {
       if (step.kind === 'photo') return step.item.label;
-      if (step.kind === 'notes' || step.kind === 'checks') return INSIDE_ZONE;
+      if (step.kind === 'notes') return INSIDE_ZONE;
+      if (step.kind === 'checks') return step.area === 'inside' ? INSIDE_ZONE : '';
       return '';
     }
 
@@ -365,12 +408,36 @@
     }
 
     function setResult(id, r, note, kinds) {
+      const before = state.results[id];
+      // A reason for no photo belongs to the answer it was given for.
+      const prevNoPhoto = before && before.r === r ? before.noPhoto : null;
       state.results[id] = { r, at: Date.now() };
       const tip = tipFor(id);
       if (tip && r !== 'nophoto') state.results[id].ai = tip.verdict;
       if (note && note.trim()) state.results[id].note = note.trim().slice(0, 300);
       if (r === 'issue' && Array.isArray(kinds) && kinds.length) state.results[id].kinds = kinds.slice();
+      if (prevNoPhoto && r !== 'nophoto') state.results[id].noPhoto = prevNoPhoto;
       state.skipped = state.skipped.filter((x) => x !== id);
+      persist();
+    }
+
+    // Whatever is typed or ticked in the open issue box of a tick list is
+    // written to the answer. Called before anything redraws or moves on.
+    function commitDraft() {
+      if (!draft || !noteOpenFor || draft.id !== noteOpenFor) return;
+      const cur = state.results[draft.id];
+      if (!cur || cur.r === 'nophoto') return;
+      const step = steps[index];
+      if (!step || step.kind !== 'checks') return;
+      const same = (cur.note || '') === draft.note.trim() && (cur.kinds || []).join() === draft.kinds.join()
+        && (cur.noPhoto || '') === (draft.noPhoto || '').trim();
+      if (same) return;
+      const ai = cur.ai;
+      state.results[draft.id] = { r: cur.r, at: Date.now() };
+      if (draft.note.trim()) state.results[draft.id].note = draft.note.trim().slice(0, 300);
+      if (cur.r === 'issue' && draft.kinds.length) state.results[draft.id].kinds = draft.kinds.slice();
+      if ((draft.noPhoto || '').trim()) state.results[draft.id].noPhoto = draft.noPhoto.trim().slice(0, 300);
+      if (ai) state.results[draft.id].ai = ai;
       persist();
     }
 
@@ -527,60 +594,141 @@
         });
         container.appendChild(choices);
       } else if (step.kind === 'checks') {
-        container.appendChild(el('div', 'walk-title', 'Inside: tick each one'));
-        container.appendChild(el('div', 'walk-hint',
-          'No photos needed inside unless something is wrong. Mark an Issue, then photograph it.'));
+        const inside = step.area === 'inside';
+        container.appendChild(el('div', 'walk-title', (inside ? 'Inside' : step.areaTitle) + ': tick each one'));
+        container.appendChild(el('div', 'walk-hint', inside
+          ? 'No photos needed inside unless something is wrong. Mark an Issue, then photograph it.'
+          : 'Tap Issue only where something is wrong, then photograph it. Then “Rest are OK”.'));
         const list = el('div', 'walk-checks');
+        const closeBox = () => { commitDraft(); noteOpenFor = null; draft = null; setZone(zoneFor(step)); render(); };
         for (const item of step.items) {
           const result = state.results[item.id];
-          const row = el('div', 'walk-check');
+          const gone = state.skipped.includes(item.id);
+          const row = el('div', 'walk-check' + (gone ? ' walk-check-gone' : ''));
           row.dataset.item = item.id;
           const text = el('div', 'walk-check-text');
           text.appendChild(el('div', 'walk-check-label', item.label));
-          if (item.hint) text.appendChild(el('div', 'walk-check-hint', item.hint));
+          if (inside && item.hint) text.appendChild(el('div', 'walk-check-hint', item.hint));
+          if (!gone && needsPhoto(item, result) && !doneSet.has(item.label)) {
+            const need = el('div', 'walk-check-need', 'Needs a photo');
+            need.dataset.need = 'photo';
+            text.appendChild(need);
+          }
           row.appendChild(text);
-          const ok = btn('OK', 'walk-mini' + (result && result.r === 'ok' ? ' chosen-ok' : ''), () => { setResult(item.id, 'ok'); noteOpenFor = null; render(); });
+          const open = (r) => {
+            commitDraft();
+            setResult(item.id, r, result && result.r === r ? result.note : '', result && result.r === r ? result.kinds : null);
+            const wantsBox = needsPhoto(item, { r }) || (r === 'issue' && item.photoWhen !== 'ok');
+            noteOpenFor = wantsBox ? item.id : null;
+            draft = null;
+            // The next photo is of this item, so it is filed under it.
+            setZone(wantsBox ? item.label : zoneFor(step));
+            render();
+          };
+          const ok = btn(item.okLabel || 'OK', 'walk-mini' + (!gone && result && result.r === 'ok' ? ' chosen-ok' : ''), () => open('ok'));
           ok.dataset.result = 'ok';
-          const issue = btn('Issue', 'walk-mini' + (result && result.r === 'issue' ? ' chosen-issue' : ''), () => {
-            setResult(item.id, 'issue', result && result.note, result && result.kinds);
-            noteOpenFor = item.id;
-            // The next photo is of this issue, so it is filed under it.
-            setZone(item.label);
+          const issue = btn(item.issueLabel || 'Issue', 'walk-mini' + (!gone && result && result.r === 'issue' ? ' chosen-issue' : ''), () => open('issue'));
+          issue.dataset.result = 'issue';
+          const na = btn('N/A', 'walk-mini walk-mini-na' + (gone ? ' chosen-na' : ''), () => {
+            commitDraft();
+            if (!state.skipped.includes(item.id)) state.skipped.push(item.id);
+            delete state.results[item.id];
+            persist();
+            if (noteOpenFor === item.id) { noteOpenFor = null; draft = null; setZone(zoneFor(step)); }
             render();
           });
-          issue.dataset.result = 'issue';
+          na.dataset.result = 'nothere';
+          na.setAttribute('aria-label', item.label + ': not at this property');
           row.appendChild(ok);
           row.appendChild(issue);
+          row.appendChild(na);
           list.appendChild(row);
-          if (noteOpenFor === item.id) {
+
+          if (noteOpenFor === item.id && result && !gone) {
+            const isIssue = result.r === 'issue';
+            const got = doneSet.has(item.label);
             const wrap = el('div', 'walk-issue');
-            wrap.appendChild(el('div', 'walk-got', 'Photograph it now: the next photo is filed under ' + item.label + '.'));
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'walk-other walk-issue-note';
-            input.maxLength = 300;
-            input.placeholder = 'What is wrong? (optional)';
-            input.value = (result && result.note) || '';
-            const pickedKinds = ((result && result.kinds) || []).slice();
-            const chips = kindChips(item, pickedKinds, (k) => { setResult(item.id, 'issue', input.value, k); });
-            if (chips) wrap.appendChild(chips);
-            input.addEventListener('change', () => { setResult(item.id, 'issue', input.value, pickedKinds); });
-            wrap.appendChild(input);
+            wrap.dataset.box = item.id;
+            wrap.appendChild(el('div', 'walk-got', got
+              ? '✓ Photo saved under ' + item.label + '. Take another if it helps.'
+              : 'Photograph it now: the next photo is filed under ' + item.label + '.'));
+            if (!inside && item.hint) wrap.appendChild(el('div', 'walk-check-hint', item.hint));
+            if (!draft || draft.id !== item.id) draft = { id: item.id, note: result.note || '', kinds: (result.kinds || []).slice(), noPhoto: result.noPhoto || '' };
+            if (isIssue) {
+              // The AI's reading of the photo (v148, v151): offered, never applied.
+              const waiting = tips[item.id] && tips[item.id].wait;
+              const tip = tipFor(item.id);
+              if (waiting) {
+                const line = el('div', 'walk-tip walk-tip-wait', 'AI is looking at the photo… you do not have to wait.');
+                line.dataset.tip = 'wait';
+                wrap.appendChild(line);
+              } else if (tip) {
+                const says = tip.verdict === 'issue' ? 'AI suggests: ' + (tip.note || tip.reason)
+                  : tip.verdict === 'ok' ? 'AI could not see an issue in this photo. Check it shows the problem.'
+                    : 'AI cannot tell from this photo.';
+                const line = el('div', 'walk-tip walk-tip-' + tip.verdict, says);
+                line.dataset.tip = tip.verdict;
+                wrap.appendChild(line);
+                if (tip.verdict === 'issue' && tip.note) {
+                  const use = btn('Use this wording', 'walk-secondary walk-tip-use', () => {
+                    draft.note = tip.note;
+                    // Only kinds this item is actually asked about.
+                    const offered = (window.WalkRollup ? window.WalkRollup.kindsFor(item) : []).map((k) => k.id);
+                    for (const k of tip.kinds) if (offered.includes(k) && !draft.kinds.includes(k)) draft.kinds.push(k);
+                    commitDraft();
+                    render();
+                  });
+                  use.dataset.action = 'use-tip';
+                  wrap.appendChild(use);
+                }
+              }
+              const chips = kindChips(item, draft.kinds, () => commitDraft());
+              if (chips) wrap.appendChild(chips);
+              const input = document.createElement('input');
+              input.type = 'text';
+              input.className = 'walk-other walk-issue-note';
+              input.maxLength = 300;
+              input.placeholder = 'What is wrong? (optional)';
+              input.value = draft.note;
+              input.addEventListener('input', () => { if (draft) draft.note = input.value; });
+              input.addEventListener('change', () => commitDraft());
+              wrap.appendChild(input);
+            }
+            if (!got) {
+              const why = document.createElement('input');
+              why.type = 'text';
+              why.className = 'walk-other walk-nophoto-reason';
+              why.maxLength = 300;
+              why.placeholder = 'Can’t photograph it? Say why';
+              why.value = draft.noPhoto;
+              why.addEventListener('input', () => { if (draft) draft.noPhoto = why.value; });
+              why.addEventListener('change', () => { commitDraft(); render(); });
+              wrap.appendChild(why);
+            }
+            const doneBtn = btn('Done', 'walk-primary walk-issue-save', closeBox);
+            doneBtn.dataset.action = 'close-issue';
+            wrap.appendChild(doneBtn);
             list.appendChild(wrap);
           }
         }
         container.appendChild(list);
-        const left = step.items.filter((i) => !state.results[i.id]);
-        if (left.length) {
-          const all = btn(left.length === step.items.length ? 'All OK' : 'Rest are OK', 'walk-secondary', () => {
-            for (const i of left) setResult(i.id, 'ok');
+        const unanswered = step.items.filter((i) => !state.results[i.id] && !state.skipped.includes(i.id));
+        // "Rest are OK" never answers an item whose OK needs a photo (the
+        // durable notice): that one is answered on purpose.
+        const sweep = unanswered.filter((i) => i.photoWhen !== 'ok');
+        if (sweep.length) {
+          const all = btn(sweep.length === step.items.length ? 'All OK' : 'Rest are OK', 'walk-secondary', () => {
+            commitDraft();
+            for (const i of sweep) setResult(i.id, 'ok');
             noteOpenFor = null;
+            draft = null;
+            setZone(zoneFor(step));
             render();
           });
           all.dataset.action = 'all-ok';
           actions.appendChild(all);
         }
-        actions.appendChild(btn('Next ›', 'walk-primary', next, { disabled: left.length > 0 }));
+        actions.appendChild(btn('Next ›', 'walk-primary', () => { commitDraft(); next(); }, { disabled: unanswered.length > 0 }));
       } else if (step.kind === 'notes') {
         container.appendChild(el('div', 'walk-title', 'Inside: what blocked the view'));
         container.appendChild(el('div', 'walk-hint',
@@ -668,6 +816,17 @@
           const had = state.results[step.item.id];
           if (!had || had.r === 'nophoto') askTip(step.item, blob);
         }
+        // On a tick list (v151) the photo is of the open Issue: ask the AI to
+        // describe it. A photo also makes a typed "can't photograph" moot.
+        if (step && step.kind === 'checks' && noteOpenFor) {
+          const item = step.items.find((i) => i.id === noteOpenFor);
+          const res = item && state.results[item.id];
+          if (item && res && done().has(item.label)) {
+            if (draft && draft.id === item.id) draft.noPhoto = '';
+            if (res.noPhoto) { delete res.noPhoto; persist(); }
+            if (res.r === 'issue') askTip(item, blob);
+          }
+        }
         if (step && step.kind === 'photo' && done().has(step.item.label) && state.skipped.includes(step.item.id)) {
           state.skipped = state.skipped.filter((x) => x !== step.item.id);
           persist();
@@ -684,7 +843,20 @@
       // walk to that step; anything else leaves the walk where it is.
       zoneChanged(label) {
         const at = steps.findIndex((s) => s.kind === 'photo' && s.item.label === label);
-        if (at !== -1 && at !== index) { index = at; noteOpenFor = null; draft = null; render(); }
+        if (at !== -1 && at !== index) { index = at; noteOpenFor = null; draft = null; render(); return; }
+        // An item on a tick list (v151): go to its list, and open it if it is
+        // already an Issue, so the photo about to be taken belongs to it.
+        const list = steps.findIndex((s) => s.kind === 'checks' && s.items.some((i) => i.label === label));
+        if (list === -1) return;
+        const item = steps[list].items.find((i) => i.label === label);
+        const res = state.results[item.id];
+        const wantsBox = !!res && (item.photoWhen === 'ok' ? res.r === 'ok' : res.r === 'issue');
+        if (list === index && noteOpenFor === (wantsBox ? item.id : null)) return;
+        commitDraft();
+        index = list;
+        noteOpenFor = wantsBox ? item.id : null;
+        draft = null;
+        render();
       },
       setVisible(on) {
         const was = visible;
@@ -698,5 +870,5 @@
     };
   }
 
-  window.PhotoWalk = { isGuided, buildSteps, firstOpenIndex, outstanding, mergeStates, loadState, saveState, mount, AREAS, INSIDE_NOTES, INSIDE_ZONE };
+  window.PhotoWalk = { isGuided, buildSteps, firstOpenIndex, outstanding, needsPhoto, mergeStates, loadState, saveState, mount, AREAS, INSIDE_NOTES, INSIDE_ZONE };
 })();
