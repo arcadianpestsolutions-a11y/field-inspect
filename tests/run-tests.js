@@ -4422,6 +4422,61 @@
     }
   });
 
+  test('Photo walk: a half-typed note survives jumping to another area, and a photo taken before Issue is moved onto that item (v151)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const box = doc.createElement('div');
+    doc.body.appendChild(box);
+    const jobId = 'loose-test-' + Date.now();
+    const done = new Set();
+    let saved = null;
+    const refiled = [];
+    const walk = win.PhotoWalk.mount({
+      container: box, jobId, items, done: () => done, setZone: () => {},
+      saveNotes: async () => true, saveAnswer: async () => true, saveResults: (st) => { saved = st; },
+      refile: async (id, label) => { refiled.push(id + '>' + label); done.add(label); return true; },
+    });
+    const row = (id) => box.querySelector(`.walk-check[data-item="${id}"]`);
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+    try {
+      walk.start();
+      // Found by trying to break it: the area buttons dropped what was typed.
+      row('fences').querySelector('[data-result="issue"]').click();
+      const input = box.querySelector('.walk-issue-note');
+      input.value = 'Rotten sleeper at the back';
+      input.dispatchEvent(new win.Event('input', { bubbles: true })); // typed, never blurred
+      box.querySelector('[data-area="inside"]').click();
+      assertEqual(saved.results.fences.note, 'Rotten sleeper at the back', 'jumping to another area keeps the note');
+      box.querySelector('[data-area="outside"]').click();
+
+      // Photo first, then Issue: the photo is moved, not asked for again.
+      walk.photoSaved({ fake: 'photo' }, 'cap-1');
+      assert(/Tap Issue on the item it shows/.test(box.textContent), 'a photo with no item open says how to file it');
+      row('weepHoles').querySelector('[data-result="issue"]').click();
+      await settle();
+      assertEqual(refiled.join(','), 'cap-1>Weep Holes', 'tapping Issue files that photo under the item');
+      assert(!row('weepHoles').querySelector('[data-need="photo"]'), 'so it does not ask for another');
+      assert(/now filed under Weep Holes/.test(box.textContent), 'and says where it went');
+      box.querySelector('[data-action="close-issue"]').click();
+
+      // It is used once only, and not for an OK.
+      row('slabEdge').querySelector('[data-result="issue"]').click();
+      await settle();
+      assertEqual(refiled.length, 1, 'the next Issue does not get the same photo again');
+      assert(row('slabEdge').querySelector('[data-need="photo"]'), 'it asks for its own');
+      box.querySelector('[data-action="close-issue"]').click();
+      walk.photoSaved({ fake: 'photo' }, 'cap-2');
+      row('hotWater').querySelector('[data-result="ok"]').click();
+      await settle();
+      assertEqual(refiled.length, 1, 'an OK never takes a loose photo');
+    } finally {
+      walk.destroy();
+      box.remove();
+      try { win.localStorage.removeItem('scope-photo-walk:' + jobId); } catch (e) { /* nothing to clean */ }
+    }
+  });
+
   test('Photo walk: the AI describes the photo of an issue, and its wording is used only when the technician says so (v148, v151)', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

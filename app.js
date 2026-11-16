@@ -1958,6 +1958,15 @@
             try { await window.ReportUI.recordWalkState(startJobId, walkState); }
             catch (err) { if (window.ErrorLog) window.ErrorLog.note(err, 'photo walk: results'); }
           },
+          // A photo taken before Issue was tapped, moved onto the item it
+          // shows (v151). Its zone is what files it into the report.
+          refile: async (captureId, label) => {
+            const moved = await DB.updateCapture(captureId, { zone: label });
+            if (!moved) return false;
+            inspectionChecklistDone.add(label);
+            renderInspectionChecklist();
+            return true;
+          },
           // The AI's suggestion for one shot (v148). Off the air, in the
           // demo, or on any failure there is simply no suggestion.
           suggest: (blob, item) => {
@@ -2148,7 +2157,7 @@
         inspectionChecklistDone.add(zone);
         renderInspectionChecklist();
       }
-      if (photoWalk) photoWalk.photoSaved(blob);
+      if (photoWalk) photoWalk.photoSaved(blob, capture.id);
       toast('Photo saved');
       return;
     }

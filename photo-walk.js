@@ -283,7 +283,7 @@
   // saveAnswer(area, value) does the same for a question's answer.
   // saveResults(state): told after every change, to copy the walk into the
   // report. remote: the report's copy of the walk, if it has one.
-  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, suggest, remote, visible: startVisible }) {
+  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, suggest, refile, remote, visible: startVisible }) {
     let state = remote ? mergeStates(loadState(jobId), remote) : loadState(jobId);
     let steps = buildSteps(items, state);
     let index = firstOpenIndex(steps, done(), state);
@@ -298,6 +298,34 @@
     // it points at a button, the technician taps one.
     const tips = {};
     let tipSeq = 0;
+    // A photo taken on a tick list with no item open (v151): the technician
+    // photographed the problem first and will tap Issue next. Kept for a few
+    // minutes so that Issue can claim it instead of asking for another.
+    let loose = null;
+    const LOOSE_MS = 5 * 60 * 1000;
+
+    function say(text) {
+      banner = text;
+      clearTimeout(bannerTimer);
+      bannerTimer = setTimeout(() => { banner = ''; render(); }, 6000);
+    }
+
+    // Moves the loose photo onto this item, if there is one and the item has
+    // none yet. Resolves true when it did.
+    async function claimLoose(item, step) {
+      if (!loose || !refile || done().has(item.label)) return false;
+      if (Date.now() - loose.at > LOOSE_MS || loose.area !== step.area) { loose = null; return false; }
+      const mine = loose;
+      loose = null;
+      let ok = false;
+      try { ok = await refile(mine.id, item.label); } catch (e) { ok = false; }
+      if (!ok) return false;
+      say('✓ Your last photo is now filed under ' + item.label + '.');
+      const res = state.results[item.id];
+      if (res && res.r === 'issue') askTip(item, mine.blob);
+      render();
+      return true;
+    }
 
     function askTip(item, blob) {
       if (!suggest || !blob) return;
@@ -346,6 +374,8 @@
     }
 
     function go(i, { quiet } = {}) {
+      // Leaving a tick list with an issue box open keeps what was typed in it.
+      commitDraft();
       index = Math.max(0, Math.min(steps.length - 1, i));
       noteOpenFor = null;
       draft = null;
@@ -624,6 +654,7 @@
             // The next photo is of this item, so it is filed under it.
             setZone(wantsBox ? item.label : zoneFor(step));
             render();
+            if (needsPhoto(item, state.results[item.id])) claimLoose(item, step);
           };
           const ok = btn(item.okLabel || 'OK', 'walk-mini' + (!gone && result && result.r === 'ok' ? ' chosen-ok' : ''), () => open('ok'));
           ok.dataset.result = 'ok';
@@ -807,7 +838,7 @@
         render();
         return nextName;
       },
-      photoSaved(blob) {
+      photoSaved(blob, captureId) {
         // A photo of a spot that had been marked "not here" means it is here.
         const step = steps[index];
         // Ask the AI what it shows (v148), unless the spot is already answered
@@ -818,6 +849,10 @@
         }
         // On a tick list (v151) the photo is of the open Issue: ask the AI to
         // describe it. A photo also makes a typed "can't photograph" moot.
+        if (step && step.kind === 'checks' && !noteOpenFor && captureId) {
+          loose = { id: captureId, blob, at: Date.now(), area: step.area };
+          say('Photo saved. Tap Issue on the item it shows and it will be filed there.');
+        }
         if (step && step.kind === 'checks' && noteOpenFor) {
           const item = step.items.find((i) => i.id === noteOpenFor);
           const res = item && state.results[item.id];
@@ -866,7 +901,7 @@
       start() { if (visible) onShow(); else render(); },
       current() { return steps[index]; },
       state() { return cleanState(state); },
-      destroy() { clearTimeout(bannerTimer); container.innerHTML = ''; container.classList.add('hidden'); },
+      destroy() { clearTimeout(bannerTimer); loose = null; container.innerHTML = ''; container.classList.add('hidden'); },
     };
   }
 
