@@ -602,7 +602,7 @@
   // ---------- invoices ----------
   const INVOICE_LINES = {
     termite: [
-      { description: 'Timber pest inspection — AS 4349.3 / AS 3660.2', quantity: 1, unitAmountCents: 38000 },
+      { description: 'Termite inspection — AS 3660.2', quantity: 1, unitAmountCents: 38000 },
       { description: 'Written report and site plan', quantity: 1, unitAmountCents: 6500 },
     ],
     pest_treatment: [

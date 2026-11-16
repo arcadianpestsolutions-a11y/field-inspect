@@ -16,17 +16,19 @@
 //
 // Not legal advice. Have a solicitor read it before relying on it.
 
-export const AGREEMENT_VERSION = 'tpi-agreement-2026-10-13';
+export const AGREEMENT_VERSION = 'tpi-agreement-2026-11-16';
 
 export const str = (v) => (v == null ? '' : String(v)).trim();
 
 export const AGREEMENT_TERMS = [
   {
     heading: 'What we will inspect',
-    text: 'A visual, non-invasive timber pest inspection of the property, carried out in accordance with '
-      + 'AS 4349.3-2010 (Inspection of buildings — Timber pest inspections), using the inspection '
-      + 'methodology of AS 3660.2-2017 where it applies. It looks for the four timber pest categories in '
-      + 'that Standard: subterranean termites, dampwood termites, borers of seasoned timber, and wood decay fungi.',
+    text: 'A visual, non-invasive termite inspection of the property, carried out in accordance with '
+      + 'AS 3660.2-2017 (Termite management — In and around existing buildings and structures). It looks for '
+      + 'subterranean termites, their activity and damage, and conditions that make attack more likely. Borers, '
+      + 'wood decay and dampwood termites we see are noted as extra findings. A pre-purchase inspection is a '
+      + 'timber pest inspection in accordance with AS 4349.3-2010 (Inspection of buildings — Timber pest '
+      + 'inspections), which also covers borers of seasoned timber, wood decay fungi and dampwood termites.',
   },
   {
     heading: 'What it does not cover',

@@ -85,7 +85,9 @@ const REPORT_SCHEMA = [
     fields: [
       {
         id: 'inspectionType', label: 'Inspection Type Requested', type: 'static',
-        default: 'Standard Timber Pest Inspection in accordance with AS 4349.3-2010',
+        // v153: follows the Standard (inspectionStandard below). This is the
+        // regular inspection's line; a pre-purchase report prints its own.
+        default: 'Termite Inspection in accordance with AS 3660.2-2017',
       },
       { id: 'providerName', label: 'Inspection Provider', type: 'static', orgField: 'providerName' },
       { id: 'providerAddress', label: 'Address', type: 'static', orgField: 'providerAddress' },
@@ -844,7 +846,35 @@ function describeGate(field, gatedSections) {
   return '';
 }
 
-window.ReportSchemaUtils = {
+// Which Australian Standard an inspection report is written to (v153).
+// Tal, 16 Nov 2026: Scope is written to AS 3660.2 (termite management in and
+// around existing buildings). A pre-purchase inspection keeps AS 4349.3
+// (timber pest inspections), because that is the report a buyer's solicitor
+// or lender expects. Decided by the Inspection Classification answer; a
+// report with no answer yet is a regular AS 3660.2 inspection.
+const INSPECTION_STANDARDS = {
+  as3660: {
+    code: 'as3660',
+    cite: 'AS 3660.2-2017',
+    title: 'Termite Inspection Report',
+    coverLine: 'In Accordance with AS 3660.2-2017',
+    typeLine: 'Termite Inspection in accordance with AS 3660.2-2017',
+  },
+  as4349: {
+    code: 'as4349',
+    cite: 'AS 4349.3-2010',
+    title: 'Timber Pest Inspection Report',
+    coverLine: 'In Accordance with AS 4349.3-2010 and AS 3660.2-2017',
+    typeLine: 'Pre-purchase Timber Pest Inspection in accordance with AS 4349.3-2010',
+  },
+};
+function inspectionStandard(report) {
+  const sections = (report && report.sections) || {};
+  const answer = String((sections.property || {}).inspectionClassification || '');
+  return /^pre-purchase/i.test(answer) ? INSPECTION_STANDARDS.as4349 : INSPECTION_STANDARDS.as3660;
+}
+
+window.ReportSchemaUtils = { inspectionStandard, INSPECTION_STANDARDS,
   sectionsGatedBy, describeGate,
   isFieldVisible, isSectionVisible, visibleSchema,
   computeSectionStatus, defaultValuesForSection, YES_NO,

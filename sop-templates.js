@@ -20,7 +20,7 @@
       title: 'Timber pest inspection',
       category: 'Inspection',
       body: `## Purpose
-A visual, non-invasive timber pest inspection to AS 4349.3-2010, using the inspection methodology of AS 3660.2-2017 where it applies, reported the same way every time.
+A visual, non-invasive termite inspection to AS 3660.2-2017, reported the same way every time. A pre-purchase inspection is a timber pest inspection to AS 4349.3-2010 (choose "Pre-purchase" as the Inspection Classification and the report follows).
 
 ## Before the visit
 1. Book the job in Scope as a Timber Pest Inspection, with the client's email and a time.

@@ -79,10 +79,10 @@
   const DOCUMENT_TYPES = {
     timber_pest_inspection: {
       id: 'timber_pest_inspection',
-      title: 'Timber Pest Inspection Report',
+      title: 'Termite Inspection Report',
       short: 'Inspection',
-      standard: 'AS 4349.3-2010',
-      blurb: 'Full timber pest inspection — termites, borers and decay.',
+      standard: 'AS 3660.2-2017',
+      blurb: 'Termite inspection to AS 3660.2. Pre-purchase: timber pest inspection to AS 4349.3.',
       jobTypes: ['termite'],
       schema: () => window.REPORT_SCHEMA,
     },
@@ -206,7 +206,19 @@
   // so those three can never drift out of sync.
   function reportTitleFor(jobType, report) {
     const docType = documentTypeOf(report, { jobType });
+    // v153: the inspection is titled by the Standard it is written to.
+    if (docType && docType.id === 'timber_pest_inspection' && window.ReportSchemaUtils && window.ReportSchemaUtils.inspectionStandard) {
+      return window.ReportSchemaUtils.inspectionStandard(report).title;
+    }
     return docType ? docType.title : 'Inspection Report';
+  }
+
+  // The Standard a report cites under its title.
+  function standardCiteFor(docType, report) {
+    if (docType && docType.id === 'timber_pest_inspection' && window.ReportSchemaUtils && window.ReportSchemaUtils.inspectionStandard) {
+      return window.ReportSchemaUtils.inspectionStandard(report).cite;
+    }
+    return docType ? docType.standard : '';
   }
 
   // ---------- Element refs ----------
@@ -913,7 +925,7 @@
       if (reportTitle) reportTitle.textContent = reportTitleFor(job && job.jobType, currentReport);
       const docType = currentDocumentType();
       reportSubtitle.textContent = (job ? job.name : '')
-        + (docType && docType.standard ? '  ·  ' + docType.standard : '');
+        + (standardCiteFor(docType, currentReport) ? '  ·  ' + standardCiteFor(docType, currentReport) : '');
       renderSectionList();
       renderPhotoFilingBanner();
       updateAiDraftButton();
@@ -2794,6 +2806,14 @@
     values: pendingSectionValues,
     container: sectionFieldsEl,
 
+    // A static line whose wording depends on another answer (v153): the
+    // inspection type follows the Standard the report is written to.
+    staticDefault: (field) => {
+      if (field.id !== 'inspectionType' || !currentJob || currentJob.jobType === 'pest_treatment') return undefined;
+      const U = window.ReportSchemaUtils;
+      return U && U.inspectionStandard ? U.inspectionStandard(currentReport).typeLine : undefined;
+    },
+
     // The field types that are about pest control rather than about forms.
     // The shared renderer has no idea what a bait station or a mud map is,
     // and should not.
@@ -3724,7 +3744,7 @@
   function renderFixedTerms() {
     const wrap = document.createElement('div');
     wrap.className = 'terms-text';
-    wrap.innerHTML = (currentJob && currentJob.jobType === 'pest_treatment') ? window.ReportPrint.FIXED_TERMS_HTML_PEST : window.ReportPrint.FIXED_TERMS_HTML;
+    wrap.innerHTML = (currentJob && currentJob.jobType === 'pest_treatment') ? window.ReportPrint.FIXED_TERMS_HTML_PEST : window.ReportPrint.termsHtmlFor(currentReport);
     sectionFieldsEl.appendChild(wrap);
   }
 

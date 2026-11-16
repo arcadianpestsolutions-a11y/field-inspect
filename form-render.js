@@ -370,9 +370,10 @@
         // provider line on every report ever issued. On a compliance document
         // that is not a cosmetic bug.
         const stored = values[field.id];
+        const fallback = (o.staticDefault && o.staticDefault(field)) || field.default || '';
         val.textContent = (stored !== undefined && stored !== null && stored !== '')
           ? stored
-          : (field.default || '');
+          : fallback;
         row.appendChild(val);
       } else if (field.type === 'text') {
         const input = document.createElement('input');

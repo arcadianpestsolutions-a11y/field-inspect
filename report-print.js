@@ -38,6 +38,11 @@
     ({ reportTitleFor, schemaFor, visibleSchema, isFieldVisible, trackUrl, fmtAuditTime } = deps);
   }
 
+  // v153: two versions of clauses 1 and 2, one per Standard. The rest is shared.
+  const TERMS_3660_HEAD = `
+    <p><strong>1. Nature of the Inspection.</strong> This Report does not conclusively determine that the Property is free of termites or damage caused by termites. The Inspection undertaken was a Non-Invasive, visual termite inspection of the Property carried out in accordance with AS 3660.2-2017 (Termite management — In and around existing buildings and structures — Guidelines). Use of and reliance upon this Report is solely at the reader's own risk, and only the Client (not any third party) may rely on it.</p>
+    <p><strong>2. Scope and exclusions.</strong> This Inspection is for subterranean termites, evidence of their activity or damage, and conditions that make termite attack more likely. Borers of seasoned timber, wood decay fungi and dampwood termites are outside the scope of AS 3660.2-2017; where they were seen they are noted in this Report as additional findings, as a courtesy. A full timber pest inspection in accordance with AS 4349.3-2010 is available on request. Drywood termites and mould are also outside scope; where evidence of them or of any other pest is observed, it is noted (duty to warn) and a specific inspection by a suitably qualified provider is recommended.</p>`;
+
   const FIXED_TERMS_HTML = `
     <p><strong>1. Nature of the Inspection.</strong> This Report does not conclusively determine that the Property is free of timber pests or damage caused by timber pests. The Inspection undertaken was a Non-Invasive, visual Inspection of the Property carried out in accordance with AS 4349.3-2010 (Inspection of buildings — Timber pest inspections), using the inspection methodology of AS 3660.2-2017 where it applies to termite management in and around existing buildings. Use of and reliance upon this Report is solely at the reader's own risk, and only the Client (not any third party) may rely on it.</p>
     <p><strong>2. Scope and exclusions.</strong> This Inspection covers the four timber pest categories within the scope of AS 4349.3-2010: subterranean termites, dampwood termites, borers of seasoned timber, and wood decay fungi. Drywood termites and mould are outside the scope of that Standard. Where evidence of drywood termites or any other pest outside scope is observed, it is noted in the Report as a courtesy (duty to warn), and a specific inspection by a suitably qualified provider is recommended.</p>
@@ -47,6 +52,16 @@
     <p><strong>5. Limitations.</strong> The Inspection did not include areas that were inaccessible, obstructed, restricted, or deemed unsafe at the time of Inspection (see "Areas We Were Unable to Inspect"). Non-detectable Termite activity and damage may be present at the Property despite this Inspection.</p>
     <p class="empty-hint">This wording reflects common industry practice and the AS 3660.2-2017 records-retention requirement, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
   `;
+
+  // The terms for an inspection report, in the Standard it is written to.
+  function termsHtmlFor(report) {
+    const U = window.ReportSchemaUtils;
+    const std = U && U.inspectionStandard ? U.inspectionStandard(report) : null;
+    if (!std || std.code === 'as4349') return FIXED_TERMS_HTML;
+    // Clauses 2a onward are the same for both.
+    const rest = FIXED_TERMS_HTML.slice(FIXED_TERMS_HTML.indexOf('<p><strong>2a.'));
+    return TERMS_3660_HEAD + '\n    ' + rest;
+  }
 
   const FIXED_TERMS_HTML_PEST = `
     <p><strong>1. Nature of the treatment.</strong> This treatment was carried out using registered pest control products in accordance with label directions and relevant state/territory pesticide legislation. Pest treatments reduce pest activity but do not guarantee total elimination or prevent future reinfestation — ongoing monitoring and, where recommended, follow-up treatment may be required.</p>
@@ -95,13 +110,13 @@
   // path does, since it runs in the current page's lifetime).
   function buildReportBodyHtml(job, report, trackedUrls) {
     const isPestTreatment = job && job.jobType === 'pest_treatment';
-    // AS 3660.2 governs HOW an existing building is inspected; AS 4349.3
-    // governs WHAT the resulting timber pest report must contain. They work
-    // as a pair, and a pre-purchase report is judged against 4349.3 — citing
-    // only 3660.2 left the report silent on the standard it's measured by.
+    // v153: a regular inspection is written to AS 3660.2; a pre-purchase one
+    // to AS 4349.3, with 3660.2's methods (ReportSchemaUtils.inspectionStandard).
+    const U = window.ReportSchemaUtils;
+    const std = !isPestTreatment && U && U.inspectionStandard ? U.inspectionStandard(report) : null;
     const standardLine = isPestTreatment
       ? 'Chemical Application Record'
-      : 'In Accordance with AS 4349.3-2010 and AS 3660.2-2017';
+      : (std ? std.coverLine : 'In Accordance with AS 3660.2-2017');
     let html = `<div class="brand">${escapeHtml((window.Org && window.Org.businessName()) || "")}</div>
       <h1>${escapeHtml(reportTitleFor(job && job.jobType, report))}</h1>
       <p>${standardLine}<br>${escapeHtml(job ? job.address : '')}</p>`;
@@ -119,10 +134,12 @@
           ? `<p>See Pest Identification, Treatment Details, Chemicals / Products Used and Recommendations & Follow-Up sections for full detail.</p>`
           : `<p>See Findings & Observations, Areas We Were Unable to Inspect and Conducive Conditions sections for full detail.</p>`;
       } else if (section.id === 'terms') {
-        html += isPestTreatment ? FIXED_TERMS_HTML_PEST : FIXED_TERMS_HTML;
+        html += isPestTreatment ? FIXED_TERMS_HTML_PEST : termsHtmlFor(report);
       } else if (section.fixed) {
         for (const field of section.fields) {
-          const val = values[field.id] !== undefined ? values[field.id] : field.default;
+          let val = values[field.id] !== undefined ? values[field.id] : field.default;
+          // The inspection type follows the Standard unless one was stored.
+          if (values[field.id] === undefined && field.id === 'inspectionType' && std) val = std.typeLine;
           if (!val) continue;
           html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">${escapeHtml(val)}</div></div>`;
         }
@@ -196,7 +213,13 @@
             }
             html += `</tbody></table></div>`;
           } else {
-            html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">${escapeHtml(fmtVal(val))}</div></div>`;
+            let shown = val;
+            // A fixed line nobody stored (v153): its wording, and for the
+            // inspection type the wording of the Standard the report is to.
+            if (field.type === 'static' && !field.orgField && (shown === undefined || shown === null || shown === '')) {
+              shown = field.id === 'inspectionType' && std ? std.typeLine : field.default;
+            }
+            html += `<div class="field"><div class="field-label">${escapeHtml(field.label)}</div><div class="field-value">${escapeHtml(fmtVal(shown))}</div></div>`;
           }
         }
       }
@@ -403,5 +426,6 @@
     STYLE: REPORT_PDF_STYLE,
     FIXED_TERMS_HTML,
     FIXED_TERMS_HTML_PEST,
+    termsHtmlFor,
   };
 })();

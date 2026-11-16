@@ -2009,6 +2009,47 @@
       'it only has to be answered when somebody is actually on their own');
   });
 
+  test('Standard: an inspection is written to AS 3660.2, and a pre-purchase one to AS 4349.3, on screen and in the PDF (v153)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const U = win.ReportSchemaUtils;
+    const regular = { sections: { property: { inspectionClassification: 'Regular inspection (recommended at least every 12 months)' } } };
+    const pre = { sections: { property: { inspectionClassification: 'Pre-purchase / one-off inspection' } } };
+    assertEqual(U.inspectionStandard({ sections: {} }).cite, 'AS 3660.2-2017', 'no answer yet: AS 3660.2');
+    assertEqual(U.inspectionStandard(regular).cite, 'AS 3660.2-2017', 'a regular inspection: AS 3660.2');
+    assertEqual(U.inspectionStandard(pre).cite, 'AS 4349.3-2010', 'pre-purchase: AS 4349.3');
+    const classification = win.REPORT_SCHEMA.find((sec) => sec.id === 'property').fields.find((f) => f.id === 'inspectionClassification');
+    assert(classification.options.some((o) => /^Pre-purchase/.test(o)), 'the pre-purchase answer the switch reads is one the form offers');
+
+    const terms3660 = win.ReportPrint.termsHtmlFor(regular);
+    assert(/in accordance with AS 3660\.2-2017/.test(terms3660) && !/four timber pest categories within the scope of AS 4349/.test(terms3660),
+      'the regular terms cite AS 3660.2');
+    assert(/Borers of seasoned timber, wood decay fungi and dampwood termites are outside the scope of AS 3660\.2-2017/.test(terms3660)
+      && /noted in this Report as additional findings/.test(terms3660), 'borers and decay are kept, as extra findings');
+    for (const shared of ['2a. Non-invasive', '3. Records retention', 'Australian Consumer Law', '5. Limitations']) {
+      assert(terms3660.includes(shared), 'and the shared clauses stay: ' + shared);
+    }
+    assert(/four timber pest categories within the scope of AS 4349\.3-2010/.test(win.ReportPrint.termsHtmlFor(pre)), 'the pre-purchase terms cite AS 4349.3');
+
+    const job = await win.DB.addJob({ name: 'Standard Switch Job', jobType: 'termite' });
+    const report = { jobId: job.id, documentType: 'timber_pest_inspection', sections: regular.sections, auditLog: [] };
+    let html = win.ReportPrint.buildBodyHtml(job, report, []);
+    assert(/Termite Inspection Report/.test(html) && /In Accordance with AS 3660\.2-2017</.test(html), 'the PDF cover says Termite Inspection, AS 3660.2');
+    assert(/Termite Inspection in accordance with AS 3660\.2-2017/.test(html), 'and so does the inspection type line');
+    html = win.ReportPrint.buildBodyHtml(job, { ...report, sections: pre.sections }, []);
+    assert(/Timber Pest Inspection Report/.test(html) && /In Accordance with AS 4349\.3-2010 and AS 3660\.2-2017/.test(html), 'a pre-purchase PDF says Timber Pest Inspection, AS 4349.3');
+    assert(/Pre-purchase Timber Pest Inspection in accordance with AS 4349\.3-2010/.test(html), 'with its own type line');
+
+    await win.DB.saveReport({ jobId: job.id, documentType: 'timber_pest_inspection', sections: pre.sections, finalizedAt: null });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    assertEqual(doc.getElementById('report-title').textContent, 'Timber Pest Inspection Report', 'on screen the title follows the answer');
+    assert(/AS 4349\.3-2010/.test(doc.getElementById('report-subtitle').textContent), 'and so does the Standard under it');
+
+    const inv = await (await fetch('../invoicing.js', { cache: 'reload' })).text();
+    assert(/Termite Inspection and Report \(AS 3660\.2-2017\)/.test(inv), 'the default invoice line names AS 3660.2');
+  });
+
   test('Compliance: termite report covers all four AS 4349.3 timber pest categories', () => {
     const ids = window.REPORT_SCHEMA.flatMap((s) => s.fields.map((f) => f.id));
     for (const required of ['liveTermitesFound', 'workingsFound', 'borersFound', 'fungalDecayFound']) {
@@ -2044,7 +2085,7 @@
     await win.ReportUI.openReview(termite.id);
     await wait(150);
     assertEqual(doc.getElementById('report-title').textContent,
-      'Timber Pest Inspection Report', 'a termite job defaults to the timber pest inspection');
+      'Termite Inspection Report', 'a termite job defaults to the termite inspection (AS 3660.2, v153)');
 
     await win.ReportUI.openReview(termite.id, 'termite_action_plan');
     await wait(150);
@@ -5019,7 +5060,7 @@
     await win.ReportUI.openReview(job.id);
     await wait(300);
     assertEqual(doc.getElementById('report-title').textContent,
-      'Timber Pest Inspection Report', 'an unstamped termite report falls back to the inspection');
+      'Termite Inspection Report', 'an unstamped termite report falls back to the inspection');
     assert(doc.querySelectorAll('#report-section-list .report-section-item').length > 5,
       'and its sections still render');
   });
@@ -12611,7 +12652,7 @@
     const urls = [];
     const html = P.buildBodyHtml(job, report, urls);
     assert(/<h2>1\. /.test(html) && /<h2>2\. /.test(html), 'sections are numbered');
-    assert(/AS 4349\.3-2010/.test(html) && /Australian Consumer Law/.test(html), 'the terms are printed');
+    assert(/AS 3660\.2-2017/.test(html) && /Australian Consumer Law/.test(html), 'the terms are printed');
     assert(html.includes('Brick Veneer'), 'answers are printed');
     assert(!html.includes('"markers"'), 'sketch marker data never reaches the page');
     assert(html.includes(`class="sig" src="${sig}"`), 'the signature goes through imageSrc and prints');

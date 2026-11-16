@@ -74,7 +74,7 @@
   // amounts are remembered per job type below so the second invoice of a kind
   // is close to a one-tapper.
   const DEFAULT_LINES = {
-    termite: [{ description: 'Timber Pest Inspection and Report (AS 4349.3-2010)', quantity: 1 }],
+    termite: [{ description: 'Termite Inspection and Report (AS 3660.2-2017)', quantity: 1 }],
     pest_treatment: [{ description: 'General Pest Treatment', quantity: 1 }],
   };
 

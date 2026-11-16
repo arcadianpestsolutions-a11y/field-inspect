@@ -198,7 +198,7 @@ async function handleDraftReport(body: any) {
 
   const domainDescription = isPestTreatment
     ? 'a general pest treatment / chemical application report (residential, commercial, or industrial pest control, Australia)'
-    : 'a termite inspection report (AS 4349.3 / AS 3660.2-2017, Australia)';
+    : 'a termite inspection report (AS 3660.2-2017; AS 4349.3 for a pre-purchase inspection; Australia)';
   const zoneExamples = isPestTreatment
     ? '(e.g. "Kitchen", "Roof Void", "Exterior Perimeter")'
     : '(e.g. "Kitchen", "Subfloor", "Roof Void")';
@@ -380,7 +380,7 @@ async function handleCheckShot(body: any) {
   const kinds: { id: string; label: string }[] = (Array.isArray(body.kinds) ? body.kinds : [])
     .filter((k: any) => k && typeof k.id === 'string' && typeof k.label === 'string').slice(0, 8);
 
-  const systemPrompt = `You are assisting a licensed Australian timber pest inspector during a termite inspection (AS 3660.2 / AS 4349.3). The inspector has just photographed one spot on the property and must mark it "${okMeans}" or "${issueMeans}". You suggest which; the inspector decides.
+  const systemPrompt = `You are assisting a licensed Australian timber pest inspector during a termite inspection (AS 3660.2; AS 4349.3 for a pre-purchase inspection). The inspector has just photographed one spot on the property and must mark it "${okMeans}" or "${issueMeans}". You suggest which; the inspector decides.
 
 The spot: "${spot}".
 What the inspector was told to photograph and look for: ${hint || '(no further guidance)'}
