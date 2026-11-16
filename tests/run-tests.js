@@ -4141,9 +4141,9 @@
     assert(!all.some((st) => st.kind === 'photo'), 'no item is a photo step of its own any more: 37 photos was too many');
     assertEqual(all[all.length - 1].kind, 'done', 'and ends by saying what is left');
     assert(all.some((st) => st.kind === 'question' && st.area === 'subfloor'), 'it asks whether there is a subfloor');
-    assertEqual(all.filter((st) => st.kind === 'checks').length, 2, 'before the questions are answered: outside and inside');
-    assertEqual(PW.buildSteps(items, { ...fresh, answers: { subfloor: 'yes', roof: 'yes' } }).filter((st) => st.kind === 'checks').length, 4,
-      'and one list each for the subfloor and roof void once they are being entered');
+    assertEqual(all.filter((st) => st.kind === 'checks').map((st) => st.area).join(','), 'outside,subfloor,roof,inside', 'one list per area: four screens, not thirty-seven shots');
+    assertEqual(PW.buildSteps(items, { ...fresh, answers: { subfloor: 'no', roof: 'blocked' } }).filter((st) => st.kind === 'checks').map((st) => st.area).join(','), 'outside,inside',
+      'an area that is not there, or could not be entered, has no list');
     assertEqual(all.filter((st) => st.kind === 'notes').length, 1, 'the inside is one notes step');
 
     const slab = { ...fresh, answers: { subfloor: 'no' } };
@@ -4233,7 +4233,7 @@
     assertEqual(report.sections.walkthrough.results.meterBox.note, 'Sticker torn', 'with the note');
     assertEqual(report.sections.walkthrough.answers.subfloor, 'no', 'and the area answers');
     const todo = await win.ReportUI.walkOutstanding(job.id);
-    assert(Array.isArray(todo) && todo.some((t) => t.id === 'meterBox'), 'the report can say what the walk still needs (no photo of the meter box yet)');
+    assert(Array.isArray(todo) && todo.some((t) => t.kind === 'checks' && t.area === 'outside'), 'the report can say what the walk still needs (the rest of the outside list)');
     assert(!todo.some((t) => t.id === 'slabEdge'), 'and not what was marked Not here');
     assert(!todo.some((t) => t.area === 'subfloor'), 'nor a subfloor the house does not have');
 
