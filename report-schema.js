@@ -870,7 +870,8 @@ const INSPECTION_STANDARDS = {
 };
 function inspectionStandard(report) {
   const sections = (report && report.sections) || {};
-  const answer = String((sections.property || {}).inspectionClassification || '');
+  // The question is in Client Details (section 1).
+  const answer = String((sections.clientDetails || {}).inspectionClassification || '');
   return /^pre-purchase/i.test(answer) ? INSPECTION_STANDARDS.as4349 : INSPECTION_STANDARDS.as3660;
 }
 

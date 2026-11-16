@@ -2013,13 +2013,15 @@
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const U = win.ReportSchemaUtils;
-    const regular = { sections: { property: { inspectionClassification: 'Regular inspection (recommended at least every 12 months)' } } };
-    const pre = { sections: { property: { inspectionClassification: 'Pre-purchase / one-off inspection' } } };
+    const regular = { sections: { clientDetails: { inspectionClassification: 'Regular inspection (recommended at least every 12 months)' } } };
+    const pre = { sections: { clientDetails: { inspectionClassification: 'Pre-purchase / one-off inspection' } } };
     assertEqual(U.inspectionStandard({ sections: {} }).cite, 'AS 3660.2-2017', 'no answer yet: AS 3660.2');
     assertEqual(U.inspectionStandard(regular).cite, 'AS 3660.2-2017', 'a regular inspection: AS 3660.2');
     assertEqual(U.inspectionStandard(pre).cite, 'AS 4349.3-2010', 'pre-purchase: AS 4349.3');
-    const classification = win.REPORT_SCHEMA.find((sec) => sec.id === 'property').fields.find((f) => f.id === 'inspectionClassification');
-    assert(classification.options.some((o) => /^Pre-purchase/.test(o)), 'the pre-purchase answer the switch reads is one the form offers');
+    const classification = win.REPORT_SCHEMA.find((sec) => sec.id === 'clientDetails').fields.find((f) => f.id === 'inspectionClassification');
+    assert(classification && classification.options.some((o) => /^Pre-purchase/.test(o)), 'the switch reads the section the question is really in, and an answer it offers');
+    assertEqual(U.inspectionStandard({ sections: { property: { inspectionClassification: 'Pre-purchase / one-off inspection' } } }).cite, 'AS 3660.2-2017',
+      'an answer anywhere else is not the question');
 
     const terms3660 = win.ReportPrint.termsHtmlFor(regular);
     assert(/in accordance with AS 3660\.2-2017/.test(terms3660) && !/four timber pest categories within the scope of AS 4349/.test(terms3660),
