@@ -29,7 +29,13 @@
   // only is the sole reliable comparison. Mirrors DB._normalizePhone, and the
   // same expression is used by the SQL backfill in migration 029 so the app
   // and the database agree about who is the same person.
-  const normalisePhone = (phone) => String(phone || '').replace(/\D/g, '');
+  // "+61 412 345 678" is the same number again (v157): the country code
+  // becomes the 0 it stands for. Only ever widens a match, so the one-off
+  // backfill in migration 029 is unaffected.
+  const normalisePhone = (phone) => {
+    const d = String(phone || '').replace(/\D/g, '');
+    return /^61\d{9}$/.test(d) ? '0' + d.slice(2) : d;
+  };
   const normaliseEmail = (email) => String(email || '').trim().toLowerCase();
 
   // Same person if EITHER the phone or the email matches. A returning client

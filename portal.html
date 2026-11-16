@@ -270,8 +270,13 @@
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
+    // A signature is a line, not a tap (v157): a single touch drew nothing and
+    // still counted, sending a blank white box as the client's signature.
+    const MIN_INK = 12;
     let drawn = false;
     let drawing = false;
+    let last = null;
+    let ink = 0;
 
     // The canvas is 320 wide in its own coordinates but stretched to the width
     // of the card, so every pointer position has to be scaled or the line
@@ -284,8 +289,17 @@
         y: (p.clientY - r.top) * (canvas.height / r.height),
       };
     }
-    const start = (e) => { drawing = true; drawn = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
-    const move = (e) => { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); };
+    const start = (e) => { drawing = true; ink = 0; const p = pos(e); last = p; ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
+    const move = (e) => {
+      if (!drawing) return;
+      const p = pos(e);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ink += Math.hypot(p.x - last.x, p.y - last.y);
+      last = p;
+      if (ink >= MIN_INK) drawn = true;
+      e.preventDefault();
+    };
     const end = () => { drawing = false; };
 
     canvas.addEventListener('mousedown', start);

@@ -57,6 +57,23 @@ import {
   agreementFrom, agreementSignedOnSite, needsAgreement, AGREEMENT_VERSION,
 } from '../_shared/agreement.js';
 
+// The invoice's total exactly as the app works it out (invoicing.js): GST per
+// line, none on a GST-free line, half a cent away from zero. Before v157 this
+// added GST to GST-free lines and rounded a credit line a cent differently, so
+// the client could see a total that was not on their invoice.
+function invoiceTotalCents(lines: unknown, gstRegistered: boolean): number {
+  let cents = 0;
+  for (const line of (lines as Array<Record<string, unknown>>) || []) {
+    const sub = Math.round((Number(line.quantity) || 0) * (Number(line.unitAmountCents) || 0));
+    const raw = gstRegistered && !line.taxExempt ? sub * 0.1 : 0;
+    cents += sub + Math.sign(raw) * Math.round(Math.abs(raw));
+  }
+  return cents;
+}
+// Sent: in Xero, or emailed from Scope. Paid: Xero says so, or marked paid by hand.
+const invoiceSent = (i: Record<string, unknown>) => i.status !== 'draft' || !!i.emailed_at;
+const invoicePaid = (i: Record<string, unknown>) => String(i.xero_status || '').toUpperCase() === 'PAID' || !!i.paid_at;
+
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 // Who the client is dealing with comes from the business's own record, read for
@@ -224,30 +241,22 @@ async function handleGet(req: Request) {
 
   const { data: invoices, error: invoiceError } = await admin
     .from('invoices')
-    .select('id, number, status, xero_status, due_date, line_items, gst_registered')
-    .eq('job_id', access.job_id);
+    .select('id, number, status, xero_status, due_date, line_items, gst_registered, emailed_at, paid_at, created_at')
+    .eq('job_id', access.job_id)
+    .order('created_at', { ascending: false });
   if (invoiceError) console.error('[client-portal] could not read invoices:', invoiceError.message);
 
   // Totalled here rather than shipping line items, which name products and
   // quantities the client has no need for and which are the business's own
-  // pricing.
-  const GST_RATE = 0.1;
+  // pricing. The newest invoice the client has been sent.
   const invoice = (invoices || [])
-    .filter((i) => i.status !== 'draft')
-    .map((i) => {
-      const gstRegistered = i.gst_registered !== false;
-      let cents = 0;
-      for (const line of (i.line_items as Array<Record<string, number>>) || []) {
-        const sub = Math.round((Number(line.quantity) || 0) * (Number(line.unitAmountCents) || 0));
-        cents += sub + (gstRegistered ? Math.round(sub * GST_RATE) : 0);
-      }
-      return {
-        number: i.number,
-        totalCents: cents,
-        paid: String(i.xero_status || '').toUpperCase() === 'PAID',
-        dueDate: i.due_date,
-      };
-    })[0] || null;
+    .filter(invoiceSent)
+    .map((i) => ({
+      number: i.number,
+      totalCents: invoiceTotalCents(i.line_items, i.gst_registered !== false),
+      paid: invoicePaid(i),
+      dueDate: i.due_date,
+    }))[0] || null;
 
   // Only built when the link was issued asking for acceptance. A link sent
   // purely so somebody can read their report does not put a contract in front

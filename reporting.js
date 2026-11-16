@@ -100,8 +100,14 @@
     return new Date(y, m - 1, d).getTime();
   }
 
-  // Paid is a Xero fact, not a Scope one.
-  const isPaid = (inv) => String(inv.xeroStatus || '').toUpperCase() === 'PAID';
+  // Paid is Xero's word, or "Mark as paid" for money that never went through
+  // Xero (v121). Before v157 only Xero counted here, so cash marked paid by
+  // hand sat in Outstanding and Overdue for ever.
+  const isPaid = (inv) => String(inv.xeroStatus || '').toUpperCase() === 'PAID' || !!inv.paidAt;
+  // Sent means the client has been asked for the money, or it is in Xero. An
+  // invoice emailed straight from Scope kept status 'draft' until v157, so for
+  // a business without Xero nothing ever reached Outstanding.
+  const isSent = (inv) => inv.status === 'sent' || !!inv.emailedAt || !!inv.xeroInvoiceId;
   const isVoided = (inv) => String(inv.xeroStatus || '').toUpperCase() === 'VOIDED';
 
   function summarise(opts) {
@@ -138,7 +144,7 @@
     // ---- money ----
     const invoicedInPeriod = invoices.filter((i) => inRange(i.createdAt, range));
     const invoicedCents = invoicedInPeriod.reduce((sum, i) => sum + totalCents(i), 0);
-    const drafts = invoicedInPeriod.filter((i) => i.status === 'draft');
+    const drafts = invoicedInPeriod.filter((i) => !isSent(i) && !isPaid(i));
     const draftCents = drafts.reduce((sum, i) => sum + totalCents(i), 0);
     const paid = invoicedInPeriod.filter(isPaid);
     const paidCents = paid.reduce((sum, i) => sum + totalCents(i), 0);
@@ -146,7 +152,7 @@
     // Outstanding and overdue are deliberately NOT restricted to the period.
     // An invoice from April that is still unpaid in October is the whole
     // point of the number, and a period filter would hide it.
-    const outstanding = invoices.filter((i) => i.status === 'sent' && !isPaid(i));
+    const outstanding = invoices.filter((i) => isSent(i) && !isPaid(i));
     const overdue = outstanding.filter((i) => {
       const due = isoToLocalMs(i.dueDate);
       return due !== null && due < startOfDay(new Date(now)).getTime();
@@ -209,7 +215,7 @@
         overdueCount: overdue.length,
         // Said out loud rather than assumed, so a screen built on this can
         // tell the technician where the figure came from.
-        paidFrom: 'xero',
+        paidFrom: 'xero-or-marked',
       },
 
       notInvoiced: {

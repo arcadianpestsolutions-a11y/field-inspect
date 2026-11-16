@@ -226,7 +226,13 @@
         hasSignature = true;
       }
 
+      // A signature is a line, not a tap (v157): a single touch drew nothing
+      // and still counted as signed, saving a blank white box as the client's
+      // signature. Ink counts once the pen has travelled a few pixels.
+      const MIN_INK = 12;
       let drawing = false;
+      let last = null;
+      let ink = 0;
       function pos(e) {
         const rect = canvas.getBoundingClientRect();
         const point = e.touches ? e.touches[0] : e;
@@ -235,8 +241,17 @@
           y: (point.clientY - rect.top) * (canvas.height / rect.height),
         };
       }
-      function start(e) { drawing = true; hasSignature = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
-      function move(e) { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
+      function start(e) { drawing = true; ink = 0; const p = pos(e); last = p; ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
+      function move(e) {
+        if (!drawing) return;
+        const p = pos(e);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ink += Math.hypot(p.x - last.x, p.y - last.y);
+        last = p;
+        if (ink >= MIN_INK) hasSignature = true;
+        e.preventDefault();
+      }
       function end() {
         if (!drawing) return;
         drawing = false;

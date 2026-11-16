@@ -999,6 +999,9 @@
     // both to match would split one client into several.
     assert(C.isSameClient({ phone: '0412 345 678' }, { phone: '(04) 1234-5678' }),
       'the same number written two ways is one number');
+    assert(C.isSameClient({ phone: '+61 412 345 678' }, { phone: '0412345678' }),
+      'and with the country code, it is still one number (v157)');
+    assertEqual(window.DB._normalizePhone('+61 2 9127 1320'), '0291271320', 'a landline with +61 too');
     assert(C.isSameClient({ email: 'Jane@X.com' }, { email: 'jane@x.com' }),
       'email is compared case-insensitively');
     assert(C.isSameClient({ phone: '0400 111 222', email: 'a@b.com' }, { phone: '0499 999 999', email: 'a@b.com' }),
@@ -1686,11 +1689,38 @@
     const s = RP().summarise({ jobs: [], reports: [], invoices, now, period: 'this-month' });
 
     assertEqual(s.money.paidCents, 20000, 'only what Xero says is paid');
-    assertEqual(s.money.paidFrom, 'xero', 'and the screen is told where that came from');
+    assertEqual(s.money.paidFrom, 'xero-or-marked', 'and the screen is told where that came from');
     assertEqual(s.money.outstandingCount, 1, 'authorised but unpaid');
     assertEqual(s.money.draftCount, 1, 'a draft is written but not asked for');
     // A voided invoice is not money, not outstanding, and not invoiced.
     assertEqual(s.money.invoicedCents, 20000 + 30000 + 10000, 'a voided invoice is excluded entirely');
+  });
+
+  test('Business: cash marked paid is paid, and an invoice emailed without Xero is owed (v157)', () => {
+    const now = avAt(2027, 3, 20);
+    const invoices = [
+      // Emailed from Scope, no Xero: an older one kept status 'draft'.
+      rpInvoice('emailed', 'j1', avAt(2027, 3, 1), 25000, { status: 'draft', emailedAt: avAt(2027, 3, 1), dueDate: '2027-03-15' }),
+      // Cash on the day, marked paid by hand, never in Xero.
+      rpInvoice('cash', 'j2', avAt(2027, 3, 2), 18000, { status: 'draft', emailedAt: avAt(2027, 3, 2), dueDate: '2027-03-16', paidAt: avAt(2027, 3, 3) }),
+      rpInvoice('draft', 'j3', avAt(2027, 3, 7), 10000, { status: 'draft' }),
+    ];
+    const s = RP().summarise({ jobs: [], reports: [], invoices, now, period: 'this-month' });
+    assertEqual(s.money.paidCents, 18000, 'marked paid counts as paid');
+    assertEqual(s.money.outstandingCount, 1, 'the emailed one is owed, the cash one is not');
+    assertEqual(s.money.overdueCents, 25000, 'and the emailed one is overdue, never the paid one');
+    assertEqual(s.money.draftCount, 1, 'only the one nobody sent is a draft');
+  });
+
+  test('Client page: the invoice it shows adds up like the invoice, and knows emailed and marked paid (v157)', async () => {
+    for (const fn of ['client-portal', 'portal-chat']) {
+      const src = await (await fetch(`../supabase/functions/${fn}/index.ts`, { cache: 'reload' })).text();
+      assert(/!line\.taxExempt/.test(src) && /Math\.sign\(raw\) \* Math\.round\(Math\.abs\(raw\)\)/.test(src),
+        `${fn}: no GST on a GST-free line, and a credit rounds the way the invoice does`);
+      assert(/i\.status !== 'draft' \|\| !!i\.emailed_at/.test(src), `${fn}: an emailed invoice is shown`);
+      assert(/=== 'PAID' \|\| !!i\.paid_at/.test(src), `${fn}: cash marked paid reads as paid`);
+      assert(/\.order\('created_at', \{ ascending: false \}\)/.test(src), `${fn}: the newest invoice, not any one`);
+    }
   });
 
   test('Business: a client who ignored the reminder is counted separately from merely overdue', () => {
@@ -1814,9 +1844,21 @@
     const idOf = async () => (await win.DB.getAllSwms())[0].id;
     assertEqual((await win.DB.getSwms(await idOf())).signedAt, null, 'unsigned until somebody signs');
 
+    // v157: a tap is not a signature. It drew nothing and still stamped the
+    // statement signed, with a blank white box as the signature.
     await swmsOpenSection(doc, 'Review and Sign-off');
-    const canvas = doc.querySelector('#swms-section-fields .signature-canvas');
-    const r = canvas.getBoundingClientRect();
+    let canvas = doc.querySelector('#swms-section-fields .signature-canvas');
+    let r = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true, clientX: r.left + 40, clientY: r.top + 40 }));
+    win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }));
+    await wait(100);
+    doc.getElementById('swms-section-save-btn').click();
+    await wait(400);
+    assertEqual((await win.DB.getSwms(await idOf())).signedAt, null, 'a tap with no line drawn does not sign it');
+
+    await swmsOpenSection(doc, 'Review and Sign-off');
+    canvas = doc.querySelector('#swms-section-fields .signature-canvas');
+    r = canvas.getBoundingClientRect();
     const ev = (type, x, y) => canvas.dispatchEvent(new win.MouseEvent(type, { bubbles: true, clientX: r.left + x, clientY: r.top + y }));
     ev('mousedown', 20, 60); ev('mousemove', 90, 30); ev('mousemove', 150, 70);
     win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }));
@@ -1827,6 +1869,9 @@
     const signed = await win.DB.getSwms(await idOf());
     assert(String(signed.sections.swmsSignoff.technicianSignature).startsWith('data:image'),
       'and the signature itself is stored, not just the fact of it');
+    const portal = await (await fetch('../portal.html', { cache: 'reload' })).text();
+    assert(/if \(ink >= MIN_INK\) drawn = true;/.test(portal) && !/drawing = true; drawn = true;/.test(portal),
+      'the client page needs a drawn line too, not a tap');
 
     await win.SwmsUI.open();
     await wait(300);
@@ -2558,6 +2603,23 @@
     const saved = await win.DB.getInvoicesForJob(job.id);
     assertEqual(saved.length, 1, 'invoice should be persisted on open');
     assert(/^INV-\d{4}-\d{4}$/.test(saved[0].number), `unexpected invoice number: ${saved[0].number}`);
+
+    // v157: the line's own amount follows the typing, and the printed copy is a
+    // proper tax invoice only when GST applies.
+    const amt = doc.querySelector('#invoice-lines .invoice-line input[inputmode=decimal]');
+    amt.value = '200';
+    amt.dispatchEvent(new win.Event('input'));
+    assertEqual(doc.querySelector('.invoice-line-total').textContent, '$200.00', 'the line amount updates while typing');
+    let html = win.InvoiceUI.printableHtml();
+    assert(/<h1>Tax Invoice<\/h1>/.test(html) && /Total incl GST/.test(html), 'GST-registered prints as a tax invoice');
+    assert(!/Issued: \d{4}-/.test(html), 'dates print as a day, not 2026-11-17');
+    const gst = doc.getElementById('invoice-gst-registered');
+    gst.checked = false;
+    gst.dispatchEvent(new win.Event('change'));
+    html = win.InvoiceUI.printableHtml();
+    assert(/<h1>Invoice<\/h1>/.test(html) && !/GST \(10%\)/.test(html), 'not registered for GST: never called a tax invoice');
+    gst.checked = true;
+    gst.dispatchEvent(new win.Event('change'));
   });
 
   // =====================================================================
@@ -10928,6 +10990,25 @@
     doc.getElementById('client-new-btn').click(); await wait(500);
     doc.getElementById('client-back-btn').click(); await wait(500);
     assertEqual((await win.DB.getClients()).length, clientsBefore, 'a blank client is removed on Back');
+  });
+
+  test('Clients: what is typed is kept on Back, not dropped (v157)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView(); await wait(150);
+    doc.getElementById('open-clients-btn').click(); await wait(300);
+    doc.getElementById('client-new-btn').click(); await wait(500);
+    const type = (id, v) => {
+      const input = doc.querySelector(`#client-fields [data-field-row="${id}"] input`);
+      input.value = v;
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+    };
+    type('name', 'Back Button Client');
+    type('phone', '0400 123 456');
+    doc.getElementById('client-back-btn').click(); await wait(500);
+    const saved = (await win.DB.getClients()).find((c) => c.name === 'Back Button Client');
+    assert(saved && saved.phone === '0400 123 456', 'Back saved the name and phone that were typed');
+    await win.DB.deleteClient(saved.id);
   });
 
   test('Blank records: an enquiry with something typed in it is kept', async () => {

@@ -31,6 +31,23 @@ import {
   BUSY_REPLY, CHAT_MODEL, FALLBACK_REPLY, LIMIT_REPLY, LIMITS, PROMPT_VERSION, runChat,
 } from '../_shared/portal-chat.js';
 
+// The invoice's total exactly as the app works it out (invoicing.js): GST per
+// line, none on a GST-free line, half a cent away from zero. Before v157 this
+// added GST to GST-free lines and rounded a credit line a cent differently, so
+// the client could see a total that was not on their invoice.
+function invoiceTotalCents(lines: unknown, gstRegistered: boolean): number {
+  let cents = 0;
+  for (const line of (lines as Array<Record<string, unknown>>) || []) {
+    const sub = Math.round((Number(line.quantity) || 0) * (Number(line.unitAmountCents) || 0));
+    const raw = gstRegistered && !line.taxExempt ? sub * 0.1 : 0;
+    cents += sub + Math.sign(raw) * Math.round(Math.abs(raw));
+  }
+  return cents;
+}
+// Sent: in Xero, or emailed from Scope. Paid: Xero says so, or marked paid by hand.
+const invoiceSent = (i: Record<string, unknown>) => i.status !== 'draft' || !!i.emailed_at;
+const invoicePaid = (i: Record<string, unknown>) => String(i.xero_status || '').toUpperCase() === 'PAID' || !!i.paid_at;
+
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
@@ -142,17 +159,18 @@ async function contextFor(g: Gate) {
 
   const { data: invoices } = await admin
     .from('invoices')
-    .select('number, status, xero_status, due_date, line_items, gst_registered')
-    .eq('job_id', job.id);
-  const inv = (invoices || []).filter((i: Row) => i.status !== 'draft')[0];
+    .select('number, status, xero_status, due_date, line_items, gst_registered, emailed_at, paid_at, created_at')
+    .eq('job_id', job.id)
+    .order('created_at', { ascending: false });
+  const inv = (invoices || []).filter(invoiceSent)[0];
   let invoice = null;
   if (inv) {
-    let cents = 0;
-    for (const line of (inv.line_items as Row[]) || []) {
-      const sub = Math.round((Number(line.quantity) || 0) * (Number(line.unitAmountCents) || 0));
-      cents += sub + (inv.gst_registered !== false ? Math.round(sub * 0.1) : 0);
-    }
-    invoice = { number: inv.number, totalCents: cents, paid: String(inv.xero_status || '').toUpperCase() === 'PAID', dueDate: inv.due_date };
+    invoice = {
+      number: inv.number,
+      totalCents: invoiceTotalCents(inv.line_items, inv.gst_registered !== false),
+      paid: invoicePaid(inv),
+      dueDate: inv.due_date,
+    };
   }
 
   let quote = null;

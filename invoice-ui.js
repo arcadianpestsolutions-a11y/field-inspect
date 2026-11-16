@@ -114,6 +114,7 @@
       qty.addEventListener('input', () => {
         const n = Number(qty.value);
         line.quantity = Number.isFinite(n) ? Math.min(I.MAX_QUANTITY, Math.max(0, n)) : 0;
+        showLineTotal();
         renderTotals();
       });
       qtyWrap.appendChild(qty);
@@ -131,6 +132,7 @@
       // the field mid-keystroke — that fights the cursor. Tidy up on blur.
       amt.addEventListener('input', () => {
         line.unitAmountCents = I.centsFromInput(amt.value);
+        showLineTotal();
         renderTotals();
       });
       amt.addEventListener('blur', () => {
@@ -152,7 +154,10 @@
 
       const lineTotal = document.createElement('div');
       lineTotal.className = 'invoice-line-total';
-      lineTotal.textContent = I.formatMoney(I.lineSubtotalCents(line));
+      // Kept up to date while typing (v157): it used to stay at $0.00 until
+      // something else redrew the screen.
+      function showLineTotal() { lineTotal.textContent = I.formatMoney(I.lineSubtotalCents(line)); }
+      showLineTotal();
       card.appendChild(lineTotal);
 
       linesWrap.appendChild(card);
@@ -426,12 +431,12 @@
     if (!window.Xero) { toast('Xero is not configured.'); return; }
     const totals = I.computeTotals(current);
     if (totals.totalCents <= 0) { toast('Add at least one line with an amount before sending to Xero.'); return; }
-    if (!current.clientName.trim()) { toast('Enter who the invoice is billed to first.'); return; }
+    if (!String(current.clientName || '').trim()) { toast('Enter who the invoice is billed to first.'); return; }
 
     // Pushing into a real accounting system is not undoable from here, so it
     // is always an explicit confirmation naming the amount and the client.
     const ok = await askConfirm(
-      `${current.number}\n${current.clientName}\n${I.formatMoney(totals.totalCents)} incl GST\n\n` +
+      `${current.number}\n${current.clientName}\n${I.formatMoney(totals.totalCents)}${totals.gstRegistered ? ' incl GST' : ''}\n\n` +
       `It will not be sent to the client — you review and send it from Xero.`,
       { title: 'Create a DRAFT invoice in Xero?', okLabel: 'Send to Xero' }
     );
@@ -483,6 +488,9 @@
         current.emailProviderId = sendResult.id;
         current.emailedAt = Date.now();
         current.emailStatus = 'sent';
+        // Emailed is sent: it is owed from now on (v157). It stayed a draft,
+        // so it never showed as outstanding or on the client's page.
+        current.status = 'sent';
         current = await save();
         renderEmailStatus();
       }
@@ -516,8 +524,18 @@
     @media print{.no-print{display:none;}}
   `;
 
+  // "2026-11-17" as "17 Nov 2026" on the printed copy.
+  const printDay = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? fmtDay(new Date(iso + 'T00:00:00')) : (iso || ''));
+
   function buildInvoiceHtml() {
     const totals = I.computeTotals(current);
+    // A tax invoice has to say who issued it and their ABN (ATO). A business
+    // that is not registered for GST must not call it a tax invoice at all.
+    const org = (window.Org && window.Org.get()) || {};
+    const issuer = [
+      org.abn ? 'ABN ' + org.abn : '',
+      org.address, org.phone, org.email,
+    ].filter(Boolean).map((x) => `<div class="muted">${escapeHtml(x)}</div>`).join('');
     const rows = current.lineItems.map((l) => `
       <tr>
         <td>${escapeHtml(l.description || '')}${l.taxExempt ? ' <span class="muted">(GST-free)</span>' : ''}</td>
@@ -528,7 +546,8 @@
 
     return `
       <div class="brand">${escapeHtml((window.Org && window.Org.businessName()) || "")}</div>
-      <h1>Tax Invoice</h1>
+      ${issuer}
+      <h1>${totals.gstRegistered ? 'Tax Invoice' : 'Invoice'}</h1>
       <div class="muted">${escapeHtml(current.number)}</div>
       <div class="meta">
         <div>
@@ -538,8 +557,8 @@
           <div class="muted">${escapeHtml(current.clientEmail || '')}</div>
         </div>
         <div>
-          <div class="muted">Issued: ${escapeHtml(current.issueDate || '')}</div>
-          <div class="muted">Due: ${escapeHtml(current.dueDate || '')}</div>
+          <div class="muted">Issued: ${escapeHtml(printDay(current.issueDate))}</div>
+          <div class="muted">Due: ${escapeHtml(printDay(current.dueDate))}</div>
         </div>
       </div>
       <table>
@@ -549,7 +568,7 @@
       <div class="totals">
         <div><span>Subtotal</span><span>${I.formatMoney(totals.subtotalCents)}</span></div>
         ${totals.gstRegistered ? `<div><span>GST (10%)</span><span>${I.formatMoney(totals.gstCents)}</span></div>` : ''}
-        <div class="grand"><span>Total</span><span>${I.formatMoney(totals.totalCents)}</span></div>
+        <div class="grand"><span>${totals.gstRegistered ? 'Total incl GST' : 'Total'}</span><span>${I.formatMoney(totals.totalCents)}</span></div>
       </div>
     `;
   }
@@ -594,6 +613,7 @@
 
   // ---------- public entry ----------
   window.InvoiceUI = {
+    printableHtml: () => (current ? buildInvoiceHtml() : ''),
     // Opens the newest invoice for a job, or builds a fresh draft.
     async open(jobId) {
       returnToJobId = jobId;

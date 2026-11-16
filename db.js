@@ -513,8 +513,12 @@ const DB = {
   // 5678" — digits-only comparison is the only reliable match. Email is
   // compared case-insensitively, since "Jane@x.com" and "jane@x.com" are
   // the same inbox.
+  // "+61 412 345 678" and "0412 345 678" are one number too (v157): the
+  // country code is swapped for the 0 it replaces, or a client who wrote it
+  // the international way once became two people.
   _normalizePhone(phone) {
-    return String(phone || '').replace(/\D/g, '');
+    const d = String(phone || '').replace(/\D/g, '');
+    return /^61\d{9}$/.test(d) ? '0' + d.slice(2) : d;
   },
   _normalizeEmail(email) {
     return String(email || '').trim().toLowerCase();

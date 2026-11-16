@@ -102,9 +102,9 @@
         ${tile('Overdue', money(m.overdueCents), `${m.overdueCount} past the due date`, m.overdueCount ? 'bad' : null)}
       </div>
       <p class="business-note">
-        Invoiced and drafts come from Scope. <strong>Paid and overdue come from Xero</strong>, and are only as
-        fresh as the last time each invoice was synced — an invoice paid this morning will still read as
-        outstanding here until it syncs.
+        Invoiced and drafts come from Scope. <strong>Paid comes from Xero</strong>, or from
+        "Mark as paid" on the invoice for money taken outside Xero. Xero's figures are only as fresh as
+        the last time each invoice was synced, so one paid this morning can still read as outstanding.
       </p>`);
 
     // ---- work ----

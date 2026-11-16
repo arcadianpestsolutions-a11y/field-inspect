@@ -159,7 +159,7 @@
         <span class="section-icon" style="background:${job.jobType === 'pest_treatment' ? '#166534' : '#b45309'}">${job.jobType === 'pest_treatment' ? '🧪' : '🐜'}</span>
         <span class="section-info">
           <span class="section-name">${escapeHtml(job.address || job.name || 'Job')}</span>
-          <span class="section-sub">${escapeHtml([job.status, fmtDate(job.inspectionEndedAt || job.createdAt)].filter(Boolean).join(' · '))}</span>
+          <span class="section-sub">${escapeHtml([(DB.JOB_STATUS_LABELS && DB.JOB_STATUS_LABELS[job.status]) || job.status, fmtDate(job.inspectionEndedAt || job.createdAt)].filter(Boolean).join(' · '))}</span>
         </span>
         <span class="section-status status-dot-green">›</span>`;
       li.addEventListener('click', () => {
@@ -171,14 +171,12 @@
     show(clientView);
   }
 
+  const FIELDS = ['name', 'phone', 'email', 'address', 'notes'];
+  const typed = () => Object.fromEntries(FIELDS.map((k) => [k, (values && values[k]) || '']));
+  const changed = () => FIELDS.some((k) => String((values && values[k]) || '') !== String(current[k] || ''));
+
   async function save() {
-    current = await DB.saveClient(Object.assign({}, current, {
-      name: values.name || '',
-      phone: values.phone || '',
-      email: values.email || '',
-      address: values.address || '',
-      notes: values.notes || '',
-    }));
+    current = await DB.saveClient(Object.assign({}, current, typed()));
     toast('Client saved');
     await openList();
   }
@@ -229,6 +227,11 @@
       if (empty && !(await DB.getJobsForClient(current.id)).length) {
         await DB.deleteClient(current.id);
         current = null;
+      } else if (changed()) {
+        // Back keeps what was typed (v157), the way the invoice screen does.
+        // It used to drop a corrected phone number without a word.
+        current = await DB.saveClient(Object.assign({}, current, typed()));
+        toast('Client saved');
       }
     }
     await openList();
