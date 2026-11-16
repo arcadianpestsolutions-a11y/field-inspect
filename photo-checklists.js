@@ -204,7 +204,53 @@
     inGarage: 'No issue was seen in the attached garage.',
     inMould: 'No mould growth was seen inside.',
   };
-  for (const item of TERMITE_CHECKLIST) { if (OK_TEXT[item.id]) item.okText = OK_TEXT[item.id]; }
+  // And for an Issue with no note typed (v156): found printing a bare
+  // "Issue." in the client's report. What the Issue means for that item, in
+  // the same "was seen" terms. A typed note is printed after it.
+  const ISSUE_TEXT = {
+    slabEdge: 'The slab edge was covered by soil, paving, render or garden beds in places, hiding termite entry from view.',
+    weepHoles: 'Weep holes were blocked, buried or bridged in places.',
+    hotWater: 'The relief valve overflow was discharging onto the ground beside the building.',
+    airCon: 'The unit’s drain was discharging against or beside the building.',
+    outsideTaps: 'A tap was leaking, or draining onto the ground beside the building.',
+    downpipes: 'A downpipe or gutter was leaking, disconnected or discharging against the building.',
+    waterTank: 'The tank or its overflow was leaking or discharging near the building.',
+    siteDrainage: 'Ground levels or drainage directed water toward the building, or ponding was seen.',
+    subfloorVents: 'Subfloor vents were blocked, buried or too few.',
+    trees: 'A concern was noted in the trees or stumps close to the building.',
+    fences: 'Timber pest activity, damage or decay was seen in the fences or retaining walls.',
+    decksPosts: 'Timber pest activity, damage or decay was seen in the decks, pergolas or posts.',
+    sheds: 'Timber pest activity, damage or decay was seen in an outbuilding.',
+    baitStations: 'A station was missing, damaged or in poor condition.',
+    storedGoods: 'Timber or belongings were stored against the outside walls, a conducive condition and an obstruction to inspection.',
+    surroundings: 'Bushland or large trees close to the building increase the risk of termite attack.',
+    subfloorEntry: 'Access to the subfloor was limited.',
+    subfloorGeneral: 'Parts of the subfloor were obstructed.',
+    antCapping: 'Ant capping was missing, rusted, damaged or bridged in places.',
+    subfloorTimbers: 'Timber pest activity, damage or decay was seen in the subfloor timbers.',
+    subfloorSoil: 'The subfloor soil was damp or water was ponding.',
+    subfloorVentilation: 'Subfloor ventilation appeared inadequate.',
+    subfloorPlumbing: 'A leak was seen in the plumbing under the wet areas.',
+    subfloorDebris: 'Loose timber was lying on the subfloor ground.',
+    roofVoidEntry: 'Access to the roof void was limited.',
+    roofGeneral: 'Parts of the roof void were obstructed.',
+    roofTimbers: 'Timber pest activity, damage or decay was seen in the roof timbers.',
+    roofObstructions: 'Insulation, sarking or ducting covered the roof timbers in places, limiting the inspection.',
+    roofEdges: 'The outer edges of the roof void could not be fully inspected.',
+    roofLeaks: 'Water staining was seen on the roof timbers, sarking or ceiling.',
+    inBathrooms: 'A leak or elevated moisture reading was found in a bathroom.',
+    inKitchen: 'A leak was found in the kitchen.',
+    inLaundry: 'A leak or elevated moisture reading was found in the laundry.',
+    inSkirtings: 'Skirtings or architraves sounded hollow or showed damage.',
+    inDoorsWindows: 'Damage or decay was seen in a door frame or window sill.',
+    inWetWalls: 'An elevated moisture reading was found on a wall behind a wet area.',
+    inGarage: 'An issue was found in the attached garage.',
+    inMould: 'Mould growth was seen inside, an indicator of elevated moisture.',
+  };
+  for (const item of TERMITE_CHECKLIST) {
+    if (OK_TEXT[item.id]) item.okText = OK_TEXT[item.id];
+    if (ISSUE_TEXT[item.id]) item.issueText = ISSUE_TEXT[item.id];
+  }
 
   // A termite job's single report can represent any one of four document
   // types (see DOCUMENT_TYPES in report.js) — an inspection, an action

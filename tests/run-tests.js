@@ -4613,6 +4613,7 @@
         trees: { r: 'issue', at: 1, kinds: ['workings'], note: 'Mud leads on the stump' },
         hotWater: { r: 'nophoto', at: 1, note: 'Behind a locked gate' },
         inKitchen: { r: 'ok', at: 1 },
+        antCapping: { r: 'issue', at: 1 },
       },
     });
     const report = await win.DB.getReport(job.id);
@@ -4622,12 +4623,18 @@
     assert(html.indexOf('What We Inspected') > html.indexOf('Areas We Were Unable to Inspect'), 'straight after what could not be inspected');
     const row = (label) => { const m = part.match(new RegExp('<td>' + label + '</td><td>([^<]*)</td>')); return m ? m[1] : null; };
     assertEqual(row('Meter Box'), 'Notice found.', 'the meter box says a notice was found');
-    assertEqual(row('Slab Edge'), 'Issue. Garden bed covers the east side', 'an issue prints with its note');
-    assertEqual(row('Trees &amp; Stumps'), 'Issue: termite damage or workings. Mud leads on the stump', 'and with what kind it was');
+    assertEqual(row('Slab Edge'), 'The slab edge was covered by soil, paving, render or garden beds in places, hiding termite entry from view. Garden bed covers the east side',
+      'an issue prints its standard sentence, then the note (v156)');
+    assertEqual(row('Trees &amp; Stumps'), 'A concern was noted in the trees or stumps close to the building. Type: termite damage or workings. Mud leads on the stump', 'and what kind it was');
     assertEqual(row('Hot Water System'), 'Inspected. No photograph could be taken: Behind a locked gate', 'a spot that could not be photographed says why');
     assertEqual(row('Water Tank'), 'Not present at this property.', 'Not here prints as not present');
     assertEqual(row('Kitchen'), 'No leaks were seen under the sink.', 'an OK prints the standard sentence for that item, with nothing typed (v151)');
     assertEqual(row('Weep Holes'), 'Not recorded.', 'a spot nobody dealt with is never printed as clear');
+    assertEqual(row('Piers &amp; Ant Capping'), 'Ant capping was missing, rusted, damaged or bridged in places.',
+      'an Issue with nothing typed still tells the client what was wrong, never a bare "Issue." (v156)');
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.area && !i.hidden && i.id !== 'frontElevation');
+    assert(items.every((i) => i.issueLabel || (i.issueText && i.issueText.length > 15)), 'every item has an issue sentence');
+    assert(items.every((i) => i.okLabel || (i.okText && i.okText.length > 15)), 'and an OK sentence');
     assert(/No subfloor: the building is on a concrete slab/.test(part), 'a slab home says there is no subfloor');
     assert(/roof void could not be accessed/.test(part) && !/<td>Roof Timbers<\/td>/.test(part), 'an area that could not be entered says so and lists no items');
     assert(/Completed at 11:30\s?am/i.test(part), 'each area shows when it was completed, in Sydney time');

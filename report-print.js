@@ -279,8 +279,12 @@
       if (r && r.r === 'ok') return (item.okLabel ? item.okLabel + '.' : (item.okText || 'Inspected. No issue seen.')) + noPhotoText(r);
       if (r && r.r === 'issue') {
         const what = (r.kinds || []).map(kindLabel).join(', ');
-        const head = item.issueLabel ? item.issueLabel : ('Issue' + (what ? ': ' + what : ''));
-        return head + (r.note ? '. ' + r.note : '.') + noPhotoText(r);
+        // A labelled answer (the meter box's "No notice") prints as it is; an
+        // ordinary Issue prints its standard sentence (v156), then what kind
+        // and the typed note.
+        if (item.issueLabel) return item.issueLabel + (r.note ? '. ' + r.note : '.') + noPhotoText(r);
+        const head = item.issueText || 'An issue was found.';
+        return head + (what ? ' Type: ' + what + '.' : '') + (r.note ? ' ' + r.note : '') + noPhotoText(r);
       }
       if (r && r.r === 'nophoto') return 'Inspected. No photograph could be taken: ' + r.note;
       if (skipped.has(item.id)) return 'Not present at this property.';
