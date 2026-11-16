@@ -4613,7 +4613,7 @@
         trees: { r: 'issue', at: 1, kinds: ['workings'], note: 'Mud leads on the stump' },
         hotWater: { r: 'nophoto', at: 1, note: 'Behind a locked gate' },
         inKitchen: { r: 'ok', at: 1 },
-        antCapping: { r: 'issue', at: 1 },
+        downpipes: { r: 'issue', at: 1 },
       },
     });
     const report = await win.DB.getReport(job.id);
@@ -4630,7 +4630,7 @@
     assertEqual(row('Water Tank'), 'Not present at this property.', 'Not here prints as not present');
     assertEqual(row('Kitchen'), 'No leaks were seen under the sink.', 'an OK prints the standard sentence for that item, with nothing typed (v151)');
     assertEqual(row('Weep Holes'), 'Not recorded.', 'a spot nobody dealt with is never printed as clear');
-    assertEqual(row('Piers &amp; Ant Capping'), 'Ant capping was missing, rusted, damaged or bridged in places.',
+    assertEqual(row('Downpipes &amp; Gutters'), 'A downpipe or gutter was leaking, disconnected or discharging against the building.',
       'an Issue with nothing typed still tells the client what was wrong, never a bare "Issue." (v156)');
     const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.area && !i.hidden && i.id !== 'frontElevation');
     assert(items.every((i) => i.issueLabel || (i.issueText && i.issueText.length > 15)), 'every item has an issue sentence');
