@@ -4470,6 +4470,14 @@
       row('hotWater').querySelector('[data-result="ok"]').click();
       await settle();
       assertEqual(refiled.length, 1, 'an OK never takes a loose photo');
+
+      // Finishing with a box open keeps what was typed in it.
+      row('airCon').querySelector('[data-result="issue"]').click();
+      const last = box.querySelector('.walk-issue-note');
+      last.value = 'Drain drips against the slab';
+      last.dispatchEvent(new win.Event('input', { bubbles: true }));
+      walk.destroy();
+      assertEqual(saved.results.airCon.note, 'Drain drips against the slab', 'Finish keeps the note');
     } finally {
       walk.destroy();
       box.remove();

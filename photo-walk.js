@@ -901,7 +901,8 @@
       start() { if (visible) onShow(); else render(); },
       current() { return steps[index]; },
       state() { return cleanState(state); },
-      destroy() { clearTimeout(bannerTimer); loose = null; container.innerHTML = ''; container.classList.add('hidden'); },
+      // Finishing the inspection with an issue box open keeps what was typed.
+      destroy() { commitDraft(); clearTimeout(bannerTimer); loose = null; container.innerHTML = ''; container.classList.add('hidden'); },
     };
   }
 
