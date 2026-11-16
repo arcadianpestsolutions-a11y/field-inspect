@@ -343,7 +343,6 @@
         const res = state.results[item.id];
         if (tip && res && res.r !== 'nophoto' && res.ai !== tip.verdict) { res.ai = tip.verdict; persist(); }
         const step = steps[index];
-        if (step && step.kind === 'photo' && step.item.id === item.id) render();
         if (step && step.kind === 'checks' && noteOpenFor === item.id) render();
       };
       asked.then((r) => {
@@ -505,31 +504,6 @@
       return row;
     }
 
-    function noteBox(item, existing, onSave, opts) {
-      const o = opts || {};
-      const wrap = el('div', 'walk-issue');
-      // What is being typed and ticked lives outside this box, because the
-      // card is redrawn under it (a photo arriving, the banner timing out)
-      // and a redraw must not throw away half an answer.
-      if (!draft || draft.id !== item.id) draft = { id: item.id, note: existing || '', kinds: (o.kinds || []).slice() };
-      const picked = draft.kinds;
-      if (!o.required) { const chips = kindChips(item, picked); if (chips) wrap.appendChild(chips); }
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'walk-other walk-issue-note';
-      input.maxLength = 300;
-      input.placeholder = o.placeholder || 'What is wrong? (optional)';
-      input.value = draft.note;
-      input.addEventListener('input', () => { if (draft) draft.note = input.value; });
-      wrap.appendChild(input);
-      const save = btn(o.saveLabel || 'Save issue, next ›', 'walk-primary walk-issue-save', () => {
-        if (o.required && !input.value.trim()) { input.focus(); return; }
-        onSave(input.value, picked);
-      });
-      wrap.appendChild(save);
-      return wrap;
-    }
-
     function render() {
       container.innerHTML = '';
       container.classList.toggle('hidden', !visible);
@@ -555,60 +529,17 @@
         const finished = stepComplete(step, doneSet, state);
         container.appendChild(el('div', 'walk-title', (finished ? '✓ ' : '') + step.item.label));
         if (step.hint) container.appendChild(el('div', 'walk-hint', step.hint));
-        if (got && step.blocked) {
+        // Since v151 a photo step is only ever the photo of why an area could
+        // not be entered (blocked): every other item is a tick on a list.
+        if (got) {
           container.appendChild(el('div', 'walk-got', 'Photo saved. Take another, or go on.'));
           actions.appendChild(btn('Next ›', 'walk-primary', next));
-        } else if (got) {
-          const verdict = result && result.r !== 'nophoto' ? result : null;
-          container.appendChild(el('div', 'walk-got', verdict
-            ? (verdict.r === 'ok' ? 'Photo saved, marked OK.' : 'Photo saved, marked as an issue' + (verdict.note ? ': ' + verdict.note : '.'))
-            : 'Photo saved. What does it show?'));
-          const waiting = tips[step.item.id] && tips[step.item.id].wait;
-          const tip = tipFor(step.item.id);
-          if (!verdict && waiting) {
-            const line = el('div', 'walk-tip walk-tip-wait', 'AI is looking at the photo… you do not have to wait.');
-            line.dataset.tip = 'wait';
-            container.appendChild(line);
-          } else if (!verdict && tip) {
-            const says = tip.verdict === 'ok' ? 'AI suggests: ' + (step.item.okLabel || 'OK') + '.'
-              : tip.verdict === 'issue' ? 'AI suggests: ' + (step.item.issueLabel || 'Issue') + '.'
-                : 'AI cannot tell from this photo.';
-            const line = el('div', 'walk-tip walk-tip-' + tip.verdict, says + (tip.reason ? ' ' + tip.reason : ''));
-            line.dataset.tip = tip.verdict;
-            container.appendChild(line);
-            if (tip.verdict !== 'unsure') container.appendChild(el('div', 'walk-tip-own', 'Check it yourself, then tap your answer.'));
-          }
-          if (noteOpenFor === step.item.id) {
-            // The AI's wording is offered as a start, only where nothing was
-            // written yet; it is saved only when the technician taps Save.
-            const fromTip = tip && tip.verdict === 'issue' && !(result && result.r === 'issue');
-            container.appendChild(noteBox(step.item, (result && result.note) || (fromTip ? tip.note : ''),
-              (note, kinds) => { setResult(step.item.id, 'issue', note, kinds); next(); },
-              { kinds: (result && result.kinds) || (fromTip ? tip.kinds : null) }));
-          } else {
-            const points = !verdict && tip ? tip.verdict : '';
-            const ok = btn('✓ ' + (step.item.okLabel || 'OK'), 'walk-primary' + (result && result.r === 'ok' ? ' chosen' : '') + (points === 'ok' ? ' suggested' : ''), () => { setResult(step.item.id, 'ok'); next(); });
-            ok.dataset.result = 'ok';
-            const issue = btn('⚠ ' + (step.item.issueLabel || 'Issue'), 'walk-secondary walk-issue-btn' + (result && result.r === 'issue' ? ' chosen' : '') + (points === 'issue' ? ' suggested' : ''), () => { noteOpenFor = step.item.id; draft = null; render(); });
-            issue.dataset.result = 'issue';
-            actions.appendChild(ok);
-            actions.appendChild(issue);
-          }
-        } else if (noteOpenFor === step.item.id) {
-          container.appendChild(noteBox(step.item, result && result.note,
-            (note) => { setResult(step.item.id, 'nophoto', note); next(); },
-            { required: true, placeholder: 'Why could it not be photographed?', saveLabel: 'Save reason, next ›' }));
         } else {
           if (state.skipped.includes(step.item.id)) container.appendChild(el('div', 'walk-got', 'Marked as not here. Take a photo if that was wrong.'));
           if (result && result.r === 'nophoto') container.appendChild(el('div', 'walk-got', 'No photo: ' + result.note));
           const none = btn('Not here', 'walk-secondary', skip);
           none.dataset.result = 'nothere';
           actions.appendChild(none);
-          if (!step.blocked) {
-            const cant = btn('Can’t photo', 'walk-secondary', () => { noteOpenFor = step.item.id; draft = null; render(); });
-            cant.dataset.result = 'nophoto';
-            actions.appendChild(cant);
-          }
         }
       } else if (step.kind === 'question') {
         container.appendChild(el('div', 'walk-title', step.ask));
@@ -843,10 +774,6 @@
         const step = steps[index];
         // Ask the AI what it shows (v148), unless the spot is already answered
         // or it is the "why I could not get in" photo of a blocked area.
-        if (step && step.kind === 'photo' && !step.blocked && done().has(step.item.label)) {
-          const had = state.results[step.item.id];
-          if (!had || had.r === 'nophoto') askTip(step.item, blob);
-        }
         // On a tick list (v151) the photo is of the open Issue: ask the AI to
         // describe it. A photo also makes a typed "can't photograph" moot.
         if (step && step.kind === 'checks' && !noteOpenFor && captureId) {

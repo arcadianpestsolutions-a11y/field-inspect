@@ -3324,12 +3324,10 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .walk-btn.chosen { outline: 2px solid #f8fafc; outline-offset: 2px; }
 /* The AI's suggestion for a shot (v148): a line of text and a dashed ring
    round the button it points at. Dashed, so it never reads as "chosen". */
-.walk-btn.suggested { outline: 2px dashed #7dd3fc; outline-offset: 2px; }
 .walk-tip { font-size: 0.8rem; color: #7dd3fc; }
 .walk-tip-wait { color: #94a3b8; }
 .walk-tip-issue { color: #fbbf24; }
 .walk-tip-unsure { color: #94a3b8; }
-.walk-tip-own { font-size: 0.72rem; color: #94a3b8; }
 .walk-choices { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
 .walk-choices .walk-btn { text-align: left; }
 .walk-notes { display: flex; flex-direction: column; gap: 0; }
@@ -3352,7 +3350,6 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 }
 .walk-area.current { background: rgba(255, 255, 255, 0.22); border-color: #f8fafc; }
 .walk-area.clear { color: #3dff88; }
-.walk-issue-btn { border-color: #fbbf24; color: #fde68a; }
 .walk-issue { display: flex; flex-direction: column; gap: 8px; }
 .walk-checks { display: flex; flex-direction: column; gap: 2px; }
 .walk-check { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }

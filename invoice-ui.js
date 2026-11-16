@@ -237,7 +237,7 @@
   // ---------- paid (v121) ----------
   // Xero's word first. Marking paid by hand is for money that never went
   // through Xero (cash, a transfer recorded nowhere else), and says so.
-  const fmtDay = (ts) => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+  const fmtDay = window.Common.fmtDay;
 
   function renderPaid() {
     if (!paidRow || !paidText || !paidBtn) return;
