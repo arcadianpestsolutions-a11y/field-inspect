@@ -190,7 +190,10 @@
       xeroStateEl.innerHTML = s.connected
         ? `<span class="xero-pill xero-on">Xero connected — ${escapeHtml(s.tenantName || 'organisation')}</span>`
         : '<span class="xero-pill xero-off">Xero not connected</span>' +
-          `<a class="xero-connect-link" href="${escapeHtml(s.authorizeUrl)}">Connect Xero</a>`;
+          // Only an admin is given the link (v154); everyone else is told who can.
+          (s.authorizeUrl
+            ? `<a class="xero-connect-link" href="${escapeHtml(s.authorizeUrl)}">Connect Xero</a>`
+            : '<span class="xero-connect-hint">Ask the business owner to connect Xero.</span>');
     } catch (err) {
       if (window.ErrorLog) window.ErrorLog.note(err, 'invoice: Xero status');
       xeroStateEl.innerHTML = `<span class="xero-pill xero-off">${escapeHtml(err.message || 'Xero unavailable')}</span>`;

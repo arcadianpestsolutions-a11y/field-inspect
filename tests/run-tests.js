@@ -13083,6 +13083,31 @@
     assert(!/method:\s*'(POST|PUT|DELETE)'/.test(fn), 'and it only reads');
   });
 
+  test('Xero: each business has its own connection, only an admin connects it, and the sign-in check is enforced (v154, migration 044)', async () => {
+    const xero = await (await fetch('../supabase/functions/xero/index.ts', { cache: 'reload' })).text();
+    assert(!/\.eq\('id', 'default'\)/.test(xero) && !/id: 'default'/.test(xero), 'no single shared connection any more');
+    assert(/\.eq\('id', orgId\)/.test(xero) && /org_id: orgId/.test(xero), 'the row is the caller\'s own business');
+    assert(/orgIdForUser\(admin, userId\)/.test(xero), 'and the business comes from the signed-in user, never the request');
+    assert(/if \(!isAdmin\) return json\(\{ error: 'Only the business owner \(an admin\) can connect Xero\.' \}, 403\)/.test(xero), 'only an admin connects');
+    assert(/if \(!isAdmin\) return json\(\{ error: 'Only the business owner \(an admin\) can disconnect Xero\.' \}, 403\)/.test(xero), 'or disconnects');
+    const ex = /async function exchangeCode[\s\S]*?\n\}/.exec(xero)[0];
+    assert(/pending\.oauth_state !== state/.test(ex) && /Date\.now\(\) - pending\.oauth_state_at > STATE_MS/.test(ex), 'the state must match and be fresh');
+    assert(ex.indexOf('oauth_state: null') < ex.indexOf('identity.xero.com/connect/token'), 'and is used up before the code is redeemed');
+    assert(/updatedDateUtc/.test(ex), 'the organisation chosen is the one just authorised');
+    assert(/if \(!connected && isAdmin\)/.test(xero), 'only an admin who is not connected is given a link');
+    assert(/connect\/revocation/.test(xero), 'disconnecting cancels the access at Xero too');
+    assert(/Status: 'DRAFT'/.test(xero), 'invoices still only ever go in as drafts');
+
+    const app = await (await fetch('../xero.js', { cache: 'reload' })).text();
+    assert(/const state = params\.get\('state'\)/.test(app) && /exchangeCode\(code, state\)/.test(app), 'the app sends the state back');
+    const ui = await (await fetch('../invoice-ui.js', { cache: 'reload' })).text();
+    assert(/Ask the business owner to connect Xero/.test(ui), 'someone who cannot connect is told who can');
+
+    const sql = await (await fetch('../supabase-migration-044-xero-per-business.sql', { cache: 'reload' })).text();
+    assert(/add column if not exists oauth_state text/.test(sql) && /revoke all on public\.xero_connections from anon, authenticated/.test(sql),
+      'the tokens stay readable by the server only');
+  });
+
   // ---------- Inspection agreement signed before the visit (v120, migration 034) ----------
   let __agree = null;
   async function Agree() {

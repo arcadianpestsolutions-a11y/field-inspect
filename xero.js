@@ -35,7 +35,7 @@
   }
 
   const status = () => invoke({ action: 'status' });
-  const exchangeCode = (code) => invoke({ action: 'exchange-code', code });
+  const exchangeCode = (code, state) => invoke({ action: 'exchange-code', code, state });
   const disconnect = () => invoke({ action: 'disconnect' });
   const createInvoice = (invoice) => invoke({ action: 'create-invoice', invoice });
 
@@ -46,6 +46,8 @@
     const params = new URLSearchParams(location.search);
     const code = params.get('code');
     if (!code) return null;
+    // Sent back to the server, which checks it is the one it handed out (v154).
+    const state = params.get('state') || '';
 
     params.delete('code');
     params.delete('state');
@@ -54,7 +56,7 @@
     history.replaceState({}, '', clean);
 
     try {
-      const result = await exchangeCode(code);
+      const result = await exchangeCode(code, state);
       return { ok: true, tenantName: result.tenantName };
     } catch (err) {
       return { ok: false, error: err.message || String(err) };
