@@ -967,13 +967,21 @@
     }
     // Migration 035. Left off until it exists, like the columns above.
     if (!invoicePaidColumnMissing) row.paid_at = invoice.paidAt || null;
+    // Migration 047: cash, card or bank transfer.
+    if (!invoicePaidMethodMissing) row.paid_method = invoice.paidMethod || null;
     return row;
   }
 
+  let invoicePaidMethodMissing = false;
   async function pushInvoice(invoice) {
     if (!isReady()) return;
     try {
       let { error } = await supabaseClient.from('invoices').upsert(localInvoiceToRemote(invoice));
+      if (error && !invoicePaidMethodMissing && /paid_method/.test(String(error.message || ''))) {
+        invoicePaidMethodMissing = true;
+        console.warn('[sync] invoices.paid_method not in the database yet — run supabase-migration-047-paid-method.sql.');
+        ({ error } = await supabaseClient.from('invoices').upsert(localInvoiceToRemote(invoice)));
+      }
       if (error && !invoicePaidColumnMissing && isMissingColumnError(error) && /paid_at/.test(String(error.message || ''))) {
         invoicePaidColumnMissing = true;
         console.warn('[sync] invoices.paid_at not in the database yet — run supabase-migration-035-referrals.sql. Invoice sync continues without it.');
@@ -1010,6 +1018,7 @@
       emailedAt: ri.emailed_at || (existingLocal ? existingLocal.emailedAt : null),
       emailStatus: ri.email_status || (existingLocal ? existingLocal.emailStatus : null),
       paidAt: ri.paid_at || (existingLocal ? existingLocal.paidAt || null : null),
+      paidMethod: ri.paid_method || (existingLocal ? existingLocal.paidMethod || '' : ''),
       createdAt: ri.created_at,
       updatedAt: ri.updated_at,
     };

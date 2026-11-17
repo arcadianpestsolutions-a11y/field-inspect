@@ -5837,6 +5837,57 @@
     await win.DB.deleteJob(job.id);
   });
 
+  test('Usability round (v163): client not on site, safe default, booking by tapping, clashes shown', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const U = win.ReportSchemaUtils;
+
+    // The final acknowledgement can be finished with the client gone.
+    const ack = win.REPORT_SCHEMA.find((s) => s.id === 'acknowledgement');
+    const notOnSite = Object.assign(U.defaultValuesForSection(ack, null), { ackStatus: 'Client not on site' });
+    assertEqual(U.computeSectionStatus(ack, notOnSite), 'green', '"Client not on site" completes the section');
+    assert(ack.fields.filter((f) => U.isFieldVisible(f, {})).some((f) => f.id === 'clientSignature'), 'older reports still show their signature');
+    const missing = U.fieldValidationErrors({ id: 'q', label: 'Were termites found?', type: 'text', required: true }, {});
+    assertEqual((missing[0] || {}).message, 'Needs an answer: Were termites found?', 'a missing answer reads as a sentence, not "...? is required"');
+
+    // After a booking, the safe answer is the big one, first and focused.
+    const BN = win.BookingNotice;
+    const job = await win.DB.addJob({ name: 'Usability Probe', address: '1 Probe St', clientEmail: 'probe@example.test', scheduledAt: Date.now() + 3 * 86400000 });
+    const asking = BN.offer(await win.DB.getJob(job.id), { send: async () => { throw new Error('must not send'); } });
+    await waitFor(() => doc.querySelector('.booking-notice'), 'asked');
+    const choices = Array.from(doc.querySelectorAll('.booking-notice [data-choice]'));
+    assertEqual(choices[0].dataset.choice, 'later', '"Not yet" comes first');
+    assert(/btn-primary/.test(choices[0].className) && !/btn-primary/.test(choices.find((c) => c.dataset.choice === 'send').className),
+      'and is the main button; sending is not');
+    choices[0].click();
+    assertEqual(await asking, 'later');
+
+    // Change the length by tapping, on the job screen.
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('job-booking-change'), 'the job screen offers Change time');
+    doc.getElementById('job-booking-change').click();
+    await waitFor(() => doc.getElementById('booking-edit-length'), 'the change sheet opens');
+    doc.getElementById('booking-edit-length').value = '120';
+    doc.querySelector('.booking-edit [data-action="booking-edit-save"]').click();
+    await waitFor(async () => (await win.DB.getJob(job.id)).scheduledDurationMins === 120, 'saved as two hours');
+    assert(!doc.querySelector('.booking-notice'), 'a longer job alone is not news for the client');
+    assert(doc.getElementById('job-scheduled-length'), 'and New Job asks how long');
+
+    // A clashing booking is drawn, not hidden behind the first.
+    const clash = await win.DB.addJob({ name: 'Usability Clash', address: '2 Probe St', scheduledAt: (await win.DB.getJob(job.id)).scheduledAt });
+    const sched = await (await fetch('../scheduler.js', { cache: 'reload' })).text();
+    assert(/for \(const job of clashesAt\.get\(slot\) \|\| \[\]\) row\.appendChild\(clashBlock\(job\)\);/.test(sched), 'clashes are drawn beside the job they clash with');
+    await win.DB.deleteJob(clash.id);
+    await win.DB.deleteJob(job.id);
+
+    const report = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assert(/wrap\.className = 'finalize-wrap'/.test(report), 'tapping a greyed-out Finalize says what is left');
+    assert(/shownAt >= 0 \? shownAt \+ 1 : section\.number/.test(report), 'section headers use the list’s numbers');
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(/document\.activeElement !== jobAddressInput/.test(app), 'late address suggestions no longer cover the next box');
+    assert(/Invoice — paid ✓/.test(app), 'a paid invoice says paid on the job');
+  });
+
   test('Business: provider fields are filled from the organisation', () => {
     const win = frame.contentWindow;
     const U = win.ReportSchemaUtils;
@@ -13384,6 +13435,13 @@
     const paidBtn = doc.getElementById('invoice-paid-btn');
     assert(paidBtn && /Mark as paid/.test(paidBtn.textContent), 'the invoice offers Mark as paid');
     assert(/Not paid yet/.test(doc.getElementById('invoice-paid-text').textContent), 'and says it is not paid');
+    // v163: asked how it was paid, and the job then says paid.
+    paidBtn.click();
+    await waitFor(() => doc.querySelector('.paid-method [data-method="Cash"]'), 'asked how it was paid');
+    doc.querySelector('.paid-method [data-method="Cash"]').click();
+    await waitFor(async () => !!(await DB.getInvoicesForJob(job.id))[0].paidAt, 'marked paid');
+    assertEqual((await DB.getInvoicesForJob(job.id))[0].paidMethod, 'Cash', 'by cash');
+    assert(/Paid by cash/.test(doc.getElementById('invoice-paid-text').textContent), 'and it says so');
     doc.getElementById('invoice-back-btn').click();
     await wait(300);
   });

@@ -533,12 +533,32 @@ const REPORT_SCHEMA = [
     color: '#a12a72',
     softRequired: true,
     fields: [
-      { id: 'clientAckName', label: 'Client Name', type: 'text' },
-      { id: 'clientSignature', label: 'Signature', type: 'signature', required: true },
-      { id: 'clientAckDate', label: 'Date', type: 'date' },
+      // v163: the client is often not there at the end (found in the
+      // usability test: the report could not be finished honestly without
+      // a signature). Same shape as "No client agreement" in section 3.
+      {
+        id: 'ackStatus', label: 'Client acknowledgement', type: 'select',
+        options: ['Signed by the client', 'Client not on site'],
+        default: 'Signed by the client',
+      },
+      {
+        id: 'ackNotSignedNote', label: 'Note (optional)', type: 'textarea',
+        placeholder: 'e.g. Report emailed to the client; nobody home at the end of the inspection',
+        showIf: { field: 'ackStatus', equals: 'Client not on site' },
+      },
+      { id: 'clientAckName', label: 'Client Name', type: 'text', showIf: { field: 'ackStatus', notEquals: 'Client not on site' } },
+      { id: 'clientSignature', label: 'Signature', type: 'signature', required: true, showIf: { field: 'ackStatus', notEquals: 'Client not on site' } },
+      { id: 'clientAckDate', label: 'Date', type: 'date', showIf: { field: 'ackStatus', notEquals: 'Client not on site' } },
     ],
   },
 ];
+
+// "Needs an answer: <label>" reads properly whatever the label is: a
+// question ("Were termites found?"), a phrase ending "to be" or a plain name.
+function missingMessage(label) {
+  const l = String(label || 'This').trim();
+  return `Needs an answer: ${l.replace(/[.:]+$/, '')}`;
+}
 
 function isFieldVisible(field, values) {
   if (!field.showIf) return true;
@@ -619,7 +639,7 @@ function fieldValidationErrors(field, values) {
   }
 
   if (field.required && blank) {
-    errors.push({ fieldId: field.id, label: field.label, kind: 'missing', message: `${field.label} is required.` });
+    errors.push({ fieldId: field.id, label: field.label, kind: 'missing', message: missingMessage(field.label) });
     return errors; // no point range-checking something that isn't there
   }
   if (blank) return errors;

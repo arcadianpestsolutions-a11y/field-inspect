@@ -251,7 +251,7 @@
       paidText.textContent = `✓ Paid in Xero${current.paidAt ? `, ${fmtDay(current.paidAt)}` : ''}`;
       paidBtn.classList.add('hidden');
     } else if (current.paidAt) {
-      paidText.textContent = `✓ Marked paid on ${fmtDay(current.paidAt)}`;
+      paidText.textContent = `✓ Paid${current.paidMethod ? ' by ' + current.paidMethod.toLowerCase() : ''} on ${fmtDay(current.paidAt)}`;
       paidBtn.textContent = 'Undo: not paid';
       paidBtn.classList.remove('hidden');
     } else {
@@ -261,20 +261,60 @@
     }
   }
 
+  function askPaidMethod(inv) {
+    return new Promise((resolve) => {
+      const totals = I.computeTotals(inv);
+      const overlay = document.createElement('div');
+      overlay.className = 'tester-feedback paid-method';
+      overlay.setAttribute('role', 'dialog');
+      const card = document.createElement('div');
+      card.className = 'tester-feedback-card';
+      const h = document.createElement('h2');
+      h.textContent = 'How was it paid?';
+      const sub = document.createElement('p');
+      sub.className = 'tester-feedback-sub';
+      sub.textContent = `${inv.number} · ${I.formatMoney(totals.totalCents)}. If it was paid through Xero, you do not need this: it shows as paid by itself.`;
+      card.append(h, sub);
+      const done = (v) => { overlay.remove(); resolve(v); };
+      for (const m of ['Cash', 'Card', 'Bank transfer', 'Other']) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-secondary full paid-method-choice';
+        b.dataset.method = m;
+        b.textContent = m;
+        b.style.marginTop = '8px';
+        b.addEventListener('click', () => done(m));
+        card.appendChild(b);
+      }
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'btn btn-outline full';
+      cancel.dataset.method = '';
+      cancel.textContent = 'Cancel';
+      cancel.style.marginTop = '12px';
+      cancel.addEventListener('click', () => done(''));
+      card.appendChild(cancel);
+      overlay.appendChild(card);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) done(''); });
+      document.body.appendChild(overlay);
+    });
+  }
+
   if (paidBtn) {
+    // A full button, not a text link (v163): it is how most jobs get closed off.
+    paidBtn.className = 'btn btn-outline';
     paidBtn.addEventListener('click', async () => {
       if (!current) return;
       if (!current.paidAt) {
-        const totals = I.computeTotals(current);
-        const ok = await askConfirm(
-          `${current.number} · ${I.formatMoney(totals.totalCents)}\n\nOnly for money received outside Xero. `
-          + 'An invoice paid in Xero shows as paid by itself.',
-          { title: 'Mark this invoice paid?', okLabel: 'Mark paid' },
-        );
-        if (!ok) return;
+        // How it was paid (v163): the usability test found nowhere to say
+        // "cash", and a question worded only around Xero.
+        const method = await askPaidMethod(current);
+        if (!method) return;
         current.paidAt = Date.now();
+        current.paidMethod = method;
       } else {
         current.paidAt = null;
+        current.paidMethod = '';
       }
       await save();
       renderPaid();

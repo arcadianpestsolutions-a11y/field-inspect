@@ -102,9 +102,13 @@
       };
       let first;
       if (canSend) {
-        first = add('Yes, send it', 'btn btn-primary full', 'send');
+        // The safe answer is the big one, first and focused (v163): in the
+        // usability test a thumb-slip after dragging a booking would have
+        // emailed the client. Sending is one deliberate tap away, and the
+        // job keeps reminding until it is done, so nothing is forgotten.
+        first = add('Not yet', 'btn btn-primary full', 'later');
         add('Let me change the details', 'btn btn-outline full', 'edit');
-        add('Not yet', 'btn btn-outline full', 'later');
+        add('Yes, send it to the client', 'btn btn-outline full booking-send', 'send');
       } else {
         first = add('Add the email', 'btn btn-primary full', 'edit');
         add('Not now', 'btn btn-outline full', 'later');

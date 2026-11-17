@@ -3574,3 +3574,23 @@ body:has(#inspection-modal:not(.hidden)) .toast { bottom: calc(190px + var(--saf
 .client-offboarded-note { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--accent-2); border-radius: 10px; color: var(--accent-2); font-size: 0.88rem; }
 .clients-offboarded-toggle { display: block; margin: 12px auto; }
 .client-offboard-btn { margin-top: 8px; }
+
+/* v163: a disabled Finalize lets the tap reach .finalize-wrap, which explains. */
+.finalize-wrap { display: block; }
+.finalize-wrap #finalize-report-btn:disabled { pointer-events: none; }
+
+.clients-offboarded-heading { list-style: none; margin: 16px 0 6px; color: var(--accent-2); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+
+/* v163: a booking that clashes is drawn beside the one it clashes with. */
+.slot-job-clash { border-color: var(--danger); border-left-color: var(--danger); }
+.slot-job-clash .slot-job-meta { color: var(--danger); }
+
+/* v163: booking by tapping (booking-edit.js) */
+.job-booking-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.job-booking-line { font-weight: 600; flex: 1 1 200px; overflow-wrap: anywhere; }
+.booking-edit-select, .booking-edit-date { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 10px; font: inherit; font-weight: 400; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elev); color: var(--text); }
+#job-scheduled-length { flex: 1 1 110px; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elev); color: var(--text); font: inherit; }
+
+/* v163: room under the last card for the floating + New Job button, which
+   covered the Call button and "Not started" on Today. */
+#view-joblist .content { padding-bottom: 96px; }

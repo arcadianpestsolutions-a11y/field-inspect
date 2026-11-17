@@ -125,7 +125,9 @@
 
   async function check() {
     if (!window.CommsService) {
-      hintEl.textContent = 'Sign in to check reminders.';
+      hintEl.textContent = window.IS_DEMO
+        ? 'Reminders are not checked or sent in the demo.'
+        : 'Sign in to check reminders.';
       return;
     }
     checkBtn.disabled = true;

@@ -233,6 +233,26 @@
   const reportSectionList = document.getElementById('report-section-list');
   const finalizeBtn = document.getElementById('finalize-report-btn');
   const finalizeHint = document.getElementById('finalize-hint');
+  // A disabled Finalize button ignored a tap altogether, which in the
+  // usability test read as broken (v163). It now lets the tap through
+  // (pointer-events: none while disabled, styles.css) to this wrapper, which
+  // says what is left and takes the technician to it.
+  if (finalizeBtn && !finalizeBtn.parentElement.classList.contains('finalize-wrap')) {
+    const wrap = document.createElement('div');
+    wrap.className = 'finalize-wrap';
+    finalizeBtn.parentElement.insertBefore(wrap, finalizeBtn);
+    wrap.appendChild(finalizeBtn);
+    wrap.addEventListener('click', (e) => {
+      if (!finalizeBtn.disabled || e.target !== wrap) return;
+      if (currentReport && currentReport.finalizedAt) return;
+      const target = document.querySelector('#walk-todo:not(.walk-todo-clear)')
+        || document.querySelector('#preflight-card:not(.hidden):not(.preflight-clear)')
+        || document.querySelector('#report-section-list .status-dot-yellow');
+      const left = document.querySelectorAll('#preflight-card .preflight-item').length;
+      toast(left ? `Not ready yet: ${left} thing${left === 1 ? '' : 's'} to fix. They are listed here.` : 'Not ready yet: finish the sections without a green tick.');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
   const finalizePostActions = document.getElementById('finalize-post-actions');
   const emailStatusRow = document.getElementById('email-status-row');
   const emailStatusText = document.getElementById('email-status-text');
@@ -988,6 +1008,9 @@
 
       section.clientAckName = acceptance.name || '';
       section.clientSignature = acceptance.signature;
+      // Signed after "Client not on site" was picked (v163): it is signed now.
+      section.ackStatus = 'Signed by the client';
+      delete section.ackNotSignedNote;
       // The date the CLIENT accepted, not today. The document should say when
       // they agreed, not when somebody got around to filing it.
       //
@@ -2796,7 +2819,12 @@
     const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
     applyDraftFieldsToPending(section, aiFieldsForSection);
 
-    sectionTitleEl.textContent = `${section.number}. ${section.title}`;
+    // The same number the list shows (v163): the list counts the sections on
+    // screen, and the header used the schema's fixed number, so "11. Client
+    // Acknowledgement" opened as "13. Client Acknowledgement".
+    const shownSections = visibleSchema(currentSchema(), currentReport);
+    const shownAt = shownSections.findIndex((s) => s.id === section.id);
+    sectionTitleEl.textContent = `${shownAt >= 0 ? shownAt + 1 : section.number}. ${section.title}`;
     sectionSubtitleEl.textContent = section.subtitle || '';
 
     renderCurrentSectionFields();

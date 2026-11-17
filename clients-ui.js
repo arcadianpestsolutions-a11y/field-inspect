@@ -80,7 +80,11 @@
     const query = (searchEl.value || '').trim();
     const active = allClients.filter((c) => !offboarded(c));
     const gone = allClients.length - active.length;
-    const shown = (showOffboarded ? allClients : active).filter((c) => matches(c, query));
+    // Offboarded ones, when shown, sit together at the bottom under their own
+    // heading, right where the toggle is (v163: they were mixed in by name,
+    // far from the button that revealed them).
+    const shown = active.filter((c) => matches(c, query))
+      .concat(showOffboarded ? allClients.filter((c) => offboarded(c) && matches(c, query)) : []);
 
     subtitleEl.textContent = allClients.length
       ? `${active.length} ${active.length === 1 ? 'client' : 'clients'}${gone ? ` · ${gone} offboarded` : ''}`
@@ -108,7 +112,15 @@
       return;
     }
 
+    let headed = false;
     for (const client of shown) {
+      if (offboarded(client) && !headed) {
+        headed = true;
+        const h = document.createElement('li');
+        h.className = 'clients-offboarded-heading';
+        h.textContent = 'Offboarded customers';
+        listEl.appendChild(h);
+      }
       const summary = window.Clients.summarise(client, jobs);
       const li = document.createElement('li');
       li.className = 'report-section-item';
@@ -213,7 +225,7 @@
         <span class="section-icon" style="background:${job.jobType === 'pest_treatment' ? '#166534' : '#b45309'}">${job.jobType === 'pest_treatment' ? '🧪' : '🐜'}</span>
         <span class="section-info">
           <span class="section-name">${escapeHtml(job.address || job.name || 'Job')}</span>
-          <span class="section-sub">${escapeHtml([(DB.JOB_STATUS_LABELS && DB.JOB_STATUS_LABELS[job.status]) || job.status, fmtDate(job.inspectionEndedAt || job.createdAt)].filter(Boolean).join(' · '))}</span>
+          <span class="section-sub">${escapeHtml(historyLine(job))}</span>
         </span>
         <span class="section-status status-dot-green">›</span>`;
       li.addEventListener('click', () => {
@@ -229,6 +241,20 @@
   const FIELDS = ['name', 'phone', 'email', 'address', 'notes'];
   const typed = () => Object.fromEntries(FIELDS.map((k) => [k, (values && values[k]) || '']));
   const changed = () => FIELDS.some((k) => String((values && values[k]) || '') !== String(current[k] || ''));
+
+  // What a history row says (v163): what the job was, where it stands, and
+  // the date that matters for it. It used to repeat the address and show the
+  // day the job was typed in, so a job booked for today read "17 Nov".
+  function historyLine(job) {
+    const what = job.jobType === 'pest_treatment' ? 'Pest treatment' : 'Termite inspection';
+    const status = (DB.JOB_STATUS_LABELS && DB.JOB_STATUS_LABELS[job.status]) || job.status || '';
+    let when = '';
+    if (job.inspectionEndedAt) when = `done ${fmtDate(job.inspectionEndedAt)}`;
+    else if (job.scheduledAt && job.status !== 'completed') when = `booked ${fmtDate(job.scheduledAt)}`;
+    else if (job.scheduledAt) when = fmtDate(job.scheduledAt);
+    else if (job.createdAt) when = `added ${fmtDate(job.createdAt)}`;
+    return [what, status, when].filter(Boolean).join(' · ');
+  }
 
   async function save() {
     current = await DB.saveClient(Object.assign({}, current, typed()));

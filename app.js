@@ -508,6 +508,11 @@
     renderCommsRow(job);
     renderBookingNotice(job);
     renderPlanRow(job);
+    // Booked when, and Change time, without dragging (v163, booking-edit.js).
+    // Drawn before the details card so it sits above it.
+    if (window.BookingEdit && canEditJob(job)) {
+      window.BookingEdit.render(job, { onSaved: async (saved) => { if (currentJobId === saved.id) await showJobView(saved.id); } });
+    }
     if (window.JobDetails) {
       window.JobDetails.render(job, {
         canEdit: canEditJob(job),
@@ -913,9 +918,15 @@
       if (billable) {
         DB.getInvoicesForJob(job.id).then((invoices) => {
           const invoice = invoices[0];
+          // Paid first, then sent, then draft (v163): a paid invoice read
+          // "draft" here because only the Xero link was looked at.
+          const paid = invoice && (invoice.paidAt || String(invoice.xeroStatus || '').toUpperCase() === 'PAID');
           viewInvoiceBtn.textContent = !invoice
             ? '💰 Create Invoice'
-            : (invoice.xeroInvoiceId ? '💰 Invoice — in Xero' : '💰 Invoice — draft');
+            : paid ? '💰 Invoice — paid ✓'
+              : invoice.xeroInvoiceId ? '💰 Invoice — in Xero'
+                : (invoice.emailedAt || invoice.status === 'sent') ? '💰 Invoice — sent, not paid'
+                  : '💰 Invoice — draft';
         }).catch(() => { viewInvoiceBtn.textContent = '💰 Invoice'; });
       }
     }
@@ -1089,7 +1100,7 @@
       if (job.scheduledAt && !(finished && due)) {
         const when = new Date(job.scheduledAt);
         const days = Math.round((when - Date.now()) / 86400000);
-        const late = days < 0 && !finished;
+        const late = days < 0 && !finished && (job.status || 'new') === 'new';
         const badge = document.createElement('span');
         badge.className = 'due-badge ' + (late ? 'due-overdue' : days < 0 ? 'due-later' : days <= 7 ? 'due-soon' : 'due-later');
         const h = when.getHours();
@@ -1231,8 +1242,10 @@
     const name = jobNameInput.value.trim();
     if (!name) { toast('Enter a job name'); jobNameInput.focus(); return; }
     const newScheduledAt = readScheduledAtFromForm();
+    // How long, from the form (v163); an hour if the page has no such box.
+    const newLength = window.BookingEdit ? window.BookingEdit.readNewJobLength() : 60;
     if (newScheduledAt && window.Scheduler && window.Scheduler.confirmNoOverlap) {
-      const clear = await window.Scheduler.confirmNoOverlap(null, newScheduledAt, 60);
+      const clear = await window.Scheduler.confirmNoOverlap(null, newScheduledAt, newLength);
       if (!clear) return;
     }
     const phone = jobPhoneInput.value.trim();
@@ -1281,7 +1294,9 @@
       clientEmail: email,
       clientId,
       scheduledAt: newScheduledAt,
+      scheduledDurationMins: newLength,
     });
+    if (window.BookingEdit) window.BookingEdit.resetNewJobLength();
     hide(jobForm);
     await renderJobList();
     await showJobView(job.id);
@@ -1416,6 +1431,10 @@
   }
 
   function renderAddressSuggestions(items) {
+    // Answers that arrive after the technician has moved on to the next box
+    // are dropped (v163): the late list covered the phone field and ate the
+    // number being typed into it.
+    if (document.activeElement !== jobAddressInput) { hideAddressSuggestions(); return; }
     addressSuggestionItems = items;
     addressActiveIndex = -1;
     jobAddressSuggestions.innerHTML = '';

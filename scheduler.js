@@ -259,6 +259,39 @@
       }
     }
 
+    // Jobs that start in a half hour another job already holds (v163). The
+    // grid drew one job per half hour, so a clashing booking simply was not
+    // there: the day said "3 jobs" and showed two. They are drawn beside the
+    // job they clash with, outlined in red.
+    const clashesAt = new Map();
+    for (const job of list) {
+      const first = slotFloor(minsOfDay(job.scheduledAt));
+      const holder = occupiedBy.get(first);
+      if (holder && holder.job.id !== job.id) {
+        if (!clashesAt.has(first)) clashesAt.set(first, []);
+        clashesAt.get(first).push(job);
+      }
+    }
+    function clashBlock(job) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'slot-job slot-job-clash';
+      b.dataset.job = job.id;
+      const n = document.createElement('span');
+      n.className = 'slot-job-name';
+      n.textContent = `${typeIcon(job)} ${job.name}`;
+      const m = document.createElement('span');
+      m.className = 'slot-job-meta';
+      m.textContent = `⚠ Clash · ${fmtTime(job.scheduledAt)} · ${durationOf(job)} min`;
+      b.append(n, m);
+      b.addEventListener('click', () => {
+        if (suppressClickUntil > Date.now()) return;
+        if (window.showJobViewById) window.showJobViewById(job.id);
+      });
+      makeMovable(b, job);
+      return b;
+    }
+
     // Anything booked outside working hours still has to be visible.
     const outOfHours = list.filter((j) => {
       const h = new Date(j.scheduledAt).getHours();
@@ -349,6 +382,7 @@
         row.appendChild(free);
       }
 
+      for (const job of clashesAt.get(slot) || []) row.appendChild(clashBlock(job));
       if (isLastRow) row.appendChild(edgeHandle(entry.job, 'end'));
       slotsEl.appendChild(row);
     }
