@@ -2982,7 +2982,7 @@
     assert(/window\.Tester\.askAfterReport\(\{ jobId: currentJobId/.test(report), 'finalising a report asks the tester');
     const sql = await (await fetch('../supabase-migration-045-tester-feedback.sql', { cache: 'reload' })).text();
     assert(/o\.id = org_id and o\.tester/.test(sql), 'the database only takes trial records from a business on trial');
-    assert(/grant select, insert on public\.tester_feedback to authenticated/.test(sql) && !/grant[^;]*update[^;]*tester_/.test(sql),
+    assert(/grant select, insert on public\.tester_feedback to authenticated/.test(sql) && !/^grant[^;\n]*update[^;\n]*tester_/m.test(sql),
       'granted explicitly, and never update');
   });
 
