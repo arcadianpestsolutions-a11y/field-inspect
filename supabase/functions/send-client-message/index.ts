@@ -252,6 +252,9 @@ type JobRow = {
   reinspection_interval_months: number | null;
   reminder_sent_for_due_at: number | null;
   org_id: string | null;
+  // Migration 046: the chase on this property. Only stoppedAt is read here:
+  // a customer offboarded in the app is not reminded that they are due.
+  follow_up: { stoppedAt?: number } | null;
 };
 
 function serviceLabel(jobType: string | null): string {
@@ -374,6 +377,7 @@ function refuse(kind: string, job: JobRow, now: number, biz: Biz, optedOut: Set<
   // Without this the sweep below selected every job with a due date set and
   // would have emailed somebody eleven months early.
   if (kind === 'due_reminder') {
+    if (job.follow_up && job.follow_up.stoppedAt) return 'follow-up-stopped';
     const early = dueReminderTiming(job as unknown as Record<string, unknown>, now);
     if (early) return early;
   }
@@ -826,7 +830,7 @@ async function sendOne(kind: string, job: JobRow, triggeredBy: string | null, bi
 const JOB_COLUMNS = 'id, name, address, client_email, client_phone, scheduled_at, next_due_at, '
   + 'job_type, preferred_document_type, recurring_from_id, comms_opt_out, '
   + 'confirmation_sent_for_at, day_before_sent_for_at, reminder_sent_for_due_at, org_id, '
-  + 'reinspection_interval_months';
+  + 'reinspection_interval_months, follow_up';
 
 // ----------------------------------------------------------------- serve ---
 

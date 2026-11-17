@@ -173,14 +173,19 @@
 
     // ---- what is coming ----
     const DAY = 86400000;
+    // Booked means booked on a job not yet done: a finished job keeps its
+    // old booking time as history (v162; it hid every diary-booked property
+    // from these counts). Chasing stopped (offboarded) is not owed either.
+    const booked = (j) => !!j.scheduledAt && j.status !== 'completed';
+    const chased = (j) => j.nextDueAt && !booked(j) && !(j.followUp && j.followUp.stoppedAt);
     const dueWithin = (days) => jobs.filter((j) =>
-      j.nextDueAt && !j.scheduledAt && j.nextDueAt > now && j.nextDueAt <= now + days * DAY).length;
-    const overdueForReinspection = jobs.filter((j) => j.nextDueAt && !j.scheduledAt && j.nextDueAt <= now);
+      chased(j) && j.nextDueAt > now && j.nextDueAt <= now + days * DAY).length;
+    const overdueForReinspection = jobs.filter((j) => chased(j) && j.nextDueAt <= now);
     // The ones the automatic path has already been spent on: an email went
     // out for this due date, the date has passed, and nothing was booked.
     // That is the list that needs a person to pick up the phone.
     const needsACall = overdueForReinspection.filter((j) => j.reminderSentForDueAt === j.nextDueAt);
-    const unbooked = jobs.filter((j) => !j.scheduledAt && j.status !== 'completed').length;
+    const unbooked = jobs.filter((j) => !booked(j) && j.status !== 'completed').length;
 
     // ---- time ----
     const bookedInPeriod = jobs.filter((j) => inRange(j.scheduledAt, range));

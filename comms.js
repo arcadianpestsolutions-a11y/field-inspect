@@ -29,6 +29,9 @@
     'opted-out':
       'Not sent. This client has asked not to receive automated email. '
       + 'You can still phone them, or send a report yourself from the report screen.',
+    'follow-up-stopped':
+      'Not sent. This customer has been offboarded, so they are not reminded that they are due. '
+      + 'Bring them back from their client record to chase them again.',
     'no-email-on-file':
       'Not sent. There is no email address on this job. Add one in the job '
       + 'details and it will send next time you save.',

@@ -757,37 +757,30 @@
 
   async function rebookJob(jobId) {
     const previous = await DB.getJob(jobId);
-    if (!previous) return;
+    if (!previous) return null;
     // Put it straight in the diary on the day it fell due, at 9am. The date
     // is a starting point the technician can drag around in the scheduler —
     // but a re-inspection that lands unscheduled is one that gets forgotten.
-    const autoWhen = previous.nextDueAt ? atNineAm(previous.nextDueAt) : null;
+    // An overdue one goes on tomorrow instead (v162): its due date has been,
+    // and a booking in the past is no booking.
+    const tomorrowNine = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return atNineAm(d.getTime()); })();
+    const autoWhen = previous.nextDueAt ? Math.max(atNineAm(previous.nextDueAt), tomorrowNine) : null;
     // This is the one booking path with no calendar in view when it fires —
     // it's tapped from the job screen, not the scheduler — so a clash here
     // is the one a technician is least likely to spot on their own.
     if (autoWhen && window.Scheduler && window.Scheduler.confirmNoOverlap) {
       const clear = await window.Scheduler.confirmNoOverlap(null, autoWhen, 60);
-      if (!clear) { toast('Rebooking cancelled — pick a time in the scheduler instead.'); return; }
+      if (!clear) { toast('Rebooking cancelled — pick a time in the scheduler instead.'); return null; }
     }
-    const next = await DB.addJob({
-      name: previous.name,
-      address: previous.address,
-      addressLat: previous.addressLat,
-      addressLng: previous.addressLng,
-      notes: previous.notes,
-      clientPhone: previous.clientPhone,
-      clientEmail: previous.clientEmail,
-      // A recurring visit belongs to the same client as the one it follows.
-      clientId: previous.clientId || null,
-      jobType: previous.jobType,
-      recurringFromId: previous.id,
-      scheduledAt: autoWhen,
-    });
-    await DB.updateJob(previous.id, { nextDueAt: null });
-    toast('Next inspection booked for ' + next.name);
+    const next = await DB.raiseNextVisit(previous.id, { scheduledAt: autoWhen });
+    if (!next) return null;
+    toast(`Next visit booked for ${next.name}${autoWhen ? ', ' + new Date(autoWhen).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) + ' 9am. Move it in the diary if needed.' : ''}`);
     await renderJobList();
     showJobView(next.id);
+    return next;
   }
+  // Follow-ups books from its own screen (followups-ui.js).
+  window.rebookJob = rebookJob;
 
   const rebookJobBtn = document.getElementById('rebook-job-btn');
   if (rebookJobBtn) rebookJobBtn.addEventListener('click', () => rebookJob(currentJobId));
@@ -1262,6 +1255,11 @@
         clientId = existing
           ? existing.id
           : (await DB.addClient({ name, phone, email })).id;
+        // An offboarded customer booking again is a customer again (v162).
+        if (existing && existing.archivedAt && window.FollowUpsUI) {
+          await DB.saveClient(Object.assign({}, existing, { archivedAt: null, archivedReason: '' }));
+          toast(`${existing.name || 'This customer'} was offboarded, and is back on your books.`);
+        }
       }
     } catch (err) {
       console.warn('[app] could not link a client to this job:', err.message || err);

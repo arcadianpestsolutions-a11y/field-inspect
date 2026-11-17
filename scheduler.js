@@ -564,7 +564,9 @@
   function unbookedJobs() {
     const soon = Date.now() + 30 * 24 * 60 * 60 * 1000;
     return jobs.filter((j) => {
-      if (j.scheduledAt) return false;
+      // A finished job's booking time is history, not a booking (v162).
+      if (j.scheduledAt && j.status !== 'completed') return false;
+      if (window.FollowUps && !window.FollowUps.isBooked(j) && j.followUp && j.followUp.stoppedAt) return false;
       if (j.status === 'completed' && !j.nextDueAt) return false;
       if (j.nextDueAt) return j.nextDueAt <= soon;
       return j.status !== 'completed';
@@ -607,6 +609,17 @@
     pendingSlotHour = null;
   }
 
+  // Books a job at a time. A finished job in the backlog is a property due
+  // again: its next visit is raised and booked, and the finished job keeps
+  // its own record (v162). Returns the job that was booked.
+  async function bookJobAt(job, scheduledAt, mins) {
+    if (job.status === 'completed') {
+      return DB.raiseNextVisit(job.id, { scheduledAt, scheduledDurationMins: mins });
+    }
+    await DB.updateJob(job.id, { scheduledAt, scheduledDurationMins: mins });
+    return DB.getJob(job.id);
+  }
+
   async function bookInto(job, slot) {
     const when = new Date(selected);
     when.setHours(0, slot, 0, 0);
@@ -616,11 +629,11 @@
     // exactly how a 2pm slot with a 3-hour job silently landed on top of a
     // 3pm booking before this existed.
     if (!(await confirmNoOverlap(job.id, when.getTime(), mins))) return;
-    await DB.updateJob(job.id, { scheduledAt: when.getTime(), scheduledDurationMins: mins });
+    const booked = await bookJobAt(job, when.getTime(), mins);
     closePicker();
     toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtSlot(slot)} (${mins} min)`);
     await refresh();
-    offerBookingNotice(job.id);
+    offerBookingNotice((booked || job).id);
   }
 
   // ---------- backlog ----------
@@ -737,10 +750,10 @@
     }
 
     if (!(await confirmNoOverlap(job.id, slot.startAt, mins))) return;
-    await DB.updateJob(job.id, { scheduledAt: slot.startAt, scheduledDurationMins: mins });
+    const booked = await bookJobAt(job, slot.startAt, mins);
     toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtTime(slot.startAt)}`);
     await refresh();
-    offerBookingNotice(job.id);
+    offerBookingNotice((booked || job).id);
   }
 
   // Shared by every booking path in this file. Returns true if it's clear to

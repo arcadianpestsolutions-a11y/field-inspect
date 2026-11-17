@@ -60,6 +60,7 @@
     'opted-out': 'asked not to be contacted',
     'nothing-to-send-about': 'no appointment time',
     'job-not-found': 'not synced yet',
+    'follow-up-stopped': 'offboarded, not chased',
   };
 
   function renderPreview(result) {

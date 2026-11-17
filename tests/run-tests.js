@@ -44,14 +44,14 @@
   // another's hour totals. Day-of-month is fixed per test (and kept <= 28 so
   // it is valid in February) rather than offset from today, which would make
   // which tests collide depend on the date the suite happens to run.
-  // The rebook test books its follow-up on the source job's due date, which
-  // is "yesterday" — so any test that asserts on an exact day cell must avoid
-  // both today and yesterday, or it fails once a month. Picks the first quiet
-  // day in the 20s that no other test and no relative-date logic can reach.
+  // The rebook test's source job fell due "yesterday", and an overdue rebook
+  // lands tomorrow at 9am (v162) — so any test that asserts on an exact day
+  // cell must avoid yesterday, today and tomorrow, or it fails once a month.
+  // Picks the first quiet day in the 20s that no relative-date logic reaches.
   function quietDay() {
     const today = new Date().getDate();
     for (const d of [20, 21, 22, 23, 24, 25]) {
-      if (d !== today && d !== today - 1) return d;
+      if (d !== today && d !== today - 1 && d !== today + 1) return d;
     }
     return 25;
   }
@@ -2483,6 +2483,97 @@
 
     doc.querySelector('.status-filter-chip[data-status="all"]').click();
     await wait(100);
+    assert(next.scheduledAt > Date.now(), 'an overdue rebook lands tomorrow, never in the past (v162)');
+  });
+
+  test('Follow-ups: who is due, who is overdue, and who is already in hand (v162)', () => {
+    const F = frame.contentWindow.FollowUps;
+    const DAY = 86400000;
+    const now = avAt(2027, 3, 20);
+    const clients = [{ id: 'c1', name: 'Kept' }, { id: 'c2', name: 'Gone', archivedAt: now - DAY }];
+    const jobs = [
+      // Booked through the diary, done, and now overdue: the case every list used to drop.
+      { id: 'done-booked', name: 'Diary Booked', status: 'completed', scheduledAt: now - 400 * DAY, inspectionEndedAt: now - 400 * DAY, nextDueAt: now - 10 * DAY, clientId: 'c1', address: '1 Due St' },
+      { id: 'soon', name: 'Soon', status: 'completed', nextDueAt: now + 12 * DAY, address: '2 Soon St' },
+      { id: 'later', name: 'Later', status: 'completed', nextDueAt: now + 90 * DAY, address: '3 Later St' },
+      // A visit raised by a plan and booked: in hand.
+      { id: 'booked', name: 'Booked', status: 'new', scheduledAt: now + 5 * DAY, nextDueAt: now - 2 * DAY, address: '4 Booked St' },
+      { id: 'stopped', name: 'Stopped', status: 'completed', nextDueAt: now - 5 * DAY, followUp: { stoppedAt: now - DAY }, address: '5 Stop St' },
+      { id: 'gone', name: 'Offboarded', status: 'completed', nextDueAt: now - 5 * DAY, clientId: 'c2', address: '6 Gone St' },
+      { id: 'snz', name: 'Snoozed', status: 'completed', nextDueAt: now - 3 * DAY, followUp: { snoozedUntil: now + 4 * DAY }, address: '7 Snooze St' },
+      // Done, due, but somebody already made a new job for the same place by hand.
+      { id: 'old', name: 'Old Visit', status: 'completed', inspectionEndedAt: now - 300 * DAY, nextDueAt: now - 30 * DAY, address: '8 Hand Street' },
+      { id: 'new', name: 'New Visit', status: 'new', createdAt: now - 2 * DAY, address: '8 Hand St' },
+    ];
+    const items = F.dueItems(jobs, clients, now);
+    const ids = (level) => items.filter((i) => i.level === level).map((i) => i.job.id);
+    assertEqual(ids('overdue').join(','), 'done-booked', 'only the diary-booked, finished, overdue property is overdue');
+    assertEqual(ids('soon').join(','), 'soon', 'due within 30 days is "soon"; 90 days out is not listed');
+    assertEqual(ids('snoozed').join(','), 'snz', 'a snoozed one waits in its own list');
+    assertEqual(items.find((i) => i.job.id === 'done-booked').daysOverdue, 10);
+
+    // Logging a call, and what it does to the chase.
+    let f = F.logged(jobs[0], 'no_answer', 'rang twice', now);
+    assertEqual(f.log.length, 1);
+    assert(!f.snoozedUntil, 'no answer does not put it off');
+    f = F.logged({ followUp: f }, 'call_back', '', now);
+    assertEqual(f.snoozedUntil, now + 7 * DAY, 'call back next week puts it off a week');
+    assertEqual(f.log.length, 2, 'and the history is kept');
+
+    // Who to let go.
+    const sug = F.offboardSuggestions([
+      { id: 'x', clientId: 'c1', status: 'completed', nextDueAt: now - 5 * DAY, followUp: { log: [{ at: now - DAY, outcome: 'not_interested' }] } },
+      { id: 'y', clientId: 'c3', status: 'completed', inspectionEndedAt: now - 800 * DAY, createdAt: now - 800 * DAY },
+      { id: 'z', clientId: 'c4', status: 'completed', inspectionEndedAt: now - 100 * DAY, createdAt: now - 100 * DAY },
+    ], [{ id: 'c1', name: 'Said No' }, { id: 'c3', name: 'Quiet' }, { id: 'c4', name: 'Recent' }], now);
+    const names = sug.map((s) => s.client.name).sort().join(',');
+    assertEqual(names, 'Quiet,Said No', '"not interested" and two quiet years are suggested; a recent customer is not');
+    assert(/not interested/i.test(sug.find((s) => s.client.name === 'Said No').reason), 'with the reason in words');
+
+    // The Business screen counts the diary-booked property as overdue now.
+    const s = RP().summarise({ jobs, reports: [], invoices: [], now, period: 'all' });
+    assert(s.upcoming.overdueForReinspection >= 1, 'a finished job’s old booking time no longer hides it from the overdue count');
+  });
+
+  test('Follow-ups: offboarding hides a customer and stops their reminders, and bringing them back undoes it (v162)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const client = await win.DB.addClient({ name: 'Offboard Probe', phone: '0400 999 111' });
+    const job = await win.DB.addJob({ name: 'Offboard Probe', address: '9 Leaving Rd', clientId: client.id });
+    await win.DB.updateJob(job.id, { status: 'completed', nextDueAt: Date.now() - 20 * 86400000 });
+    try {
+      const realConfirm = win.confirm;
+      win.confirm = () => true;
+      assert(await win.FollowUpsUI.offboardClient(client.id, 'Not interested'), 'offboarded');
+      win.confirm = realConfirm;
+      const c = await win.DB.getClient(client.id);
+      assert(c.archivedAt && c.archivedReason === 'Not interested', 'the client is marked offboarded, with why');
+      const j = await win.DB.getJob(job.id);
+      assert(j.followUp && j.followUp.stoppedAt, 'their due property stops being chased');
+      assert(j.nextDueAt, 'without losing its due date');
+      assert(!win.FollowUps.dueItems([j], [c]).length, 'and it is off the follow-up list');
+
+      await win.ClientsUI.open();
+      await wait(300);
+      const names = () => Array.from(doc.querySelectorAll('#clients-list .section-name')).map((e) => e.textContent);
+      assert(!names().includes('Offboard Probe'), 'hidden from the client list');
+      doc.getElementById('clients-offboarded-toggle').click();
+      await wait(300);
+      assert(names().includes('Offboard Probe'), 'but there when asked for');
+
+      assert(await win.FollowUpsUI.bringBack(client.id), 'brought back');
+      assert(!(await win.DB.getClient(client.id)).archivedAt, 'no longer offboarded');
+      assert(!((await win.DB.getJob(job.id)).followUp || {}).stoppedAt, 'and chased again');
+    } finally {
+      await win.DB.deleteJob(job.id);
+      await win.DB.deleteClient(client.id);
+    }
+
+    const sendFn = await (await fetch('../supabase/functions/send-client-message/index.ts', { cache: 'reload' })).text();
+    assert(/if \(job\.follow_up && job\.follow_up\.stoppedAt\) return 'follow-up-stopped';/.test(sendFn), 'the server does not send an offboarded customer a due reminder');
+    assert(/reinspection_interval_months, follow_up'/.test(sendFn), 'and reads the column to know');
+    const sched = await (await fetch('../scheduler.js', { cache: 'reload' })).text();
+    assert(/if \(job\.status === 'completed'\) \{\s*return DB\.raiseNextVisit/.test(sched), 'booking a due property in the diary raises its next visit instead of rebooking the finished job');
   });
 
   test('Start Inspection: opens the photo screen without ever asking for the camera (v129)', async () => {

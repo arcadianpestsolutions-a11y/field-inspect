@@ -447,6 +447,8 @@
       // Migration 021.
       row.preferred_document_type = job.preferredDocumentType || '';
     }
+    // Migration 046: the chase on a due property.
+    if (!jobFollowUpMissing) row.follow_up = job.followUp || null;
     return row;
   }
 
@@ -472,6 +474,7 @@
       recurrenceMonths: rj.recurrence_months || null,
       commsOptOut: !!rj.comms_opt_out,
       preferredDocumentType: rj.preferred_document_type || '',
+      followUp: rj.follow_up && typeof rj.follow_up === 'object' ? rj.follow_up : null,
       // Only ever written server-side, by send-client-message — the app
       // itself never sets this locally, it only reads it back to decide
       // whether an overdue job in the backlog has already had its email
@@ -809,10 +812,16 @@
     if (window.appToast) window.appToast(message);
   }
 
+  let jobFollowUpMissing = false;
   async function pushJob(job) {
     if (!isReady()) return;
     try {
       let { data, error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job)).select('id');
+      if (error && !jobFollowUpMissing && /follow_up/.test(String(error.message || ''))) {
+        jobFollowUpMissing = true;
+        console.warn('[sync] jobs.follow_up not in the database yet — run supabase-migration-046-follow-ups.sql. Job sync continues without it.');
+        ({ data, error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job)).select('id'));
+      }
       if (error && !jobExtraColumnsMissing && isMissingColumnError(error)) {
         jobExtraColumnsMissing = true;
         console.warn('[sync] jobs.assigned_to / reinspection_interval_months / reminder_sent_for_due_at not in the database yet — run migrations 011-013. Job sync continues without them.');
@@ -1153,8 +1162,11 @@
       created_by: currentUserId(),
       created_at: client.createdAt,
       updated_at: client.updatedAt,
+      // Migration 046: an offboarded customer.
+      ...(clientArchiveMissing ? {} : { archived_at: client.archivedAt || null, archived_reason: client.archivedReason || null }),
     };
   }
+  let clientArchiveMissing = false;
 
   function remoteClientToLocal(rc) {
     return {
@@ -1164,6 +1176,8 @@
       email: rc.email || '',
       address: rc.address || '',
       notes: rc.notes || '',
+      archivedAt: rc.archived_at || null,
+      archivedReason: rc.archived_reason || '',
       createdAt: rc.created_at,
       updatedAt: rc.updated_at,
     };
@@ -1172,8 +1186,13 @@
   async function pushClient(client) {
     if (!isReady()) return;
     try {
-      const { data, error } = await supabaseClient
+      let { data, error } = await supabaseClient
         .from('clients').upsert(localClientToRemote(client)).select('id');
+      if (error && !clientArchiveMissing && /archived_/.test(String(error.message || ''))) {
+        clientArchiveMissing = true;
+        console.warn('[sync] clients.archived_at not in the database yet — run supabase-migration-046-follow-ups.sql.');
+        ({ data, error } = await supabaseClient.from('clients').upsert(localClientToRemote(client)).select('id'));
+      }
       if (error) throw error;
       if (refusedByPolicy(data)) reportPolicyRefusal('client', client.id);
     } catch (e) {

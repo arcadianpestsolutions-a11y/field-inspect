@@ -31,6 +31,9 @@
   let current = null;
   let values = {};
   let allClients = [];
+  // Offboarded customers (v162) are kept but out of the way: hidden unless asked for.
+  let showOffboarded = false;
+  const offboarded = (c) => !!(c && c.archivedAt);
 
   const CLIENT_SECTION = {
     id: 'client',
@@ -75,10 +78,12 @@
   async function renderList() {
     const jobs = await DB.getJobs();
     const query = (searchEl.value || '').trim();
-    const shown = allClients.filter((c) => matches(c, query));
+    const active = allClients.filter((c) => !offboarded(c));
+    const gone = allClients.length - active.length;
+    const shown = (showOffboarded ? allClients : active).filter((c) => matches(c, query));
 
     subtitleEl.textContent = allClients.length
-      ? `${allClients.length} ${allClients.length === 1 ? 'client' : 'clients'}`
+      ? `${active.length} ${active.length === 1 ? 'client' : 'clients'}${gone ? ` · ${gone} offboarded` : ''}`
       : '';
 
     listEl.innerHTML = '';
@@ -87,8 +92,19 @@
         + 'book a job for somebody new, or add one here.</p>';
       return;
     }
+    const toggle = () => {
+      if (!gone) return;
+      const t = document.createElement('button');
+      t.type = 'button';
+      t.id = 'clients-offboarded-toggle';
+      t.className = 'link-btn clients-offboarded-toggle';
+      t.textContent = showOffboarded ? 'Hide offboarded customers' : `Show offboarded customers (${gone})`;
+      t.addEventListener('click', () => { showOffboarded = !showOffboarded; renderList(); });
+      listEl.appendChild(t);
+    };
     if (!shown.length) {
       listEl.innerHTML = `<p class="empty-hint">Nothing matching “${escapeHtml(query)}”.</p>`;
+      toggle();
       return;
     }
 
@@ -99,6 +115,7 @@
       const where = summary.properties.length === 1
         ? summary.properties[0].address
         : `${summary.properties.length} properties`;
+      if (offboarded(client)) li.classList.add('client-offboarded');
       li.innerHTML = `
         <span class="section-icon" style="background:#1f7a4d">👤</span>
         <span class="section-info">
@@ -106,11 +123,48 @@
           <span class="section-sub">${escapeHtml([
             summary.jobCount ? `${summary.jobCount} ${summary.jobCount === 1 ? 'job' : 'jobs'}` : 'no jobs yet',
             summary.properties.length ? where : '',
+            offboarded(client) ? `Offboarded${client.archivedReason ? ': ' + client.archivedReason : ''}` : '',
           ].filter(Boolean).join(' · '))}</span>
         </span>
         <span class="section-status ${summary.nextDueAt && summary.nextDueAt < Date.now() ? 'status-dot-yellow' : 'status-dot-green'}">›</span>`;
       li.addEventListener('click', () => openClient(client.id));
       listEl.appendChild(li);
+    }
+    toggle();
+  }
+
+  // Offboard / Bring back on the client record (v162). Built here so a stale
+  // cached page without the button still opens the record.
+  function renderOffboardControls() {
+    const bar = clientView.querySelector('.action-bar');
+    if (!bar || !current) return;
+    let b = document.getElementById('client-offboard-btn');
+    if (!b) {
+      b = document.createElement('button');
+      b.id = 'client-offboard-btn';
+      b.type = 'button';
+      b.className = 'btn btn-secondary full client-offboard-btn';
+      bar.appendChild(b);
+      b.addEventListener('click', async () => {
+        if (!current || !window.FollowUpsUI) return;
+        const id = current.id;
+        const done = offboarded(current) ? await window.FollowUpsUI.bringBack(id) : await window.FollowUpsUI.offboardClient(id);
+        if (done) await openClient(id);
+      });
+    }
+    b.textContent = offboarded(current) ? 'Bring back as a customer' : 'Offboard customer';
+    let note = document.getElementById('client-offboarded-note');
+    if (offboarded(current)) {
+      if (!note) {
+        note = document.createElement('p');
+        note.id = 'client-offboarded-note';
+        note.className = 'client-offboarded-note';
+        fieldsEl.parentNode.insertBefore(note, fieldsEl);
+      }
+      note.textContent = `Offboarded ${fmtDate(current.archivedAt)}${current.archivedReason ? ' — ' + current.archivedReason : ''}. `
+        + 'Hidden from your client list and Follow-ups, and not sent due reminders.';
+    } else if (note) {
+      note.remove();
     }
   }
 
@@ -168,6 +222,7 @@
       jobsEl.appendChild(li);
     }
 
+    renderOffboardControls();
     show(clientView);
   }
 

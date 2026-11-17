@@ -422,6 +422,37 @@ const DB = {
   // something went wrong months ago. A plan that quietly stops is the whole
   // failure this exists to prevent, so the repair has to be re-runnable
   // rather than a one-shot at exactly the right moment.
+  // The next visit for a finished job whose property is due again (v162).
+  // A new job, carrying the client and the plan across, linked back to the
+  // one it follows; the old job's due date is cleared so the property stops
+  // showing as due. Used by Book next visit, the diary and Follow-ups, so a
+  // finished job's own record (when it was done) is never overwritten by a
+  // booking for the next one, which is what booking it in the diary did.
+  async raiseNextVisit(previousId, { scheduledAt = null, scheduledDurationMins = null } = {}) {
+    const previous = await this.getJob(previousId);
+    if (!previous) return null;
+    const next = await this.addJob({
+      name: previous.name,
+      address: previous.address,
+      addressLat: previous.addressLat,
+      addressLng: previous.addressLng,
+      notes: previous.notes,
+      clientPhone: previous.clientPhone,
+      clientEmail: previous.clientEmail,
+      clientId: previous.clientId || null,
+      jobType: previous.jobType,
+      recurringFromId: previous.id,
+      scheduledAt: scheduledAt || null,
+    });
+    const extra = {};
+    if (scheduledDurationMins) extra.scheduledDurationMins = scheduledDurationMins;
+    if (previous.recurrenceMonths) extra.recurrenceMonths = previous.recurrenceMonths;
+    if (previous.assignedTo) extra.assignedTo = previous.assignedTo;
+    if (Object.keys(extra).length) await this.updateJob(next.id, extra);
+    await this.updateJob(previous.id, { nextDueAt: null });
+    return this.getJob(next.id);
+  },
+
   async ensureNextOccurrence(job) {
     if (!job || !job.recurrenceMonths) return null;
 
