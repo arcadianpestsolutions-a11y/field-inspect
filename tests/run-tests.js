@@ -2908,6 +2908,27 @@
     assertEqual((sched.match(/offerBookingNotice\(job\.id\)/g) || []).length, 3, 'and so do both ways of booking from the diary, and dragging a job to a new start');
   });
 
+  test('Device: a second account cannot sign in where another account’s work is kept (v160)', async () => {
+    const win = frame.contentWindow;
+    // What the check reads from the phone.
+    assertEqual(typeof win.DB.hasAnyLocalData, 'function');
+    const job = await win.DB.addJob({ name: 'Device Owner Probe', address: '1 Owner St' });
+    await win.DB.updateJob(job.id, { assignedTo: 'owner@example.test' });
+    assertEqual(await win.DB.hasAnyLocalData(), true, 'a phone with a job on it holds work');
+    assert((await win.DB.localJobEmails()).has('owner@example.test'), 'and knows whose jobs they are');
+    await win.DB.deleteJob(job.id);
+
+    const sync = await (await fetch('../sync.js', { cache: 'reload' })).text();
+    assert(/verifiedFor === currentSession\.user\.id/.test(sync), 'nothing syncs until the device is confirmed as this account’s');
+    assert(/if \(verdict === 'blocked'\) \{ signOut\(\)/.test(sync), 'a session belonging on another phone is signed straight out');
+    assert(/verifyDevice\(currentSession\)\) === 'blocked'/.test(sync), 'including one restored when the app opens');
+    assert(/team\.includes\(email\)/.test(sync), 'someone on the same team is let in');
+    assert(!/deleteDatabase|\.clear\(\)/.test(sync.slice(sync.indexOf('Whose device this is'), sync.indexOf('function takeBlockedNotice'))),
+      'and nothing is ever wiped to make room');
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert((app.match(/Sync\.takeBlockedNotice\(\)/g) || []).length === 2, 'the sign-in screen says why, both ways in');
+  });
+
   test('Trial: a tester is asked about each report, and nothing is recorded for anyone else (v159)', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

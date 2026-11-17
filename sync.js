@@ -252,7 +252,75 @@
   }
 
   function isOnline() { return typeof navigator === 'undefined' || navigator.onLine !== false; }
-  function isReady() { return !!currentSession && isOnline(); }
+  // ---------- Whose device this is (v160) ----------
+  // Everything Scope keeps on a phone (jobs, reports, photos, invoices, the
+  // business profile) belongs to the account that put it there. Nothing used
+  // to stop a second account signing in on the same phone or browser: it was
+  // shown the first account's jobs, and sync would have uploaded them into
+  // the second account's business. Now the device remembers its owner, and a
+  // different account is signed straight back out while the owner's work is
+  // here. Nothing is ever wiped to make room: there is no reliable way to know
+  // that all of it reached the server.
+  const OWNER_KEY = 'scope.device-owner.v1';
+  const PROFILE_KEYS = ['scope.org.v1', 'scope.me.v1', 'scope.roster.v1', 'field-inspect-last-rates'];
+  const readOwner = () => { try { return localStorage.getItem(OWNER_KEY) || ''; } catch (e) { return ''; } };
+  const writeOwner = (id) => { try { localStorage.setItem(OWNER_KEY, id); } catch (e) { /* private window: checked again next time */ } };
+  let verifiedFor = null;   // the user id this device has been checked for
+  let blockedNotice = '';   // said on the sign-in screen after a refusal
+
+  // { foreign, hasData }. Someone on the same team (in the cached roster of
+  // the business whose work is here) is not foreign: it is their business's
+  // work too.
+  async function deviceStateFor(user) {
+    const owner = readOwner();
+    if (owner === user.id) return { foreign: false, hasData: true };
+    const hasData = window.DB && window.DB.hasAnyLocalData ? await window.DB.hasAnyLocalData() : false;
+    if (!hasData) return { foreign: false, hasData: false };
+    const email = String(user.email || '').toLowerCase();
+    let team = [];
+    try { team = Object.keys(JSON.parse(localStorage.getItem('scope.roster.v1') || '{}')).map((e) => e.toLowerCase()); } catch (e) { /* none cached */ }
+    if (email && team.includes(email)) return { foreign: false, hasData: true };
+    if (owner) return { foreign: true, hasData: true };
+    // No owner recorded yet (every device before v160): the work here says
+    // whose it is, through the emails on its jobs and the cached team list.
+    const known = window.DB && window.DB.localJobEmails ? await window.DB.localJobEmails() : new Set();
+    team.forEach((e) => known.add(e));
+    return { foreign: known.size > 0 && !known.has(email), hasData: true };
+  }
+
+  // 'ok' or 'blocked'. Never throws: a check that fails lets the owner in
+  // (their own data) and keeps everyone else out.
+  async function verifyDevice(session) {
+    const user = session && session.user;
+    if (!user || !user.id) { verifiedFor = null; return 'ok'; }
+    if (window.IS_TEST || window.IS_DEMO) { verifiedFor = user.id; return 'ok'; }
+    let state;
+    try { state = await deviceStateFor(user); } catch (e) { state = { foreign: readOwner() !== '' && readOwner() !== user.id, hasData: true }; }
+    if (state.foreign) {
+      verifiedFor = null;
+      blockedNotice = 'This phone or browser has another Scope account\u2019s work on it, so a different account '
+        + 'cannot be used here. Use your own phone, or a private (incognito) window.';
+      return 'blocked';
+    }
+    if (readOwner() !== user.id) {
+      // A new owner on an empty device: the last business's name, ABN, team
+      // and prices must not carry over onto this account's documents.
+      if (!state.hasData) PROFILE_KEYS.forEach((k) => { try { localStorage.removeItem(k); } catch (e) { /* fine */ } });
+      writeOwner(user.id);
+    }
+    verifiedFor = user.id;
+    return 'ok';
+  }
+
+  function takeBlockedNotice() { const n = blockedNotice; blockedNotice = ''; return n; }
+
+  // Nothing is pushed or pulled until the device is confirmed as this
+  // account's: the gap between signing in and the check is otherwise a gap
+  // in which someone else's jobs could be uploaded.
+  function isReady() {
+    return !!currentSession && isOnline()
+      && !!currentSession.user && verifiedFor === currentSession.user.id;
+  }
   function currentUserId() { return currentSession && currentSession.user ? currentSession.user.id : null; }
 
   // Synchronous identity accessor, unlike getSession() which awaits a round
@@ -323,10 +391,16 @@
   supabaseClient.auth.onAuthStateChange((_event, session) => {
     currentSession = session;
     if (_event === 'PASSWORD_RECOVERY' && window.Common) setTimeout(() => { askForNewPassword().catch(() => {}); }, 800);
-    // Role first, then listeners: app.js rebuilds its UI from these, and
-    // doing it the other way round renders the wrong buttons for a moment.
-    refreshRole().finally(() => {
-      authListeners.forEach((fn) => { try { fn(session); } catch (e) { /* ignore listener errors */ } });
+    // Device first (v160): a session that belongs on another phone is signed
+    // out before anything is drawn for it, and the listeners only ever hear
+    // about the sign-out. Then role, then listeners: app.js rebuilds its UI
+    // from these, and doing it the other way round renders the wrong buttons
+    // for a moment.
+    verifyDevice(session).then((verdict) => {
+      if (verdict === 'blocked') { signOut().catch(() => {}); return; }
+      refreshRole().finally(() => {
+        authListeners.forEach((fn) => { try { fn(session); } catch (e) { /* ignore listener errors */ } });
+      });
     });
   });
 
@@ -1534,6 +1608,10 @@
     // A restored session skips onAuthStateChange, so without this the app
     // boots showing a technician every admin button until something else
     // happens to refresh it.
+    if (currentSession && (await verifyDevice(currentSession)) === 'blocked') {
+      await signOut().catch(() => {});
+      return null;
+    }
     if (currentSession) await refreshRole();
     return currentSession;
   }
@@ -1564,6 +1642,9 @@
 
   window.Sync = {
     getSession,
+    takeBlockedNotice,
+    _deviceStateFor: (user) => deviceStateFor(user), // for the suite
+    verifyDevice,
     currentUser,
     signIn,
     signOut,

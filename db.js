@@ -524,6 +524,28 @@ const DB = {
     return String(email || '').trim().toLowerCase();
   },
 
+  // Whether this device holds any work at all (v160). Used before letting a
+  // different account sign in here: see Sync's device owner.
+  async hasAnyLocalData() {
+    for (const name of ['jobs', 'reports', 'captures', 'clients', 'leads', 'invoices', 'swms', 'sops', 'referrals', 'sectionDrafts']) {
+      try {
+        const store = await tx(name, 'readonly');
+        if ((await reqToPromise(store.count())) > 0) return true;
+      } catch (e) { /* a store an older device never made is an empty one */ }
+    }
+    return false;
+  },
+
+  // The emails this device's jobs were made by or given to (v160): who the
+  // work here belongs to, for a device that has not recorded an owner yet.
+  async localJobEmails() {
+    const out = new Set();
+    for (const j of await this.getJobs().catch(() => [])) {
+      for (const e of [j.assignedTo, j.createdBy]) if (e && String(e).includes('@')) out.add(String(e).toLowerCase());
+    }
+    return out;
+  },
+
   // Returns past jobs for the same client, newest first, excluding the job
   // being looked up from (a job matches itself trivially otherwise). A
   // client is the same person if EITHER their phone or their email matches

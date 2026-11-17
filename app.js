@@ -2838,6 +2838,9 @@
       } else {
         loggedInEmail = '';
         showLoginView();
+        // Signed out because this device holds another account's work (v160).
+        const why = Sync.takeBlockedNotice ? Sync.takeBlockedNotice() : '';
+        if (why) showLoginError(why);
       }
     });
 
@@ -2848,6 +2851,8 @@
       Sync.pullAll().then(() => renderJobList());
     } else {
       showLoginView();
+      const why = Sync.takeBlockedNotice ? Sync.takeBlockedNotice() : '';
+      if (why) showLoginError(why);
     }
   }
 
