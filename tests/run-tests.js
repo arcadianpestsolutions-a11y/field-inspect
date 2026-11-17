@@ -2996,7 +2996,7 @@
     assert(!/showJobView\(job\.id\);\s*confirmBookingByEmail\(/.test(app), 'saving a new job no longer emails the client by itself');
     assert(/BookingNotice\.offer\(job, \{ agreement: wantsAgreement \}\)/.test(app), 'it asks instead');
     const sched = await (await fetch('../scheduler.js', { cache: 'reload' })).text();
-    assertEqual((sched.match(/offerBookingNotice\(job\.id\)/g) || []).length, 3, 'and so do both ways of booking from the diary, and dragging a job to a new start');
+    assertEqual((sched.match(/offerBookingNotice\((?:\(booked \|\| job\)|job)\.id\)/g) || []).length, 3, 'and so do both ways of booking from the diary, and dragging a job to a new start');
   });
 
   test('Device: a second account cannot sign in where another account’s work is kept (v160)', async () => {
