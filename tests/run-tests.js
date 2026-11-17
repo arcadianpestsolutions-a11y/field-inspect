@@ -2908,6 +2908,84 @@
     assertEqual((sched.match(/offerBookingNotice\(job\.id\)/g) || []).length, 3, 'and so do both ways of booking from the diary, and dragging a job to a new start');
   });
 
+  test('Trial: a tester is asked about each report, and nothing is recorded for anyone else (v159)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const T = win.Tester;
+    assert(T, 'tester.js is loaded');
+    const { LOG_KEY, FEEDBACK_KEY } = T._keys;
+    win.localStorage.removeItem(LOG_KEY);
+    win.localStorage.removeItem(FEEDBACK_KEY);
+    try {
+      // Not on trial: nothing is kept and nothing is asked.
+      T._force(false);
+      T.event('tap', { what: 'x' });
+      assertEqual(win.localStorage.getItem(LOG_KEY), null, 'a business not on trial is never recorded');
+      assertEqual(await T.askAfterReport({ jobId: 'j' }), false, 'and never asked');
+
+      T._force(true);
+      T.event('report_finalized', { jobId: 'job-1', documentType: 'timber_pest_inspection', who: 'jane@example.com', phone: '0412345678' });
+      const log = JSON.parse(win.localStorage.getItem(LOG_KEY));
+      assertEqual(log.length, 1, 'a step is kept on the phone');
+      assertEqual(log[0].jobId, 'job-1', 'with the job id');
+      assertEqual(log[0].detail.documentType, 'timber_pest_inspection');
+      assert(!('who' in log[0].detail) && !('phone' in log[0].detail), 'an email or a phone number is dropped, never sent');
+
+      // The tap trail uses the button id, never its words.
+      const b = doc.createElement('button');
+      b.id = 'trial-probe-btn';
+      b.textContent = 'Mrs Smith, 12 Smith St';
+      doc.body.appendChild(b);
+      b.click();
+      b.remove();
+      const tap = JSON.parse(win.localStorage.getItem(LOG_KEY)).find((e) => e.event === 'tap');
+      assert(tap && tap.detail.what === 'trial-probe-btn', 'a tap is recorded by the button id');
+      assert(!JSON.stringify(tap).includes('Smith'), 'and not by what the button says');
+
+      // After a report: the form, a rating and two boxes, saved for sending.
+      const asked = T.askAfterReport({ jobId: 'job-1', documentType: 'timber_pest_inspection', title: 'Termite Inspection Report' });
+      await waitFor(() => doc.querySelector('.tester-feedback'), 'the feedback form opens');
+      const box = doc.querySelector('.tester-feedback');
+      assertEqual(box.querySelectorAll('[data-rating]').length, 5, 'a 1 to 5 rating');
+      assertEqual(box.querySelectorAll('textarea').length, 2, 'what was liked, and what could be better');
+      box.querySelector('[data-choice="send"]').click();
+      assert(/Pick a number or write something/.test(box.textContent), 'an empty form is not sent');
+      box.querySelector('[data-rating="4"]').click();
+      const [liked, better] = box.querySelectorAll('textarea');
+      liked.value = 'The walk was quick';
+      better.value = 'Let me add a roof void photo';
+      box.querySelector('[data-choice="send"]').click();
+      assertEqual(await asked, true, 'sending closes the form');
+      const fb = T.feedbackSent();
+      assertEqual(fb.length, 1);
+      assertEqual(fb[0].rating, 4);
+      assertEqual(fb[0].liked, 'The walk was quick');
+      assertEqual(fb[0].better, 'Let me add a roof void photo');
+      assertEqual(fb[0].title, 'Termite Inspection Report');
+
+      // The tracker shows what was sent before.
+      const opened = T.openTracker();
+      await waitFor(() => doc.querySelector('.tester-feedback'), 'the tracker opens');
+      const again = doc.querySelector('.tester-feedback');
+      assert(/What you have told us so far \(1\)/.test(again.textContent) && /roof void photo/.test(again.textContent), 'and lists what was said before');
+      again.querySelector('[data-choice="skip"]').click();
+      assertEqual(await opened, false);
+    } finally {
+      T._force(null);
+      win.localStorage.removeItem(LOG_KEY);
+      win.localStorage.removeItem(FEEDBACK_KEY);
+      const left = doc.querySelector('.tester-feedback');
+      if (left) left.remove();
+    }
+
+    const report = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assert(/window\.Tester\.askAfterReport\(\{ jobId: currentJobId/.test(report), 'finalising a report asks the tester');
+    const sql = await (await fetch('../supabase-migration-045-tester-feedback.sql', { cache: 'reload' })).text();
+    assert(/o\.id = org_id and o\.tester/.test(sql), 'the database only takes trial records from a business on trial');
+    assert(/grant select, insert on public\.tester_feedback to authenticated/.test(sql) && !/grant[^;]*update[^;]*tester_/.test(sql),
+      'granted explicitly, and never update');
+  });
+
   test('Scheduler: booking into a chosen slot uses that hour and duration', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

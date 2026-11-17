@@ -2818,7 +2818,11 @@
         // they decide what a report header says and whose name appears on a
         // job. Not awaited: a cached profile is already on hand, and the app
         // must not wait on the network to show the diary.
-        if (window.Org) window.Org.refresh().then(() => renderJobList());
+        if (window.Org) window.Org.refresh().then(() => {
+          // A business on trial gets its feedback button and first-day note.
+          if (window.Tester) window.Tester.check();
+          renderJobList();
+        });
         Sync.pullAll().then(() => renderJobList());
         // Xero sends the technician back here with ?code= after they grant
         // access. It can only be redeemed while signed in, since the exchange

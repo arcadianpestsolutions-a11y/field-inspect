@@ -2375,6 +2375,13 @@
     // property twice. The plan recorded above only matters for the case that
     // flow cannot cover: a visit that completes with no report at all.
     toast('Report finalized');
+    // A business trialling Scope is asked what it thought of this report
+    // (tester.js). Not awaited: nothing about the report waits on it.
+    if (window.Tester && window.Tester.active()) {
+      const docType = currentReport.documentType || 'timber_pest_inspection';
+      window.Tester.event('report_finalized', { jobId: currentJobId, documentType: docType });
+      window.Tester.askAfterReport({ jobId: currentJobId, documentType: docType, title: reportTitleFor(currentJob && currentJob.jobType, currentReport) });
+    }
     // The PDF goes to storage so the client portal has something to serve.
     // The server has never held one: it is rendered here in the browser and
     // posted to send-report-email as base64, so without this upload a portal

@@ -23,6 +23,9 @@
     // the server has the columns at all: saving them to a database without
     // them would fail the whole save, ABN and all.
     assistantSupported: false, assistantEnabled: false, assistantNotes: '',
+    // A business trialling Scope (migration 045): tester.js records its use
+    // and asks after each report. Never true for Arcadian.
+    tester: false,
   };
   const EMPTY_ME = { displayName: '', licenceNumber: '', phone: '', address: '' };
 
@@ -115,6 +118,7 @@
             assistantSupported: Object.prototype.hasOwnProperty.call(orgRow, 'portal_assistant_enabled'),
             assistantEnabled: orgRow.portal_assistant_enabled === true,
             assistantNotes: orgRow.portal_assistant_notes || '',
+            tester: orgRow.tester === true,
           };
           write(ORG_KEY, org);
         }
