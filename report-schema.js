@@ -98,14 +98,29 @@ const REPORT_SCHEMA = [
       // the inspection rather than describing them afterwards. AS 3660.2 lists
       // it first in its documentation set; the app previously had no equivalent
       // and captured the client's acknowledgement only at the end of the job.
-      { id: 'agreementAcceptedBy', label: 'Agreement accepted by (client name)', type: 'text', required: true },
-      { id: 'agreementAcceptedAt', label: 'Date agreed', type: 'date', required: true },
+      // v161: "No client agreement" lets the inspection go ahead without one
+      // (a client not on site, a repeat customer, a job booked by an agent).
+      // The name, date and signature then drop out and stop counting as
+      // missing, and the report says plainly that none was signed.
+      {
+        id: 'agreementStatus', label: 'Client agreement', type: 'select',
+        options: ['Signed by the client', 'No client agreement'],
+        default: 'Signed by the client',
+      },
+      {
+        id: 'noAgreementReason', label: 'Why there is no signed agreement (optional)', type: 'textarea',
+        placeholder: 'e.g. Client not on site; booked by the agent; ongoing customer',
+        showIf: { field: 'agreementStatus', equals: 'No client agreement' },
+      },
+      { id: 'agreementAcceptedBy', label: 'Agreement accepted by (client name)', type: 'text', required: true, showIf: { field: 'agreementStatus', notEquals: 'No client agreement' } },
+      { id: 'agreementAcceptedAt', label: 'Date agreed', type: 'date', required: true, showIf: { field: 'agreementStatus', notEquals: 'No client agreement' } },
       {
         id: 'agreedAccessLimitations',
         label: 'Access limitations agreed before the inspection (areas the client knows cannot be accessed)',
         type: 'textarea',
+        showIf: { field: 'agreementStatus', notEquals: 'No client agreement' },
       },
-      { id: 'agreementSignature', label: 'Client signature — agreement to scope and limitations', type: 'signature', required: true },
+      { id: 'agreementSignature', label: 'Client signature — agreement to scope and limitations', type: 'signature', required: true, showIf: { field: 'agreementStatus', notEquals: 'No client agreement' } },
     ],
   },
   {
@@ -527,6 +542,10 @@ const REPORT_SCHEMA = [
 
 function isFieldVisible(field, values) {
   if (!field.showIf) return true;
+  // `notEquals` (v161): shown unless the answer is that one. A report saved
+  // before the question existed has no answer at all, and keeps showing
+  // what it always showed.
+  if ('notEquals' in field.showIf) return values[field.showIf.field] !== field.showIf.notEquals;
   return values[field.showIf.field] === field.showIf.equals;
 }
 

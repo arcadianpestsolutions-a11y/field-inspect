@@ -1040,6 +1040,10 @@
       section.agreementAcceptedBy = name;
       section.agreementAcceptedAt = date;
       section.agreementSignature = agreement.signature;
+      // A signature that arrives after "No client agreement" was picked
+      // (v161) makes it signed: otherwise it would be stored and hidden.
+      section.agreementStatus = 'Signed by the client';
+      delete section.noAgreementReason;
       report.sections.agreement = section;
 
       appendAudit(report, {

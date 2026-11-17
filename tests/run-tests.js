@@ -5716,6 +5716,36 @@
     }
   });
 
+  test('Agreement: "No client agreement" lets it go ahead without a signature (v161)', async () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const agreement = win.REPORT_SCHEMA.find((s) => s.id === 'agreement');
+    const status = agreement.fields.find((f) => f.id === 'agreementStatus');
+    assert(status && status.options.includes('No client agreement'), 'the choice is there');
+    assertEqual(status.default, 'Signed by the client', 'and signed is the starting answer');
+
+    const visible = (values) => agreement.fields.filter((f) => U.isFieldVisible(f, values)).map((f) => f.id);
+    const none = { agreementStatus: 'No client agreement' };
+    assert(!visible(none).includes('agreementSignature') && !visible(none).includes('agreementAcceptedBy'),
+      'with no agreement, the name and signature are not asked for');
+    assert(visible(none).includes('noAgreementReason'), 'a reason can be given instead');
+    assertEqual(U.computeSectionStatus(agreement, Object.assign(U.defaultValuesForSection(agreement, null), none)), 'green',
+      'and the section counts as done');
+    // A report saved before the question existed still shows its signature.
+    assert(visible({ agreementSignature: 'data:image/png;base64,x' }).includes('agreementSignature'), 'older reports are unchanged');
+    assert(!visible({}).includes('noAgreementReason'), 'and are not asked why');
+
+    // A signature that arrives online later makes it signed again.
+    const job = await win.DB.addJob({ name: 'No Agreement Probe', address: '2 Probe St' });
+    await win.DB.saveReport({ jobId: job.id, sections: { agreement: { agreementStatus: 'No client agreement', noAgreementReason: 'Agent booked' } } });
+    const applied = await win.ReportUI.applyClientAgreement(job.id, { name: 'Pat Client', signature: 'data:image/png;base64,AAAA', at: Date.now() });
+    assert(applied && applied.ok !== false, 'the online signature is applied');
+    const sec = (await win.DB.getReport(job.id)).sections.agreement;
+    assertEqual(sec.agreementStatus, 'Signed by the client', 'and the section reads signed');
+    assert(!('noAgreementReason' in sec), 'with the old reason gone');
+    await win.DB.deleteJob(job.id);
+  });
+
   test('Business: provider fields are filled from the organisation', () => {
     const win = frame.contentWindow;
     const U = win.ReportSchemaUtils;
