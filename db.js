@@ -431,14 +431,19 @@ const DB = {
   async raiseNextVisit(previousId, { scheduledAt = null, scheduledDurationMins = null } = {}) {
     const previous = await this.getJob(previousId);
     if (!previous) return null;
+    // The customer's CURRENT phone and email (v164), not the ones typed on
+    // the old job: the office-admin test changed a number in Clients and the
+    // next visit (and its booking email) would still have used the old one.
+    let client = null;
+    try { client = previous.clientId ? await this.getClient(previous.clientId) : null; } catch (e) { client = null; }
     const next = await this.addJob({
       name: previous.name,
       address: previous.address,
       addressLat: previous.addressLat,
       addressLng: previous.addressLng,
       notes: previous.notes,
-      clientPhone: previous.clientPhone,
-      clientEmail: previous.clientEmail,
+      clientPhone: (client && client.phone) || previous.clientPhone,
+      clientEmail: (client && client.email) || previous.clientEmail,
       clientId: previous.clientId || null,
       jobType: previous.jobType,
       recurringFromId: previous.id,
@@ -1261,6 +1266,33 @@ const DB = {
     const index = store.index('jobId');
     const keys = await reqToPromise(index.getAllKeys(jobId));
     await Promise.all(keys.map((k) => reqToPromise(store.delete(k))));
+  },
+
+  // The customer for these details: the existing client with the same phone or
+  // email, or a new one (v164). Returns the client, or null when there is
+  // nothing to match on. Used when an enquiry becomes a job: Peter Nguyen got
+  // a job but never appeared in Clients, so his history had no home.
+  async findOrCreateClient({ name, phone, email, address } = {}) {
+    if (!phone && !email) return null;
+    const existing = window.Clients ? window.Clients.matchClient(await this.getClients(), { phone, email }) : null;
+    if (existing) return existing;
+    return this.addClient({ name: name || '', phone: phone || '', email: email || '', address: address || '' });
+  },
+
+  // Demo only: empties every store, so "Reset demo" really starts again
+  // (v164). It used to delete jobs and invoices only, and clients, enquiries
+  // and referrals from earlier poking survived every reset.
+  async clearDemoData() {
+    if (!window.IS_DEMO || DB_NAME !== 'field-inspect-db-demo') throw new Error('clearDemoData is demo-only');
+    const db = await openDB();
+    const names = Array.from(db.objectStoreNames);
+    await new Promise((resolve, reject) => {
+      const t = db.transaction(names, 'readwrite');
+      for (const n of names) t.objectStore(n).clear();
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
   },
 
   // Test-only: closes the open connection so the test suite can safely

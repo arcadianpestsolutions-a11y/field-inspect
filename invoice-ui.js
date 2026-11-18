@@ -178,7 +178,7 @@
     // "Xero not configured" on a phone that hasn't connected Xero, or offline.
     if (current.xeroInvoiceId) {
       xeroStateEl.innerHTML =
-        `<span class="xero-pill xero-on">In Xero as ${escapeHtml(current.xeroStatus || 'DRAFT')}</span>`;
+        `<span class="xero-pill xero-on">In Xero: ${escapeHtml(xeroWords(current.xeroStatus))}</span>`;
       xeroBtn.textContent = 'Already sent to Xero';
       xeroBtn.disabled = true;
       return;
@@ -261,6 +261,20 @@
     }
   }
 
+  // Xero's words for an invoice, in plain ones (v164): "AUTHORISED" meant
+  // nothing to the office-admin test.
+  function xeroWords(status) {
+    const s = String(status || 'DRAFT').toUpperCase();
+    return ({
+      DRAFT: 'draft, not sent',
+      SUBMITTED: 'waiting for approval',
+      AUTHORISED: 'approved, waiting for payment',
+      PAID: 'paid',
+      VOIDED: 'cancelled',
+      DELETED: 'deleted',
+    })[s] || s.toLowerCase();
+  }
+
   function askPaidMethod(inv) {
     return new Promise((resolve) => {
       const totals = I.computeTotals(inv);
@@ -288,7 +302,9 @@
       }
       const cancel = document.createElement('button');
       cancel.type = 'button';
-      cancel.className = 'btn btn-outline full';
+      // A plain link (v164): as an outlined button it was the one green,
+      // highlighted thing on the sheet, so it read as the answer.
+      cancel.className = 'link-btn full';
       cancel.dataset.method = '';
       cancel.textContent = 'Cancel';
       cancel.style.marginTop = '12px';

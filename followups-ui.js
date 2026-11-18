@@ -198,6 +198,7 @@
     if (!next) return;
     const fresh = await DB.getJob(item.job.id);
     if (fresh) await DB.updateJob(fresh.id, { followUp: F.logged(fresh, 'booked', '') });
+    refreshBanner();
   }
 
   function chooser(cardEl, title, options, onPick) {
@@ -223,8 +224,17 @@
     chooser(cardEl, 'How did it go?', opts, async (o, note) => {
       const fresh = await DB.getJob(item.job.id);
       if (!fresh) return;
+      // "Booked in" asks for the time first (v164). If they back out, the call
+      // and its note are still kept, as a call that did not end in a booking.
+      if (o.key === 'booked') {
+        const next = window.rebookJob ? await window.rebookJob(fresh.id) : null;
+        const after = await DB.getJob(fresh.id);
+        await DB.updateJob(fresh.id, { followUp: F.logged(after || fresh, next ? 'booked' : 'no_answer', next ? note : ['Spoke to them, not booked yet', note].filter(Boolean).join(': ')) });
+        if (!next) await render();
+        refreshBanner();
+        return;
+      }
       await DB.updateJob(fresh.id, { followUp: F.logged(fresh, o.key, note) });
-      if (o.key === 'booked') { await window.rebookJob(fresh.id); return; }
       if (o.offboard) {
         await render();
         await offboardFromItem(Object.assign({}, item, { job: await DB.getJob(fresh.id) }), o.label);
@@ -270,8 +280,11 @@
       { title: 'Stop following up?', okLabel: 'Stop following up' });
     if (!ok) return;
     const fresh = await DB.getJob(item.job.id);
-    await DB.updateJob(fresh.id, { followUp: F.stopped(fresh, reason || 'Stopped by hand') });
-    toast('No longer followed up.');
+    const mute = MUTE_REASONS.includes(reason) && !fresh.commsOptOut;
+    await DB.updateJob(fresh.id, mute
+      ? { followUp: Object.assign(F.stopped(fresh, reason), { mutedByOffboard: true }), commsOptOut: true }
+      : { followUp: F.stopped(fresh, reason || 'Stopped by hand') });
+    toast(mute ? 'No longer followed up, and automated messages are off.' : 'No longer followed up.');
     await afterChange();
   }
 
@@ -288,17 +301,30 @@
     if (!ok) return false;
     const now = Date.now();
     await DB.saveClient(Object.assign({}, client, { archivedAt: now, archivedReason: why }));
+    // Someone who sold up or said no also stops getting automated messages
+    // (v164): the office-admin test recorded "we've moved, stop contacting
+    // us" and the job still said "Automated messages on". Marked, so bringing
+    // them back turns on only what this turned off.
+    const mute = MUTE_REASONS.includes(why);
     for (const job of await DB.getJobsForClient(clientId)) {
-      if (job.nextDueAt && !(job.followUp && job.followUp.stoppedAt)) {
-        await DB.updateJob(job.id, { followUp: F.stopped(job, 'Customer offboarded', now) });
+      const patch = {};
+      let f = job.followUp || null;
+      if (job.nextDueAt && !(f && f.stoppedAt)) f = F.stopped(job, 'Customer offboarded', now);
+      if (mute && !job.commsOptOut) {
+        patch.commsOptOut = true;
+        f = Object.assign({}, f || {}, { mutedByOffboard: true });
       }
+      if (f !== (job.followUp || null)) patch.followUp = f;
+      if (Object.keys(patch).length) await DB.updateJob(job.id, patch);
     }
-    toast(`${label} offboarded.`);
+    toast(mute ? `${label} offboarded. Automated messages are off for them.` : `${label} offboarded.`);
     await afterChange();
     return true;
   }
 
   // The reason, asked as a short list with "Other" for anything else.
+  const MUTE_REASONS = ['Not interested', 'Sold or moved away'];
+
   function pickReason(label) {
     return new Promise((resolve) => {
       const overlay = el('div', 'tester-feedback');
@@ -326,9 +352,16 @@
     next.archivedReason = '';
     await DB.saveClient(next);
     for (const job of await DB.getJobsForClient(clientId)) {
-      if (job.followUp && job.followUp.stoppedReason === 'Customer offboarded') {
-        await DB.updateJob(job.id, { followUp: F.resumed(job) });
+      const f = job.followUp || {};
+      const patch = {};
+      if (f.stoppedReason === 'Customer offboarded') patch.followUp = F.resumed(job);
+      if (f.mutedByOffboard) {
+        patch.commsOptOut = false;
+        const g = Object.assign({}, patch.followUp || f);
+        delete g.mutedByOffboard;
+        patch.followUp = g;
       }
+      if (Object.keys(patch).length) await DB.updateJob(job.id, patch);
     }
     toast(`${window.Clients ? window.Clients.labelFor(next) : 'Customer'} is back on your books.`);
     await afterChange();

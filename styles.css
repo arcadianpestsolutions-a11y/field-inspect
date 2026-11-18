@@ -774,7 +774,10 @@ input:focus, textarea:focus {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  z-index: 200;
+  /* Above the bottom sheets (.tester-feedback, 3000) since v164: Change time
+     asked "Already booked at that time?" UNDER its own sheet, so Save looked
+     frozen until Cancel uncovered the question. */
+  z-index: 3500;
 }
 .app-dialog-card {
   background: var(--card);

@@ -752,6 +752,10 @@
 
       if (spec.invoice) await seedInvoice(job, spec, invoiceIndex++);
     }
+    // Group the sample jobs into clients now (v164). The app's own grouping
+    // runs as it opens, before these exist, so every demo client said
+    // "no jobs yet" and searching Clients by address found nothing.
+    if (DB.backfillClients) await DB.backfillClients();
   }
 
   function banner() {
@@ -771,8 +775,11 @@
       const { askConfirm } = window.Common;
       if (!await askConfirm('Clear the demo data and start again?',
         { title: 'Reset demo', okLabel: 'Reset' })) return;
-      for (const j of await DB.getJobs()) await DB.deleteJob(j.id);
-      for (const inv of await DB.getAllInvoices()) await DB.deleteInvoice(inv.id);
+      if (DB.clearDemoData) await DB.clearDemoData();
+      else {
+        for (const j of await DB.getJobs()) await DB.deleteJob(j.id);
+        for (const inv of await DB.getAllInvoices()) await DB.deleteInvoice(inv.id);
+      }
       location.reload();
     });
     bar.appendChild(reset);

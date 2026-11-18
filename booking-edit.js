@@ -9,7 +9,7 @@
 // Asks before landing on another job (Scheduler.confirmNoOverlap), and asks
 // before telling the client (BookingNotice), the same as every booking path.
 //
-// EXPOSES: window.BookingEdit = { render, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength }
+// EXPOSES: window.BookingEdit = { render, pickTime, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength }
 (() => {
   'use strict';
 
@@ -64,13 +64,15 @@
     host.insertBefore(card, anchor);
   }
 
-  function openSheet(job, hooks) {
-    const base = job.scheduledAt ? new Date(job.scheduledAt) : (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; })();
+  // The day / start / how-long sheet, shared by Change time on a job and by
+  // booking the next visit (v164). onSave(when, mins) resolves true to close
+  // the sheet, false to leave it open (a clash the person backed out of).
+  function sheet({ title, sub, base, mins: cur, saveLabel, onSave, onClose, extra }) {
     const overlay = el('div', 'tester-feedback booking-edit');
     overlay.setAttribute('role', 'dialog');
     const card = el('div', 'tester-feedback-card');
-    card.appendChild(el('h2', '', job.scheduledAt ? 'Change the booking' : 'Book a time'));
-    card.appendChild(el('p', 'tester-feedback-sub', job.name || ''));
+    card.appendChild(el('h2', '', title));
+    if (sub) card.appendChild(el('p', 'tester-feedback-sub', sub));
 
     const dateLabel = el('label', 'tester-feedback-label', 'Day');
     const date = el('input', 'booking-edit-date');
@@ -90,7 +92,6 @@
     const time = select('booking-edit-time', times, nearest);
     timeLabel.appendChild(time);
 
-    const cur = job.scheduledDurationMins || 60;
     const lens = LENGTHS.includes(cur) ? LENGTHS : LENGTHS.concat([cur]).sort((a, b) => a - b);
     const lenLabel = el('label', 'tester-feedback-label', 'How long');
     const len = select('booking-edit-length', lens.map((m) => [m, lengthLabel(m)]), cur);
@@ -101,16 +102,22 @@
     const cancel = el('button', 'btn btn-secondary flex1', 'Cancel');
     cancel.type = 'button';
     cancel.dataset.action = 'booking-edit-cancel';
-    const save = el('button', 'btn btn-primary flex1', 'Save');
+    const save = el('button', 'btn btn-primary flex1', saveLabel || 'Save');
     save.type = 'button';
     save.dataset.action = 'booking-edit-save';
     row.append(cancel, save);
     card.append(dateLabel, timeLabel, lenLabel, err, row);
     overlay.appendChild(card);
 
-    const close = () => overlay.remove();
-    cancel.addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    let closed = false;
+    const close = (how) => {
+      if (closed) return;
+      closed = true;
+      overlay.remove();
+      if (onClose) onClose(how);
+    };
+    cancel.addEventListener('click', () => close('cancel'));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close('cancel'); });
     save.addEventListener('click', async () => {
       if (!date.value) { err.textContent = 'Pick a day.'; return; }
       const [y, mo, d] = date.value.split('-').map(Number);
@@ -120,23 +127,100 @@
       if (!Number.isFinite(when)) { err.textContent = 'That day does not look right.'; return; }
       save.disabled = true;
       try {
-        if (window.Scheduler && window.Scheduler.confirmNoOverlap) {
-          if (!(await window.Scheduler.confirmNoOverlap(job.id, when, mins))) { save.disabled = false; return; }
-        }
-        const moved = when !== job.scheduledAt;
-        await DB.updateJob(job.id, { scheduledAt: when, scheduledDurationMins: mins });
-        close();
-        if (window.Common) window.Common.toast(`Booked ${fmtWhen(when)} for ${lengthLabel(mins)}`);
-        // A new time is news for the client; a new length on its own is not.
-        if (moved && window.BookingNotice) await window.BookingNotice.offer(await DB.getJob(job.id));
-        if (hooks && hooks.onSaved) await hooks.onSaved(await DB.getJob(job.id));
+        if (await onSave(when, mins)) close('saved');
+        else save.disabled = false;
       } catch (e) {
         save.disabled = false;
         err.textContent = (window.DB && window.DB.describeSaveFailure) ? window.DB.describeSaveFailure(e, 'The booking') : 'Could not save. Try again.';
-        if (window.ErrorLog) window.ErrorLog.note(e, 'booking: change time');
+        if (window.ErrorLog) window.ErrorLog.note(e, 'booking: save');
       }
     });
+    if (extra) extra(card, { close, err });
     document.body.appendChild(overlay);
+  }
+
+  const noClash = async (jobId, when, mins) => !(window.Scheduler && window.Scheduler.confirmNoOverlap)
+    || window.Scheduler.confirmNoOverlap(jobId, when, mins);
+
+  function openSheet(job, hooks) {
+    const base = job.scheduledAt ? new Date(job.scheduledAt) : (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; })();
+    sheet({
+      title: job.scheduledAt ? 'Change the booking' : 'Book a time',
+      sub: job.name || '',
+      base,
+      mins: job.scheduledDurationMins || 60,
+      onSave: async (when, mins) => {
+        if (!(await noClash(job.id, when, mins))) return false;
+        const moved = when !== job.scheduledAt;
+        await DB.updateJob(job.id, { scheduledAt: when, scheduledDurationMins: mins });
+        // Close first, so the question about telling the client is not
+        // asked over the top of this sheet.
+        setTimeout(async () => {
+          if (window.Common) window.Common.toast(`Booked ${fmtWhen(when)} for ${lengthLabel(mins)}`);
+          // A new time is news for the client; a new length on its own is not.
+          if (moved && window.BookingNotice) await window.BookingNotice.offer(await DB.getJob(job.id));
+          if (hooks && hooks.onSaved) await hooks.onSaved(await DB.getJob(job.id));
+        }, 0);
+        return true;
+      },
+      // Cancel the booking, keep the job (v164). The office-admin test found
+      // the only way to cancel was the bin: "Delete this job and all its
+      // photos", which loses the client, the history and why it was cancelled.
+      extra: !job.scheduledAt ? null : (card, { close, err }) => {
+        const drop = el('button', 'link-btn full booking-edit-unbook', 'Cancel this booking (keeps the job)');
+        drop.type = 'button';
+        drop.dataset.action = 'booking-edit-unbook';
+        drop.addEventListener('click', async () => {
+          const reason = window.Dialog
+            ? await window.Dialog.prompt(
+              `Take ${job.name || 'this job'} off the diary? The job, the client and any photos stay. Nothing is sent to the client.`,
+              '',
+              { title: 'Cancel this booking', okLabel: 'Cancel booking', cancelLabel: 'Keep it', placeholder: 'Why? (optional, e.g. customer rang to cancel)' },
+            )
+            : (window.confirm('Cancel this booking?') ? '' : null);
+          if (reason == null) return;
+          try {
+            const fresh = await DB.getJob(job.id);
+            const stamp = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+            const why = reason.trim();
+            const note = `Booking for ${fmtWhen(job.scheduledAt)} cancelled ${stamp}${why ? `: ${why}` : '.'}`;
+            const notes = [(fresh && fresh.notes) || '', note].filter(Boolean).join('\n');
+            await DB.updateJob(job.id, { scheduledAt: null, notes });
+            close('unbooked');
+            if (window.Common) window.Common.toast('Booking cancelled. Nothing was sent to the client.');
+            if (hooks && hooks.onSaved) await hooks.onSaved(await DB.getJob(job.id));
+          } catch (e) {
+            err.textContent = 'Could not cancel the booking. Try again.';
+            if (window.ErrorLog) window.ErrorLog.note(e, 'booking: cancel');
+          }
+        });
+        card.appendChild(drop);
+      },
+    });
+  }
+
+  // Ask for a day, start and length for a visit that does not exist yet (the
+  // next visit, booked from Follow-ups or the job screen). Resolves
+  // { when, mins } once it is clear of clashes, or null if they backed out.
+  // v164: it used to book tomorrow 9am without asking, which clashed and lost
+  // the "book me in next Tuesday" the caller had just asked for.
+  function pickTime({ title, sub, when, mins }) {
+    return new Promise((resolve) => {
+      let picked = null;
+      sheet({
+        title: title || 'Book a time',
+        sub,
+        base: new Date(when),
+        mins: mins || 60,
+        saveLabel: 'Book it',
+        onSave: async (w, m) => {
+          if (!(await noClash(null, w, m))) return false;
+          picked = { when: w, mins: m };
+          return true;
+        },
+        onClose: () => resolve(picked),
+      });
+    });
   }
 
   // ---- "How long" on the New Job form ----
@@ -160,6 +244,6 @@
     if (s) s.value = '60';
   }
 
-  window.BookingEdit = { render, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength, resetNewJobLength };
+  window.BookingEdit = { render, pickTime, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength, resetNewJobLength };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addLengthToNewJobForm); else addLengthToNewJobForm();
 })();

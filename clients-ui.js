@@ -257,9 +257,40 @@
   }
 
   async function save() {
+    const before = Object.assign({}, current);
     current = await DB.saveClient(Object.assign({}, current, typed()));
-    toast('Client saved');
+    const updated = await carryContactToOpenJobs(before, current);
+    toast(updated ? `Client saved, and ${updated} upcoming ${updated === 1 ? 'job' : 'jobs'} updated` : 'Client saved');
     await openList();
+  }
+
+  // A new phone or email reaches the jobs still to come (v164). The office-
+  // admin test changed a number here and the booked job kept the old one, so
+  // the booking email and reminders would have gone to the old contact.
+  // Finished jobs are left alone on purpose (see clients.js: a report that
+  // went out keeps saying what it said). Asks first, because a job can have
+  // a different contact on purpose (a tenant, a property manager).
+  async function carryContactToOpenJobs(before, after) {
+    const phoneChanged = String(before.phone || '') !== String(after.phone || '') && after.phone;
+    const emailChanged = String(before.email || '') !== String(after.email || '') && after.email;
+    if (!phoneChanged && !emailChanged) return 0;
+    const open = (await DB.getJobsForClient(after.id)).filter((j) => j.status !== 'completed'
+      && ((phoneChanged && j.clientPhone !== after.phone) || (emailChanged && j.clientEmail !== after.email)));
+    if (!open.length) return 0;
+    const what = [phoneChanged && 'phone number', emailChanged && 'email'].filter(Boolean).join(' and ');
+    const ok = await askConfirm(
+      `${open.length === 1 ? 'Their upcoming job still has' : `${open.length} upcoming jobs still have`} the old ${what}. `
+      + 'Booking details and reminders go to the contact on the job. Finished jobs and sent reports are not changed.',
+      { title: `Use the new ${what} on upcoming jobs?`, okLabel: 'Update them', cancelLabel: 'Leave them' },
+    );
+    if (!ok) return 0;
+    for (const j of open) {
+      const patch = {};
+      if (phoneChanged) patch.clientPhone = after.phone;
+      if (emailChanged) patch.clientEmail = after.email;
+      await DB.updateJob(j.id, patch);
+    }
+    return open.length;
   }
 
   async function removeClient() {

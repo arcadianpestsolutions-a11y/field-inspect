@@ -40,7 +40,8 @@
       { id: 'address', label: 'Address', type: 'text', maxLength: 200 },
       {
         id: 'jobType', label: 'What they want', type: 'select',
-        options: ['termite', 'pest_treatment'],
+        // Shown in words (v164): the office-admin test saw "pest_treatment".
+        options: [{ value: 'termite', label: 'Termite inspection' }, { value: 'pest_treatment', label: 'Pest treatment' }],
       },
       {
         id: 'source', label: 'How they found you', type: 'select',
@@ -263,7 +264,15 @@
     );
     if (!ok) return;
     await persist({});
-    const job = await DB.addJob(window.Pipeline.jobFromLead(current));
+    const draft = window.Pipeline.jobFromLead(current);
+    // On the client list too (v164), not just a job with a name on it.
+    try {
+      const client = DB.findOrCreateClient ? await DB.findOrCreateClient({
+        name: draft.name, phone: draft.clientPhone, email: draft.clientEmail, address: draft.address,
+      }) : null;
+      if (client) draft.clientId = client.id;
+    } catch (e) { /* a job must still be made without a client record */ }
+    const job = await DB.addJob(draft);
     await DB.saveLead(Object.assign({}, current, {
       stage: 'won', stageChangedAt: Date.now(), convertedJobId: job.id,
     }));
@@ -358,6 +367,9 @@
       if (isBlankLead(current)) {
         await DB.deleteLead(current.id);
         current = null;
+      } else {
+        // There is no Save button on purpose; say that it saved (v164).
+        toast(`Saved ${current.name || 'the enquiry'}`);
       }
     }
     await openBoard();

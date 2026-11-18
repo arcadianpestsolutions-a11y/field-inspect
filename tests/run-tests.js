@@ -2470,7 +2470,10 @@
 
     assert(!doc.getElementById('due-callout').classList.contains('hidden'), 'due callout should show');
     doc.getElementById('rebook-job-btn').click();
-    await wait(500);
+    // v164: it asks for the day and time first, suggesting tomorrow 9am.
+    await waitFor(() => doc.querySelector('.booking-edit [data-action="booking-edit-save"]'), 'asks when to book the next visit');
+    doc.querySelector('.booking-edit [data-action="booking-edit-save"]').click();
+    await waitFor(async () => (await win.DB.getJobs()).some((j) => j.recurringFromId === previous.id), 'the next visit is raised');
 
     const jobs = await win.DB.getJobs();
     const next = jobs.find((j) => j.recurringFromId === previous.id);
@@ -5886,6 +5889,80 @@
     const app = await (await fetch('../app.js', { cache: 'reload' })).text();
     assert(/document\.activeElement !== jobAddressInput/.test(app), 'late address suggestions no longer cover the next box');
     assert(/Invoice — paid ✓/.test(app), 'a paid invoice says paid on the job');
+  });
+
+  test('Office-admin round (v164): cancel keeps the job, new contact reaches upcoming jobs, moved means quiet', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const DAY = 86400000;
+
+    // Cancel a booking without deleting the job.
+    const job = await win.DB.addJob({ name: 'Cancel Probe', address: '9 Probe St', scheduledAt: Date.now() + 2 * DAY });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.getElementById('job-booking-change'), 'Change time');
+    doc.getElementById('job-booking-change').click();
+    await waitFor(() => doc.querySelector('[data-action="booking-edit-unbook"]'), 'the sheet offers Cancel this booking');
+    // The test page answers Dialog questions through win.prompt / win.confirm.
+    const origPrompt = win.prompt;
+    let askedWhy = '';
+    win.prompt = (msg) => { askedWhy = msg; return 'customer rang'; };
+    try {
+      doc.querySelector('[data-action="booking-edit-unbook"]').click();
+      await waitFor(async () => !(await win.DB.getJob(job.id)).scheduledAt, 'off the diary');
+    } finally { win.prompt = origPrompt; }
+    assert(/Nothing is sent to the client/.test(askedWhy), 'it asks first, and says nothing is sent');
+    const kept = await win.DB.getJob(job.id);
+    assert(kept, 'the job is kept');
+    assert(/cancelled .*: customer rang/.test(kept.notes), 'and says when and why it was cancelled');
+
+    // Dialogs sit above sheets, so a clash question is never hidden.
+    const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
+    const zOf = (sel) => {
+      const at = css.indexOf(sel + ' {');
+      const rule = at < 0 ? '' : css.slice(at, css.indexOf('}', at));
+      return Number((rule.match(/z-index: (\d+)/) || [])[1]);
+    };
+    assert(zOf('.app-dialog') > zOf('.tester-feedback'), 'a question is drawn above the sheet that asked it');
+
+    // A new number in Clients reaches the job still to come, not the finished one.
+    const client = await win.DB.addClient({ name: 'Contact Probe', phone: '0400 000 111', email: 'old@example.test' });
+    const open = await win.DB.addJob({ name: 'Contact Probe', clientId: client.id, clientPhone: '0400 000 111', clientEmail: 'old@example.test', scheduledAt: Date.now() + DAY });
+    const done = await win.DB.addJob({ name: 'Contact Probe', clientId: client.id, clientPhone: '0400 000 111', clientEmail: 'old@example.test' });
+    await win.DB.updateJob(done.id, { status: 'completed' });
+    const original = win.confirm;
+    let askedUpdate = '';
+    win.confirm = (msg) => { askedUpdate = msg; return true; };
+    try {
+      await win.ClientsUI.openClient(client.id);
+      await wait(150);
+      const phone = doc.querySelector('#view-client [data-field-row="phone"] input');
+      assert(phone, 'the client form has a phone box');
+      phone.value = '0400 222 333';
+      phone.dispatchEvent(new win.Event('input', { bubbles: true }));
+      const saveBtn = doc.getElementById('client-save-btn');
+      saveBtn.click();
+      await waitFor(async () => (await win.DB.getJob(open.id)).clientPhone === '0400 222 333', 'the upcoming job has the new number');
+      assertEqual((await win.DB.getJob(done.id)).clientPhone, '0400 000 111', 'the finished job keeps what its report said');
+      assert(/upcoming job/.test(askedUpdate), 'it asked before changing the job');
+    } finally { win.confirm = original; }
+
+    // An enquiry that becomes a job lands on the client list.
+    const made = await win.DB.findOrCreateClient({ name: 'Enquiry Probe', phone: '0499 888 777' });
+    assert(made && made.id, 'a client is made for a new caller');
+    assertEqual((await win.DB.findOrCreateClient({ phone: '0499888777' })).id, made.id, 'and found again by the same number');
+    const leads = await (await fetch('../leads-ui.js', { cache: 'reload' })).text();
+    assert(leads.includes('DB.findOrCreateClient({'), 'converting an enquiry links the client');
+
+    // "Sold or moved away" turns automated messages off, and back on with them.
+    const fu = await (await fetch('../followups-ui.js', { cache: 'reload' })).text();
+    assert(fu.includes("const MUTE_REASONS = ['Not interested', 'Sold or moved away'];"), 'moving away or saying no means quiet');
+    assert(fu.includes('if (f.mutedByOffboard) {'), 'bringing them back turns on only what offboarding turned off');
+    const appSrc = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(appSrc.includes('if (job.followUp && job.followUp.stoppedAt) return null;'), 'no "Book the next inspection" for someone no longer followed up');
+
+    for (const id of [job.id, open.id, done.id]) await win.DB.deleteJob(id);
+    await win.DB.deleteClient(client.id);
+    await win.DB.deleteClient(made.id);
   });
 
   test('Business: provider fields are filled from the organisation', () => {

@@ -746,7 +746,7 @@
     document.getElementById('due-callout-title').textContent =
       due.level === 'overdue' ? `Re-inspection ${due.label.toLowerCase()}` : `Re-inspection ${due.label.toLowerCase()}`;
     document.getElementById('due-callout-sub').textContent =
-      `${job.name}${job.address ? ' · ' + job.address : ''} was last done ${fmtDate(job.createdAt)}.`;
+      `${job.name}${job.address ? ' · ' + job.address : ''} was last done ${fmtDate(job.inspectionEndedAt || job.scheduledAt || job.createdAt)}.`;
     el.classList.remove('hidden');
   }
 
@@ -773,15 +773,32 @@
     // This is the one booking path with no calendar in view when it fires —
     // it's tapped from the job screen, not the scheduler — so a clash here
     // is the one a technician is least likely to spot on their own.
-    if (autoWhen && window.Scheduler && window.Scheduler.confirmNoOverlap) {
+    // v164: ASK for the day and time, starting from that suggestion. It used
+    // to book it straight in, so "book me in next Tuesday" meant booking
+    // tomorrow 9am, hitting a clash, and starting again in the diary.
+    let when = autoWhen;
+    let mins = previous.scheduledDurationMins || 60;
+    if (window.BookingEdit && window.BookingEdit.pickTime) {
+      const picked = await window.BookingEdit.pickTime({
+        title: 'Book the next visit',
+        sub: previous.name || '',
+        when: autoWhen || tomorrowNine,
+        mins,
+      });
+      if (!picked) { toast('Not booked.'); return null; }
+      when = picked.when;
+      mins = picked.mins;
+    } else if (autoWhen && window.Scheduler && window.Scheduler.confirmNoOverlap) {
       const clear = await window.Scheduler.confirmNoOverlap(null, autoWhen, 60);
       if (!clear) { toast('Rebooking cancelled — pick a time in the scheduler instead.'); return null; }
     }
-    const next = await DB.raiseNextVisit(previous.id, { scheduledAt: autoWhen });
+    const next = await DB.raiseNextVisit(previous.id, { scheduledAt: when, scheduledDurationMins: mins });
     if (!next) return null;
-    toast(`Next visit booked for ${next.name}${autoWhen ? ', ' + new Date(autoWhen).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) + ' 9am. Move it in the diary if needed.' : ''}`);
+    toast(`Next visit booked for ${next.name}${when ? ', ' + new Date(when).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''}`);
     await renderJobList();
     showJobView(next.id);
+    // Same question as every other booking, "Not yet" first.
+    if (when && window.BookingNotice) await window.BookingNotice.offer(await DB.getJob(next.id));
     return next;
   }
   // Follow-ups books from its own screen (followups-ui.js).
@@ -975,6 +992,9 @@
   const DUE_SOON_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
   function dueInfo(job) {
     if (!job.nextDueAt) return null;
+    // Not followed up any more (offboarded, sold, said no): no "Due in 11d"
+    // and no "Book the next inspection" (v164).
+    if (job.followUp && job.followUp.stoppedAt) return null;
     const days = Math.round((job.nextDueAt - Date.now()) / (24 * 60 * 60 * 1000));
     if (days < 0) return { level: 'overdue', label: `Overdue ${Math.abs(days)}d`, days };
     if (days === 0) return { level: 'overdue', label: 'Due today', days };
