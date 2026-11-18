@@ -361,5 +361,5 @@
   const openBtn = document.getElementById('open-clients-btn');
   if (openBtn) openBtn.addEventListener('click', openList);
 
-  window.ClientsUI = { open: openList, openClient, CLIENT_SECTION };
+  window.ClientsUI = { open: openList, openClient, currentId: () => (current && current.id) || null, CLIENT_SECTION };
 })();

@@ -79,7 +79,7 @@
     const summary = window.Pipeline.summarise({ leads });
 
     subtitleEl.textContent = summary.openCount
-      ? `${summary.openCount} open · ${money(summary.forecastCents)} forecast`
+      ? `${summary.openCount} open · about ${money(summary.forecastCents)} likely to be won`
       : 'Nothing open';
 
     // The chase list first, and only when there is one.

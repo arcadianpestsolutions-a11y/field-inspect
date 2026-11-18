@@ -277,7 +277,9 @@
 
   function fmtDate(ts) {
     const d = new Date(ts);
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    // Australian order everywhere (v165): a browser set to US English showed
+    // "Nov 20, 2026" beside "Fri, 20 Nov" on the next screen.
+    return d.toLocaleDateString('en-AU', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
   // "Booked Tue, 13 Oct, 8am" or "Added 9 Oct 2026". Never just the creation date on
@@ -497,10 +499,74 @@
   window.addEventListener('online', updateSyncBarText);
   window.addEventListener('offline', updateSyncBarText);
 
+  // Where Back on a job goes (v165). It always went to the job list, so a job
+  // opened from Enquiries, the Diary, Follow-ups or a customer's history lost
+  // your place. Remembered only when arriving from one of those screens: a
+  // job reopened from its own report or invoice keeps where it came from.
+  let jobReturn = null;
+  // A spray is not an inspection (v165): the office-admin test was told to
+  // "Start Inspection" on a general pest booking.
+  let currentJobType = 'termite';
+  const startLabel = (type) => (type === 'pest_treatment' ? '▶ Start treatment' : '▶ Start inspection');
+
+  // On a finished job whose next visit has been booked: say so, with a way to
+  // it (v165). Booking from the diary or Follow-ups makes a NEW job, and the
+  // old one showed nothing, so it looked as if the booking had not saved.
+  async function renderNextVisitLink(job) {
+    const old = document.getElementById('job-next-visit');
+    if (old) old.remove();
+    if (!job || job.status !== 'completed') return;
+    const next = (await DB.getJobs())
+      .filter((j) => j.recurringFromId === job.id && j.status !== 'completed')
+      .sort((a, b) => (a.scheduledAt || Infinity) - (b.scheduledAt || Infinity))[0];
+    if (!next || currentJobId !== job.id || document.getElementById('job-next-visit')) return;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'job-next-visit';
+    b.className = 'card job-next-visit';
+    b.textContent = next.scheduledAt
+      ? `📅 Next visit booked: ${new Date(next.scheduledAt).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })} ›`
+      : '📅 Next visit raised, not booked a time yet ›';
+    b.addEventListener('click', () => showJobView(next.id));
+    const host = viewJob.querySelector('.content') || viewJob;
+    host.insertBefore(b, host.firstChild);
+  }
+  const JOB_RETURNS = {
+    'view-leads': () => window.LeadsUI && window.LeadsUI.open(),
+    'view-lead': () => window.LeadsUI && window.LeadsUI.open(),
+    'view-followups': () => window.FollowUpsUI && window.FollowUpsUI.open(),
+    'view-scheduler': () => window.Scheduler && (window.Scheduler.reopen || window.Scheduler.open)(),
+    'view-clients': () => window.ClientsUI && window.ClientsUI.open(),
+    'view-business': () => window.BusinessUI && window.BusinessUI.open(),
+  };
+  function noteJobReturn() {
+    const open = Array.from(document.querySelectorAll('section.view')).filter((v) => !v.classList.contains('hidden'));
+    const from = open.length ? open[open.length - 1].id : '';
+    if (from === 'view-joblist') { jobReturn = null; return; }
+    if (from === 'view-client' && window.ClientsUI && window.ClientsUI.currentId) {
+      const id = window.ClientsUI.currentId();
+      jobReturn = id ? () => window.ClientsUI.openClient(id) : null;
+      return;
+    }
+    if (JOB_RETURNS[from]) jobReturn = JOB_RETURNS[from];
+  }
+  async function leaveJob() {
+    const go = jobReturn;
+    jobReturn = null;
+    if (go) {
+      try { await go(); return; } catch (e) { /* fall back to the list */ }
+    }
+    showJobListView();
+  }
+
   async function showJobView(jobId) {
+    noteJobReturn();
     currentJobId = jobId;
     const job = await DB.getJob(jobId);
     if (!job) { showJobListView(); return; }
+    currentJobType = job.jobType || 'termite';
+    if (startInspectionBtn && !startInspectionBtn.disabled) startInspectionBtn.textContent = startLabel(currentJobType);
+    renderNextVisitLink(job);
     jobTitleEl.textContent = job.name;
     jobSubtitleEl.textContent = addressAndWhen(job);
     await renderAssignedToButton(job);
@@ -630,9 +696,11 @@
 
     const label = document.createElement('span');
     label.className = 'comms-state';
+    // Says WHICH messages (v165): "Automated messages on" did not say what
+    // would be sent, when, or how to see it.
     label.textContent = job.commsOptOut
       ? 'Automated messages off for this client'
-      : 'Automated messages on';
+      : 'Automated messages on: a reminder the day before a booking (see 🔔 in the Diary) and when a re-inspection is due';
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -820,7 +888,11 @@
       planText.textContent = `🔁 On a ${job.recurrenceMonths}-monthly plan — the next visit is raised automatically.`;
       planBtn.textContent = 'Stop plan';
     } else {
-      planText.textContent = 'No standing plan — this property comes back only if someone rebooks it.';
+      // Says what the due date (if any) will do, so it does not read as the
+      // opposite of "Re-inspection due in 11d" just above it (v165).
+      planText.textContent = job.nextDueAt
+        ? 'No repeat plan. It is due again from its report, so it will show in Follow-ups when due.'
+        : 'No repeat plan. This property comes back only if someone books it again.';
       planBtn.textContent = 'Set up a plan';
     }
   }
@@ -1089,7 +1161,7 @@
         <span class="job-item-meta">
           <span class="job-item-type"></span>
           <span class="job-item-date"></span>
-          <span>${count} capture${count === 1 ? '' : 's'}</span>
+          <span>${count} photo${count === 1 ? '' : 's'}</span>
         </span>
       `;
       // A job with no name (an old import, or a synced row) must still be tappable.
@@ -1543,7 +1615,7 @@
     setTimeout(hideAddressSuggestions, 150);
   });
 
-  backBtn.addEventListener('click', showJobListView);
+  backBtn.addEventListener('click', leaveJob);
 
   deleteJobBtn.addEventListener('click', async () => {
     // Read ONCE, before the question. It used to be read again after, by which
@@ -1632,10 +1704,10 @@
       // there is nothing "below" any more, so the message stopped matching
       // the actual UI. index.html's own default text for this element is
       // already correct; this used to override it with the wrong one.
-      galleryEmptyEl.textContent = 'No captures yet for this job. Photos and notes are captured during Start and Finish Inspection.';
+      galleryEmptyEl.textContent = 'No photos yet for this job. Photos and notes are taken during the visit (the green Start button).';
       show(galleryEmptyEl);
     } else if (visible.length === 0) {
-      galleryEmptyEl.textContent = 'No captures in this zone yet.';
+      galleryEmptyEl.textContent = 'No photos in this area yet.';
       show(galleryEmptyEl);
     } else {
       hide(galleryEmptyEl);
@@ -1918,7 +1990,7 @@
     if (startInspectionInProgress) return;
     startInspectionInProgress = true;
 
-    const originalLabel = '▶ Start Inspection';
+    const originalLabel = startLabel(currentJobType);
     const resetButton = () => {
       startInspectionInProgress = false;
       startInspectionBtn.disabled = false;
@@ -2352,6 +2424,17 @@
   // gives: a stale cached shell must not be able to hide the screen that
   // fixes a wrong licence number on outgoing reports.
   const businessDetailsBtn = document.getElementById('business-details-btn');
+  // Also in More (v165): the office-admin test looked there for settings and
+  // business details, and the top-bar link was called "Business", the same
+  // word as "Business figures".
+  const openSettingsBtn = document.getElementById('open-settings-btn');
+  if (openSettingsBtn) {
+    openSettingsBtn.addEventListener('click', () => {
+      const sheet = document.getElementById('more-sheet');
+      if (sheet) sheet.classList.add('hidden');
+      openBusinessDetails();
+    });
+  }
 
   const BUSINESS_FIELDS = [
     { key: 'name', label: 'Registered business name' },
@@ -2365,7 +2448,12 @@
   ];
 
   async function openBusinessDetails() {
-    if (!window.Org) { toast('Business details are not available in this mode.'); return; }
+    if (!window.Org) {
+      toast(window.IS_DEMO
+        ? 'Business details, the team and message settings are set up in the real app once you sign in. The demo has none.'
+        : 'Business details are not available in this mode.');
+      return;
+    }
     // Refreshed first so two devices cannot quietly overwrite each other with
     // whatever each happened to have cached.
     await window.Org.refresh().catch(() => {});

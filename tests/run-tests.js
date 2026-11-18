@@ -2782,7 +2782,7 @@
     assert(cell, 'the chosen day should be in the grid');
     const load = cell.querySelector('.cal-load');
     assert(load, 'a booked day should show its load');
-    assertEqual(load.textContent, '2·3h', 'two jobs totalling three hours');
+    assertEqual(load.textContent, '2 jobs', 'two jobs, in words (v165); the hours are in the label');
     assert(cell.querySelector('.cal-bar-fill'), 'a booked day should show a load bar');
     assert(doc.querySelector('.cal-today'), 'today should be marked');
   });
@@ -5963,6 +5963,68 @@
     for (const id of [job.id, open.id, done.id]) await win.DB.deleteJob(id);
     await win.DB.deleteClient(client.id);
     await win.DB.deleteClient(made.id);
+  });
+
+  test('Office-admin round 2 (v165): invoice lists, one waiting-to-book rule, Back to where you were', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const Rp = win.Reporting;
+    const DAY = 86400000;
+    const now = Date.now();
+
+    // One rule for "waiting to book", shared by the diary and Business figures.
+    const jobs = [
+      { id: 'a', status: 'new' },                                   // new, no time: waiting
+      { id: 'b', status: 'new', scheduledAt: now + DAY },           // booked: not waiting
+      { id: 'c', status: 'completed', nextDueAt: now - DAY },       // overdue property: waiting
+      { id: 'd', status: 'completed', nextDueAt: now + 90 * DAY },  // due later: not yet
+      { id: 'e', status: 'completed', nextDueAt: now - DAY, followUp: { stoppedAt: now } }, // offboarded
+      { id: 'f', status: 'completed' },                             // done, nothing due
+    ];
+    assertEqual(Rp.waitingToBook(jobs, now).map((j) => j.id).join(','), 'a,c', 'new jobs with no time, and properties due within 30 days');
+    assertEqual(Rp.summarise({ jobs, now }).upcoming.unbooked, 2, 'Business figures counts the same');
+
+    // The invoices behind each money figure.
+    const inv = (id, extra) => Object.assign({
+      id, jobId: 'j' + id, number: 'INV-' + id, clientName: 'Client ' + id, createdAt: now - DAY,
+      issueDate: '2026-01-01', lineItems: [{ description: 'x', quantity: 1, unitPriceCents: 10000 }],
+    }, extra);
+    const invoices = [
+      inv('1'),
+      inv('2', { status: 'sent', dueDate: '2000-01-01' }),
+      inv('3', { status: 'sent', paidAt: now, paidMethod: 'Cash' }),
+    ];
+    const lists = Rp.summarise({ jobs: [], invoices, period: 'all', now }).money.lists;
+    assertEqual(lists.drafts.map((l) => l.number).join(), 'INV-1', 'drafts list');
+    assertEqual(lists.outstanding.map((l) => l.number).join(), 'INV-2', 'sent and unpaid list');
+    assert(lists.overdue[0] && lists.overdue[0].overdueDays > 0, 'overdue says by how many days');
+    assertEqual(lists.paid.map((l) => l.paidMethod).join(), 'Cash', 'paid list says how');
+
+    const biz = await (await fetch('../business-ui.js', { cache: 'reload' })).text();
+    assert(biz.includes("tile('Paid'"), 'there is a Paid figure');
+    assert(biz.includes("'outstanding')}") && biz.includes('function downloadCsv()'), 'tiles open a list, and it downloads for Excel');
+    assert(biz.includes("/^[=+\\-@]/.test(s)"), 'a cell starting = + - @ is not run as a formula');
+
+    // Back from a job goes to where it was opened from.
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(app.includes("backBtn.addEventListener('click', leaveJob);"), 'Back on a job uses the remembered screen');
+    assert(app.includes("'view-scheduler': () =>") && app.includes("'view-leads': () =>"), 'Diary and Enquiries are remembered');
+    assert(app.includes("type === 'pest_treatment' ? '▶ Start treatment'"), 'a spray says Start treatment');
+    const sched = await (await fetch('../scheduler.js', { cache: 'reload' })).text();
+    assert(sched.includes('async reopen()'), 'the diary reopens where it was');
+
+    // A finished job points to its booked next visit.
+    const done = await win.DB.addJob({ name: 'Next Visit Probe', address: '5 Probe St' });
+    await win.DB.updateJob(done.id, { status: 'completed' });
+    const next = await win.DB.raiseNextVisit(done.id, { scheduledAt: now + 3 * DAY });
+    await win.showJobViewById(done.id);
+    await waitFor(() => doc.getElementById('job-next-visit'), 'the finished job shows its next visit');
+    assert(/Next visit booked/.test(doc.getElementById('job-next-visit').textContent), 'and says when');
+    await win.DB.deleteJob(next.id);
+    await win.DB.deleteJob(done.id);
+
+    const org = await (await fetch('../org.js', { cache: 'reload' })).text();
+    assert(org.includes('let org = window.IS_DEMO ? { ...DEMO_ORG }'), 'the demo is a made-up business, never the cached real one');
   });
 
   test('Business: provider fields are filled from the organisation', () => {

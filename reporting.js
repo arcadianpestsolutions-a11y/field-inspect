@@ -110,6 +110,42 @@
   const isSent = (inv) => inv.status === 'sent' || !!inv.emailedAt || !!inv.xeroInvoiceId;
   const isVoided = (inv) => String(inv.xeroStatus || '').toUpperCase() === 'VOIDED';
 
+  // What the diary calls "Waiting to be booked" (v165): new jobs with no time,
+  // and properties due within 30 days (or overdue) that nobody has booked.
+  // Business figures said "Waiting to book 0" while the diary listed 2, because
+  // it counted only the first kind. One rule now, used by both screens.
+  function waitingToBook(jobs, now) {
+    const t = typeof now === 'number' ? now : Date.now();
+    const soon = t + 30 * 86400000;
+    return (jobs || []).filter((j) => {
+      if (j.scheduledAt && j.status !== 'completed') return false;
+      if (j.followUp && j.followUp.stoppedAt) return false;
+      if (j.status === 'completed' && !j.nextDueAt) return false;
+      if (j.nextDueAt) return j.nextDueAt <= soon;
+      return j.status !== 'completed';
+    });
+  }
+
+  // One line per invoice for the lists behind the money tiles (v165).
+  function invoiceLine(inv, now) {
+    const due = isoToLocalMs(inv.dueDate);
+    const state = isPaid(inv) ? 'paid' : isSent(inv) ? 'sent' : 'draft';
+    return {
+      id: inv.id,
+      jobId: inv.jobId || null,
+      number: inv.number || '',
+      name: inv.clientName || inv.propertyAddress || '',
+      totalCents: totalCents(inv),
+      state,
+      paidAt: inv.paidAt || null,
+      paidMethod: inv.paidMethod || '',
+      dueDate: inv.dueDate || '',
+      overdueDays: state === 'sent' && due !== null && due < startOfDay(new Date(now)).getTime()
+        ? Math.floor((startOfDay(new Date(now)).getTime() - due) / 86400000) : 0,
+      createdAt: inv.createdAt || 0,
+    };
+  }
+
   function summarise(opts) {
     const o = opts || {};
     const now = typeof o.now === 'number' ? o.now : Date.now();
@@ -185,7 +221,7 @@
     // out for this due date, the date has passed, and nothing was booked.
     // That is the list that needs a person to pick up the phone.
     const needsACall = overdueForReinspection.filter((j) => j.reminderSentForDueAt === j.nextDueAt);
-    const unbooked = jobs.filter((j) => !booked(j) && j.status !== 'completed').length;
+    const unbooked = waitingToBook(jobs, now).length;
 
     // ---- time ----
     const bookedInPeriod = jobs.filter((j) => inRange(j.scheduledAt, range));
@@ -221,6 +257,15 @@
         // Said out loud rather than assumed, so a screen built on this can
         // tell the technician where the figure came from.
         paidFrom: 'xero-or-marked',
+        // The invoices behind each figure, newest first (v165): the tiles
+        // said "2 sent, unpaid" and there was no way to see which two.
+        lists: {
+          invoiced: invoicedInPeriod.map((i) => invoiceLine(i, now)).sort((a, b) => b.createdAt - a.createdAt),
+          paid: paid.map((i) => invoiceLine(i, now)).sort((a, b) => (b.paidAt || b.createdAt) - (a.paidAt || a.createdAt)),
+          drafts: drafts.map((i) => invoiceLine(i, now)).sort((a, b) => b.createdAt - a.createdAt),
+          outstanding: outstanding.map((i) => invoiceLine(i, now)).sort((a, b) => b.overdueDays - a.overdueDays || a.createdAt - b.createdAt),
+          overdue: overdue.map((i) => invoiceLine(i, now)).sort((a, b) => b.overdueDays - a.overdueDays),
+        },
       },
 
       notInvoiced: {
@@ -251,5 +296,6 @@
     };
   }
 
-  window.Reporting = { PERIODS, periodRange, periodLabel, summarise, fyStartYear };
+  window.Reporting = {
+    waitingToBook, PERIODS, periodRange, periodLabel, summarise, fyStartYear };
 })();

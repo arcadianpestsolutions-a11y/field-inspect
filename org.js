@@ -41,17 +41,27 @@
   }
 
   function write(key, value) {
+    if (window.IS_DEMO) return; // the demo never replaces the real cached profile
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* not fatal */ }
   }
 
   const ROSTER_KEY = 'scope.roster.v1';
 
-  let org = read(ORG_KEY, EMPTY_ORG);
-  let me = read(ME_KEY, EMPTY_ME);
+  // The demo is a made-up business (v165). It read the cached profile of
+  // whoever last signed in on this device, so a tester trying the demo on
+  // the owner's computer saw the real ABN, phone and email on every page.
+  const DEMO_ORG = {
+    ...EMPTY_ORG, id: '', name: 'Sample Pest Co Pty Ltd', tradingName: 'Sample Pest Co',
+    abn: '00 000 000 000', licenceNumber: 'DEMO-0000', phone: '02 0000 0000',
+    email: 'office@samplepest.example', address: '1 Example Street, Sampleton NSW 2000', website: '',
+  };
+  const DEMO_ME = { displayName: 'Sam Rivera', licenceNumber: 'DEMO-0001', phone: '0400 000 000', address: '' };
+  let org = window.IS_DEMO ? { ...DEMO_ORG } : read(ORG_KEY, EMPTY_ORG);
+  let me = window.IS_DEMO ? { ...DEMO_ME } : read(ME_KEY, EMPTY_ME);
   // email -> display name, for turning a job's assignedTo into something a
   // person recognises on a job list. Cached with the rest so a shared job list
   // still reads properly with no signal.
-  let roster = read(ROSTER_KEY, {});
+  let roster = window.IS_DEMO ? {} : read(ROSTER_KEY, {});
 
   // What a document should show as the provider. tradingName first: a company
   // registered as one thing and known to clients as another should print the

@@ -123,11 +123,48 @@
     sendBtn.classList.toggle('hidden', !going.length);
   }
 
+  // The demo shows what WOULD be sent, built from the demo bookings (v165).
+  // It said only "not checked in the demo", so a tester could not see what a
+  // reminder looks like, who gets one, or who would need a phone call.
+  // Nothing here sends: the Send button never appears in the demo.
+  async function demoPreview() {
+    const start = new Date(); start.setDate(start.getDate() + 1); start.setHours(0, 0, 0, 0);
+    const end = start.getTime() + 86400000;
+    const org = (window.Org && window.Org.get && window.Org.get()) || {};
+    const biz = (window.Org && window.Org.businessName && window.Org.businessName()) || 'us';
+    const jobs = (await DB.getJobs()).filter((j) => j.scheduledAt >= start.getTime() && j.scheduledAt < end && j.status !== 'completed');
+    const wouldSend = [];
+    const needsAPhoneCall = [];
+    for (const j of jobs.sort((a, b) => a.scheduledAt - b.scheduledAt)) {
+      const time = new Date(j.scheduledAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
+      const first = String(j.name || '').split(/\s+/)[0] || 'there';
+      const mobile = /^04\d{8}$/.test(String(j.clientPhone || '').replace(/\D/g, ''));
+      if (j.commsOptOut) continue;
+      if (!mobile && !j.clientEmail) { needsAPhoneCall.push({ name: j.name, phone: j.clientPhone || '', reason: 'No mobile number or email on the job' }); continue; }
+      wouldSend.push({
+        name: j.name,
+        to: mobile ? j.clientPhone : j.clientEmail,
+        text: `Hi ${first}, a reminder from ${biz}: we are booked for tomorrow at ${time}${j.address ? ' at ' + j.address : ''}. `
+          + `If you need to change it, please call${org.phone ? ' ' + org.phone : ' us'}.`,
+      });
+    }
+    return { ok: true, wouldSend, needsAPhoneCall, checked: jobs.length };
+  }
+
   async function check() {
+    if (window.IS_DEMO && window.DB) {
+      clear();
+      const result = await demoPreview();
+      renderPreview(result);
+      sendBtn.classList.add('hidden');
+      previewed = null;
+      if (result.wouldSend.length || result.needsAPhoneCall.length) {
+        hintEl.textContent = 'Demo: what tomorrow\'s reminders would say, and who would need a phone call. Nothing is sent from the demo.';
+      }
+      return;
+    }
     if (!window.CommsService) {
-      hintEl.textContent = window.IS_DEMO
-        ? 'Reminders are not checked or sent in the demo.'
-        : 'Sign in to check reminders.';
+      hintEl.textContent = 'Sign in to check reminders.';
       return;
     }
     checkBtn.disabled = true;

@@ -16,6 +16,14 @@
   'use strict';
 
   const view = document.getElementById('view-scheduler');
+  // Where the diary was scrolled when a job was opened from it, so Back
+  // (Scheduler.reopen) lands in the same place (v165).
+  let lastScroll = null;
+  function openJob(id) {
+    const scroller = view.querySelector('main.content') || document.scrollingElement;
+    lastScroll = scroller.scrollTop;
+    if (window.showJobViewById) window.showJobViewById(id);
+  }
   if (!view) { console.warn('[scheduler] view missing from the page'); return; }
 
   // A pest-control working day. Slots are hourly because that is how jobs are
@@ -204,7 +212,8 @@
       if (count) {
         const load = document.createElement('span');
         load.className = 'cal-load';
-        load.textContent = `${count}·${Math.round(minutes / 60 * 10) / 10}h`;
+        // Words, not "2·2.5h" (v165); the hours are in the cell's label.
+        load.textContent = `${count} job${count === 1 ? '' : 's'}`;
         cell.appendChild(load);
 
         // The bar is the at-a-glance signal: length is how full, colour is
@@ -286,7 +295,7 @@
       b.append(n, m);
       b.addEventListener('click', () => {
         if (suppressClickUntil > Date.now()) return;
-        if (window.showJobViewById) window.showJobViewById(job.id);
+        openJob(job.id);
       });
       makeMovable(b, job);
       return b;
@@ -339,7 +348,7 @@
         btn.addEventListener('click', () => {
           // The click that ends a drag is not a tap on the job.
           if (suppressClickUntil > Date.now()) return;
-          if (window.showJobViewById) window.showJobViewById(entry.job.id);
+          openJob(entry.job.id);
         });
         makeMovable(btn, entry.job);
         row.appendChild(btn);
@@ -406,7 +415,7 @@
       meta.className = 'slot-job-meta';
       meta.textContent = `Outside working hours · ${durationOf(job)} min`;
       btn.appendChild(meta);
-      btn.addEventListener('click', () => window.showJobViewById && window.showJobViewById(job.id));
+      btn.addEventListener('click', () => openJob(job.id));
       row.appendChild(btn);
       slotsEl.appendChild(row);
     }
@@ -596,6 +605,10 @@
 
   // ---------- booking into a specific slot ----------
   function unbookedJobs() {
+    // Same rule as Business figures' "Waiting to book" (v165).
+    if (window.Reporting && window.Reporting.waitingToBook) {
+      return window.Reporting.waitingToBook(jobs).sort((a, b) => (a.nextDueAt || a.createdAt) - (b.nextDueAt || b.createdAt));
+    }
     const soon = Date.now() + 30 * 24 * 60 * 60 * 1000;
     return jobs.filter((j) => {
       // A finished job's booking time is history, not a booking (v162).
@@ -950,6 +963,15 @@
       await refresh();
       if (window.hideAllAppViews) window.hideAllAppViews();
       view.classList.remove('hidden');
+    },
+    // Back from a job opened in the diary (v165): the same day, scrolled to
+    // where it was, not today scrolled to the middle of the day.
+    async reopen() {
+      const scroller = view.querySelector('main.content') || document.scrollingElement;
+      await refresh();
+      if (window.hideAllAppViews) window.hideAllAppViews();
+      view.classList.remove('hidden');
+      if (typeof lastScroll === 'number') scroller.scrollTop = lastScroll;
     },
     refresh,
     // Exposed so every other booking path (the AI assistant, auto-rebook)

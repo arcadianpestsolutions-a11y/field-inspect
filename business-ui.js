@@ -42,20 +42,119 @@
     try { localStorage.setItem(PERIOD_KEY, key); } catch (e) { /* private window — not worth a message */ }
   }
 
-  function tile(label, value, sub, tone) {
+  function tile(label, value, sub, tone, list) {
+    // A tile with invoices behind it is a button that lists them (v165).
+    const tag = list ? 'button' : 'div';
     return `
-      <div class="stat-tile${tone ? ' stat-' + tone : ''}">
+      <${tag} class="stat-tile${tone ? ' stat-' + tone : ''}${list ? ' stat-tap' : ''}"${list ? ` type="button" data-list="${list}" aria-expanded="false"` : ''}>
         <span class="stat-value">${escapeHtml(value)}</span>
-        <span class="stat-label">${escapeHtml(label)}</span>
+        <span class="stat-label">${escapeHtml(label)}${list ? ' ›' : ''}</span>
         ${sub ? `<span class="stat-sub">${escapeHtml(sub)}</span>` : ''}
-      </div>`;
+      </${tag}>`;
   }
+
+  const LIST_TITLES = {
+    invoiced: 'Invoiced in this period',
+    paid: 'Paid in this period',
+    drafts: 'Drafts, not sent yet',
+    outstanding: 'Sent, not paid yet',
+    overdue: 'Past the due date',
+  };
+  const fmtDue = (iso) => {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  };
+  function lineMeta(l) {
+    if (l.state === 'paid') {
+      const when = l.paidAt ? new Date(l.paidAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : '';
+      return ['Paid', l.paidMethod ? l.paidMethod.toLowerCase() : '', when].filter(Boolean).join(' · ');
+    }
+    if (l.state === 'draft') return 'Draft, not sent';
+    if (l.overdueDays) return `Overdue ${l.overdueDays} ${plural(l.overdueDays, 'day')} (due ${fmtDue(l.dueDate)})`;
+    return l.dueDate ? `Sent · due ${fmtDue(l.dueDate)}` : 'Sent';
+  }
+  function renderList(key) {
+    const box = document.getElementById('business-invoice-list');
+    if (!box) return;
+    const lines = (lastSummary && lastSummary.money.lists && lastSummary.money.lists[key]) || [];
+    box.dataset.list = key;
+    box.innerHTML = `
+      <div class="business-invoice-head">
+        <strong>${escapeHtml(LIST_TITLES[key] || 'Invoices')}</strong>
+        <span>
+          ${lines.length ? '<button type="button" class="link-btn" id="business-invoice-csv">Download for Excel</button>' : ''}
+          <button type="button" class="link-btn" id="business-invoice-close">Close</button>
+        </span>
+      </div>
+      ${lines.length ? `<ul class="business-list business-invoices">${lines.map((l) => `
+        <li>
+          <button type="button" class="business-invoice-row" data-job="${escapeHtml(l.jobId || '')}">
+            <span class="business-list-name">${escapeHtml(l.number)} · ${escapeHtml(l.name || 'Invoice')}</span>
+            <span class="business-list-meta${l.overdueDays ? ' business-overdue' : ''}">${escapeHtml(lineMeta(l))}</span>
+            <span class="business-invoice-amount">${escapeHtml(money(l.totalCents))}</span>
+          </button>
+        </li>`).join('')}</ul>` : '<p class="business-note">None.</p>'}`;
+    box.classList.remove('hidden');
+    view.querySelectorAll('.stat-tap').forEach((b) => b.setAttribute('aria-expanded', String(b.dataset.list === key)));
+    box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  // The open list as a spreadsheet file (v165): an office admin reconciles in
+  // Excel. CSV, because every spreadsheet opens it and it needs no library.
+  const cell = (v) => {
+    const s = String(v == null ? '' : v);
+    // A leading = + - @ would be run as a formula by Excel; quote it as text.
+    const safe = /^[=+\-@]/.test(s) ? "'" + s : s;
+    return /[",\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
+  };
+  function downloadCsv() {
+    const box = document.getElementById('business-invoice-list');
+    const key = box && box.dataset.list;
+    const lines = (key && lastSummary && lastSummary.money.lists[key]) || [];
+    if (!lines.length) return;
+    const rows = [['Invoice', 'Client', 'Total incl GST', 'Status', 'Due date', 'Days overdue', 'Paid on', 'Paid by']]
+      .concat(lines.map((l) => [
+        l.number, l.name, (l.totalCents / 100).toFixed(2),
+        l.state === 'paid' ? 'Paid' : l.state === 'sent' ? 'Sent, unpaid' : 'Draft',
+        l.dueDate, l.overdueDays || '', l.paidAt ? new Date(l.paidAt).toISOString().slice(0, 10) : '', l.paidMethod,
+      ]));
+    const csv = rows.map((r) => r.map(cell).join(',')).join('\r\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `scope-invoices-${key}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  function closeList() {
+    const box = document.getElementById('business-invoice-list');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; delete box.dataset.list; }
+    view.querySelectorAll('.stat-tap').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+  }
+  let lastSummary = null;
+  bodyEl.addEventListener('click', (e) => {
+    const t = e.target.closest('.stat-tap');
+    if (t) {
+      const box = document.getElementById('business-invoice-list');
+      if (box && box.dataset.list === t.dataset.list) closeList(); else renderList(t.dataset.list);
+      return;
+    }
+    if (e.target.closest('#business-invoice-close')) { closeList(); return; }
+    if (e.target.closest('#business-invoice-csv')) { downloadCsv(); return; }
+    const row = e.target.closest('.business-invoice-row');
+    if (row && row.dataset.job && window.InvoiceUI) window.InvoiceUI.open(row.dataset.job);
+  });
 
   function plural(n, one, many) {
     return n === 1 ? one : (many || one + 's');
   }
 
   function render(summary) {
+    lastSummary = summary;
+    const openList = (document.getElementById('business-invoice-list') || {}).dataset;
+    const reopen = openList && openList.list;
     const m = summary.money;
     const n = summary.notInvoiced;
     const u = summary.upcoming;
@@ -78,8 +177,10 @@
           <ul class="business-list">
             ${n.jobs.slice(0, 6).map((j) => `
               <li>
-                <span class="business-list-name">${escapeHtml(j.name || 'Job')}</span>
-                <span class="business-list-meta">${j.daysAgo === 0 ? 'today' : `${j.daysAgo} ${plural(j.daysAgo, 'day')} ago`}</span>
+                <button type="button" class="business-invoice-row" data-job="${escapeHtml(j.jobId)}">
+                  <span class="business-list-name">${escapeHtml(j.name || 'Job')}</span>
+                  <span class="business-list-meta">${j.daysAgo === 0 ? 'today' : `${j.daysAgo} ${plural(j.daysAgo, 'day')} ago`} · tap to invoice</span>
+                </button>
               </li>`).join('')}
           </ul>
           ${n.count > 6 ? `<p class="business-headline-sub">and ${n.count - 6} more.</p>` : ''}
@@ -96,11 +197,14 @@
     parts.push(`
       <h2 class="business-heading">Money</h2>
       <div class="stat-grid">
-        ${tile('Invoiced', money(m.invoicedCents), `${m.invoicedCount} ${plural(m.invoicedCount, 'invoice')}`)}
-        ${tile('Still drafts', money(m.draftCents), `${m.draftCount} not sent yet`, m.draftCount ? 'warn' : null)}
-        ${tile('Outstanding', money(m.outstandingCents), `${m.outstandingCount} sent, unpaid`)}
-        ${tile('Overdue', money(m.overdueCents), `${m.overdueCount} past the due date`, m.overdueCount ? 'bad' : null)}
+        ${tile('Invoiced', money(m.invoicedCents), `${m.invoicedCount} ${plural(m.invoicedCount, 'invoice')}, incl GST`, null, 'invoiced')}
+        ${tile('Paid', money(m.paidCents || 0), `${m.paidCount || 0} of those paid`, null, 'paid')}
+        ${tile('Still drafts', money(m.draftCents), `${m.draftCount} not sent yet`, m.draftCount ? 'warn' : null, 'drafts')}
+        ${tile('Outstanding', money(m.outstandingCents), `${m.outstandingCount} sent, unpaid (any date)`, null, 'outstanding')}
+        ${tile('Overdue', money(m.overdueCents), `${m.overdueCount} past the due date`, m.overdueCount ? 'bad' : null, 'overdue')}
       </div>
+      <div id="business-invoice-list" class="card business-invoice-list hidden"></div>
+      <p class="business-note">Tap a figure to see the invoices behind it.</p>
       <p class="business-note">
         Invoiced and drafts come from Scope. <strong>Paid comes from Xero</strong>, or from
         "Mark as paid" on the invoice for money taken outside Xero. Xero's figures are only as fresh as
@@ -138,10 +242,11 @@
         ${tile('Hours booked', `${t.bookedHours}`, summary.periodLabel)}
         ${tile('Days worked', String(t.daysWithWork), 'with at least one job')}
         ${tile('Average day', t.avgMinsPerDay ? `${Math.round(t.avgMinsPerDay / 6) / 10} hrs` : '—', 'booked, not counting driving')}
-        ${tile('Waiting to book', String(u.unbooked), 'jobs with no time set', u.unbooked ? 'warn' : null)}
+        ${tile('Waiting to book', String(u.unbooked), 'same list as the diary', u.unbooked ? 'warn' : null)}
       </div>`);
 
     bodyEl.innerHTML = parts.join('');
+    if (reopen) renderList(reopen);
   }
 
   async function refresh() {

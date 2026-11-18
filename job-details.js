@@ -129,6 +129,14 @@
         el('span', { class: 'job-details-label', text: label }),
         el('span', { class: 'job-details-value', text: text || 'Not set' }),
       ]);
+      // An email wraps after the @, not mid-word as "example.co / m" (v165).
+      const at = String(text || '').indexOf('@');
+      if (label === 'Email' && at > 0) {
+        const v = row.querySelector('.job-details-value');
+        v.textContent = '';
+        v.append(document.createTextNode(text.slice(0, at + 1)), document.createElement('wbr'), document.createTextNode(text.slice(at + 1)));
+        v.style.overflowWrap = 'break-word';
+      }
       if (href) {
         const a = el('a', { class: 'link-btn job-details-link', href, text: linkText });
         // Maps opens outside the PWA; mark it so it never replaces the app.

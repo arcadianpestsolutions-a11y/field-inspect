@@ -3597,3 +3597,18 @@ body:has(#inspection-modal:not(.hidden)) .toast { bottom: calc(190px + var(--saf
 /* v163: room under the last card for the floating + New Job button, which
    covered the Call button and "Not started" on Today. */
 #view-joblist .content { padding-bottom: 96px; }
+
+/* v165: money tiles open the invoices behind them. */
+button.stat-tile.stat-tap { font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
+button.stat-tile.stat-tap[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: -2px; }
+.business-invoice-list { margin-top: 10px; }
+.business-invoice-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 8px; }
+.business-invoice-head strong { flex: 1 1 auto; }
+.business-invoice-head > span { display: flex; gap: 4px; white-space: nowrap; }
+.business-invoice-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; padding: 10px 0; cursor: pointer; }
+.business-invoice-row .business-list-meta { grid-column: 1; }
+.business-invoice-amount { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-weight: 700; }
+.business-overdue { color: var(--danger); }
+
+/* v165: a finished job points to its next visit. */
+.job-next-visit { display: block; width: 100%; text-align: left; font: inherit; color: var(--accent); cursor: pointer; }
