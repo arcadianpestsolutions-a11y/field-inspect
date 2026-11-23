@@ -245,8 +245,23 @@
     wrap.addEventListener('click', (e) => {
       if (!finalizeBtn.disabled || e.target !== wrap) return;
       if (currentReport && currentReport.finalizedAt) return;
-      const target = document.querySelector('#walk-todo:not(.walk-todo-clear)')
-        || document.querySelector('#preflight-card:not(.hidden):not(.preflight-clear)')
+      const walkCard = document.querySelector('#walk-todo:not(.walk-todo-clear)');
+      if (walkCard) {
+        toast('Not ready yet: finish the walk-through first. What is left is listed here.');
+        walkCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      if (window.FinishStep) {
+        // v173: what is left is the Finish step's list, at the top.
+        const must = finishQuestions().filter((q) => !q.soft).length;
+        toast(must
+          ? `Not ready yet: ${must} question${must === 1 ? '' : 's'} still to answer. Tap "${must === 1 ? 'Answer it' : 'Answer them one at a time'}".`
+          : 'Not ready yet.');
+        const card = document.getElementById('report-progress');
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      const target = document.querySelector('#preflight-card:not(.hidden):not(.preflight-clear)')
         || document.querySelector('#report-section-list .status-dot-yellow');
       const left = document.querySelectorAll('#preflight-card .preflight-item').length;
       toast(left ? `Not ready yet: ${left} thing${left === 1 ? '' : 's'} to fix. They are listed here.` : 'Not ready yet: finish the sections without a green tick.');
@@ -2050,8 +2065,8 @@
     if (auditToggleBtn) {
       const events = `${log.length} event${log.length === 1 ? '' : 's'}`;
       auditToggleBtn.textContent = amendments
-        ? `🕓 Audit Trail — ${events}, ${amendments} after finalizing`
-        : `🕓 Audit Trail — ${events}`;
+        ? `🕓 History — ${events}, ${amendments} after finalizing`
+        : `🕓 History — ${events}`;
     }
 
     // Newest first: when something is disputed, the most recent change is
@@ -2368,7 +2383,7 @@
           sectionTitle: 'Business details',
           fieldId: field.orgField,
           message: `${field.label} is blank, and it prints on this report`,
-          why: 'Filled in once under Business, then it appears on every document.',
+          why: 'Filled in once in Settings, then it appears on every document.',
           // Sending somebody to the Findings section to fix their own ABN
           // would be useless — this one opens the business record instead.
           opensBusinessDetails: true,
@@ -2396,8 +2411,20 @@
 
   function renderPreflight() {
     if (!preflightCard || !preflightBody) return [];
-    const items = preflightItems();
+    // v173. What is missing from the report is the Finish step's list now:
+    // the card at the top counts it and asks it. This card used to repeat
+    // every one of those lines (2,300 pixels of them on a new report). It
+    // keeps the one thing the Finish step cannot ask: details of the business
+    // that print on this document and are blank, which are fixed in Settings.
+    const finishStep = !!window.FinishStep;
+    const items = finishStep ? preflightItems().filter((i) => i.opensBusinessDetails) : preflightItems();
 
+    if (!items.length && finishStep) {
+      preflightCard.classList.add('hidden');
+      preflightCard.classList.remove('preflight-clear');
+      preflightBody.innerHTML = '';
+      return items;
+    }
     if (!items.length) {
       preflightCard.classList.remove('hidden');
       preflightCard.classList.add('preflight-clear');
@@ -2409,9 +2436,11 @@
     preflightCard.classList.remove('hidden');
     preflightCard.classList.remove('preflight-clear');
     const complianceCount = items.filter((i) => i.compliance).length;
-    const heading = complianceCount
-      ? `${items.length} to fix before sending — ${complianceCount} of them compliance`
-      : `${items.length} to fix before sending`;
+    const heading = finishStep
+      ? `${items.length} of your business details ${items.length === 1 ? 'is' : 'are'} blank, and print${items.length === 1 ? 's' : ''} on this report`
+      : (complianceCount
+        ? `${items.length} to fix before sending — ${complianceCount} of them compliance`
+        : `${items.length} to fix before sending`);
 
     const rows = items.map((item, i) => `
       <li class="preflight-item${item.compliance ? ' preflight-compliance' : ''}" data-section="${escapeHtml(item.sectionId)}" data-index="${i}"${item.opensBusinessDetails ? ' data-opens-business="1"' : ''}>
@@ -2641,6 +2670,7 @@
     }
 
     renderReportProgress(doneCount, displayNumber, firstOpen);
+    renderSectionsToggle(doneCount, displayNumber);
     renderCarriedNote();
     renderWalkTodo();
     finalizeBtn.dataset.sectionsGreen = allRequiredGreen ? '1' : '0';
@@ -2668,6 +2698,45 @@
     if (window.ReportClient && window.ReportClient.renderPreviewButton) {
       window.ReportClient.renderPreviewButton({ job: currentJob, report: currentReport, anchor: finalizePostActions || finalizeHint });
     }
+  }
+
+  // ---------- The whole document, one tap away (v173) ----------
+  // With the Finish step asking what is left, the list of every section is
+  // for reading a report through or changing an answer already given. It
+  // sits behind one line, and the choice is remembered on this phone.
+  // The demo and the tests keep their own, so neither changes how the real
+  // app was left on this computer.
+  const SECTIONS_OPEN_KEY = 'scope-report-sections-open' + (window.IS_TEST ? ':test' : (window.IS_DEMO ? ':demo' : ''));
+  function sectionsOpen() {
+    try { return localStorage.getItem(SECTIONS_OPEN_KEY) === '1'; } catch (e) { return false; }
+  }
+  function renderSectionsToggle(done, total) {
+    let toggle = document.getElementById('report-sections-toggle');
+    // An older page paired with this script has no Finish step: the list
+    // stays as it was, always showing.
+    if (!window.FinishStep) {
+      if (toggle) toggle.remove();
+      reportSectionList.classList.remove('hidden');
+      return;
+    }
+    if (!toggle) {
+      toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.id = 'report-sections-toggle';
+      toggle.className = 'report-sections-toggle';
+      toggle.addEventListener('click', () => {
+        const opening = reportSectionList.classList.contains('hidden');
+        try { localStorage.setItem(SECTIONS_OPEN_KEY, opening ? '1' : '0'); } catch (e) { /* the choice just is not remembered */ }
+        renderSectionsToggle(Number(toggle.dataset.done), Number(toggle.dataset.total));
+      });
+      reportSectionList.parentNode.insertBefore(toggle, reportSectionList);
+    }
+    const open = sectionsOpen();
+    toggle.dataset.done = String(done);
+    toggle.dataset.total = String(total);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggle.textContent = `${open ? 'Hide' : 'Show'} the whole document (${done} of ${total} section${total === 1 ? '' : 's'} done)`;
+    reportSectionList.classList.toggle('hidden', !open);
   }
 
   reportBackBtn.addEventListener('click', async () => {

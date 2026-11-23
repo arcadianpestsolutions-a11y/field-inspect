@@ -11,7 +11,10 @@
 //             2. the status card: the next step (Start, Open Report, Invoice)
 //             3. the client link panel, which opens from a button in that card
 //             4. the client details: Call, Directions, Edit
-//             5. messages and plan: settings, read rarely
+//             5. one line, "Booking, repeat plan and messages", with the
+//                booking card and the two settings rows folded behind it
+//                (v173): settings, read rarely, and on a new job they were
+//                three more cards between Start and the photos
 //             6. the photos
 // EXPOSES   window.JobLayout = { ORDER, arrange, orderOf }
 // DEPENDS   the element ids below; nothing else.
@@ -25,7 +28,53 @@
   'use strict';
 
   // Top to bottom. An entry is an element id, or a selector starting with '.'.
-  const ORDER = ['due-callout', '.inspection-card', 'client-link-panel', 'job-details-card', 'job-settings'];
+  const ORDER = ['due-callout', '.inspection-card', 'client-link-panel', 'job-details-card', 'job-more-toggle', 'job-settings', 'job-booking-card'];
+
+  // ---------- The fold (v173) ----------
+  const MORE_ID = 'job-more-toggle';
+  // What sits behind the line, and what the line calls each of them.
+  const FOLDED = [['job-booking-card', 'booking'], ['plan-row', 'repeat plan'], ['job-comms-row', 'messages']];
+  let foldOpen = false;   // closed when a job opens
+  let foldedFor = null;   // the job that choice belongs to
+
+  function showing(node) { return !!node && !node.classList.contains('hidden'); }
+
+  function syncFold(host) {
+    const present = FOLDED.filter(([id]) => showing(document.getElementById(id)));
+    let toggle = document.getElementById(MORE_ID);
+    if (!present.length) {
+      if (toggle) toggle.remove();
+      host.classList.remove('job-more-closed');
+      return;
+    }
+    if (!toggle) {
+      toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.id = MORE_ID;
+      toggle.className = 'job-more-toggle';
+      toggle.addEventListener('click', () => { foldOpen = !foldOpen; arrange(); });
+      host.appendChild(toggle);
+    }
+    // Something to act on is never folded away: the reminder that booking
+    // details have not been sent to the client stays on screen while the
+    // rest of the group is closed (styles.css does that part).
+    const open = foldOpen;
+    const names = present.map(([, name]) => name);
+    const joined = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+    const label = joined.charAt(0).toUpperCase() + joined.slice(1);
+    if (toggle.textContent !== label) toggle.textContent = label;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    host.classList.toggle('job-more-closed', !open);
+  }
+
+  // Called when a job is shown. A different job starts folded; redrawing the
+  // same one (after saving, after changing the time) leaves it as it was.
+  function fold(jobId) {
+    if (jobId === foldedFor) return;
+    foldedFor = jobId;
+    foldOpen = false;
+    arrange();
+  }
 
   const SETTINGS_ID = 'job-settings';
   const SETTINGS_MEMBERS = ['job-comms-row', 'plan-row'];
@@ -62,6 +111,7 @@
     const host = content();
     if (!host) return;
     gatherSettings(host);
+    syncFold(host);
     let ref = host.firstChild;
     for (const entry of ORDER) {
       const node = find(host, entry);
@@ -90,12 +140,12 @@
       if (queued) return;
       queued = true;
       Promise.resolve().then(() => { queued = false; arrange(); });
-    }).observe(host, { childList: true });
+    }).observe(host, { childList: true, subtree: true });
   }
 
   function start() { watch(); arrange(); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
 
-  window.JobLayout = { ORDER, arrange, orderOf };
+  window.JobLayout = { ORDER, arrange, orderOf, fold };
 })();

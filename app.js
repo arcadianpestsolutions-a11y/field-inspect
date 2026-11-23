@@ -585,6 +585,8 @@
   async function showJobView(jobId) {
     noteJobReturn();
     currentJobId = jobId;
+    // Booking, repeat plan and messages start folded away on each job (v173).
+    if (window.JobLayout && window.JobLayout.fold) window.JobLayout.fold(jobId);
     const job = await DB.getJob(jobId);
     if (!job) { showJobListView(); return; }
     currentJobType = job.jobType || 'termite';
@@ -2555,8 +2557,14 @@
     card.className = 'business-card';
 
     const h = document.createElement('h2');
-    h.textContent = 'Business details';
+    h.textContent = 'Settings';
     card.appendChild(h);
+    // One Settings screen (v173): it was "Settings" in one place and
+    // "Business details and team" in another. Business details is its first part.
+    const sub = document.createElement('h3');
+    sub.className = 'business-subhead';
+    sub.textContent = 'Business details';
+    card.appendChild(sub);
 
     const hint = document.createElement('p');
     hint.className = 'business-hint';

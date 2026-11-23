@@ -11850,9 +11850,11 @@
     const settings = doc.getElementById('job-settings');
     assert(settings.contains(doc.getElementById('job-comms-row')), 'the messages row is in the settings group');
     assert(settings.contains(doc.getElementById('plan-row')), 'and so is the plan row');
+    // v173: the settings are behind one line. Open it to see where they sit.
+    doc.getElementById('job-more-toggle').click();
     const startTop = doc.getElementById('start-inspection-btn').getBoundingClientRect().top;
     const commsTop = doc.getElementById('job-comms-row').getBoundingClientRect().top;
-    assert(startTop < commsTop, 'Start Inspection is physically above the messages row');
+    assert(commsTop > 0 && startTop < commsTop, 'Start Inspection is physically above the messages row');
     await win.DB.deleteJob(job.id);
   });
 
@@ -11975,6 +11977,9 @@
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'In Reach Job', address: '9 Reach St', jobType: 'termite' });
+    // v173 put the section list behind one line. Open, the screen is long,
+    // which is the case the button has to stay on screen for.
+    win.localStorage.setItem('scope-report-sections-open:test', '1');
     await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
     await waitFor(() => doc.querySelectorAll('#report-section-list .report-section-item').length > 5, 'a report with a long list');
     const main = doc.querySelector('#view-report main');
@@ -11995,6 +12000,7 @@
     await waitFor(() => /Finalized/.test(btn.textContent), 'the report is signed');
     main.scrollTop = 0;
     assert(!inView(), 'a signed report does not carry a dead bar over its sections');
+    win.localStorage.removeItem('scope-report-sections-open:test');
     win.hideAllAppViews();
     await win.DB.deleteJob(job.id);
   });
@@ -12296,7 +12302,10 @@
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'Left During Plan Question', jobType: 'termite' });
     await win.showJobViewById(job.id);
-    await waitFor(() => doc.getElementById('plan-btn') && doc.getElementById('plan-btn').offsetParent !== null, 'the plan button is showing');
+    // v173: the plan row is behind "Booking, repeat plan and messages".
+    await waitFor(() => doc.getElementById('job-more-toggle') && doc.getElementById('plan-btn'), 'the job screen is drawn');
+    if (doc.getElementById('job-more-toggle').getAttribute('aria-expanded') !== 'true') doc.getElementById('job-more-toggle').click();
+    await waitFor(() => doc.getElementById('plan-btn').offsetParent !== null, 'the plan button is showing');
     const realPrompt = win.prompt;
     const errors = [];
     const onError = (e) => errors.push(e.message || String(e.reason));
@@ -14847,6 +14856,128 @@
     win.hideAllAppViews();
     await win.DB.deleteJob(first.id);
     await win.DB.deleteJob(second.id);
+  });
+
+  // =====================================================================
+  // Doubles removed (v173)
+  // =====================================================================
+  const displayed = (win, el) => !!el && win.getComputedStyle(el).display !== 'none';
+  const allBusinessDetails = () => ({
+    providerName: 'Sample Pest Co', providerAddress: '1 Real St', providerPhone: '02 5550 0123',
+    providerEmail: 'office@example.com', signedOnBehalfOf: 'Sample Pest Co', providerAbn: '11 222 333 444', providerLicence: 'L-1',
+  });
+
+  test('Doubles: the report screen asks what is left once, and the whole document is one tap away', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realProvider = win.Org.provider;
+    win.localStorage.removeItem('scope-report-sections-open:test');
+    const job = await win.DB.addJob({ name: 'One List Job', address: '1 List St', jobType: 'termite' });
+    try {
+      win.Org.provider = allBusinessDetails;
+      await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+      await waitFor(() => doc.getElementById('report-sections-toggle'), 'the report opens');
+      assert(win.ReportUI.finishQuestions().length > 5, 'with plenty still to answer');
+      assert(!displayed(win, doc.getElementById('preflight-card')), 'the questions are not listed a second time under the report');
+      assert(!/Needs an answer/.test(doc.querySelector('#view-report main').textContent), 'nowhere on the screen');
+
+      // The list of every section: closed, one tap to open, and it stays how it was left.
+      const toggle = doc.getElementById('report-sections-toggle');
+      const list = doc.getElementById('report-section-list');
+      assert(/^Show the whole document \(\d+ of \d+ sections done\)$/.test(toggle.textContent), `the line says what is behind it: ${toggle.textContent}`);
+      assert(!displayed(win, list) && toggle.getAttribute('aria-expanded') === 'false', 'closed to begin with');
+      assert(list.querySelectorAll('.report-section-item').length > 5, 'the sections are all still there');
+      const main = doc.querySelector('#view-report main');
+      assert(main.scrollHeight < 1400, `the screen is short enough to take in (${main.scrollHeight}px)`);
+      toggle.click();
+      assert(displayed(win, list) && toggle.getAttribute('aria-expanded') === 'true', 'one tap opens it');
+      assert(/^Hide the whole document/.test(toggle.textContent), 'and the line says how to close it');
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => displayed(win, doc.getElementById('report-section-list')), 'opened again, it is as it was left');
+      doc.getElementById('report-sections-toggle').click();
+      assert(!displayed(win, list), 'and it closes again');
+
+      // A tap on Sign and finish too early says what is left, in the same terms as the card.
+      const wrap = doc.querySelector('#view-report .finalize-wrap');
+      wrap.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      const said = (doc.querySelector('.toast') || {}).textContent || '';
+      assert(/Not ready yet: \d+ questions still to answer\. Tap "Answer them one at a time"\./.test(said), `it says how many questions and where to answer them: ${said}`);
+
+      // What the Finish step cannot ask stays: a business detail that prints blank.
+      win.Org.provider = () => ({ ...allBusinessDetails(), providerAddress: '' });
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => displayed(win, doc.getElementById('preflight-card')), 'a blank business detail is still flagged');
+      const body = doc.getElementById('preflight-body');
+      assertEqual(body.querySelectorAll('.preflight-item').length, 1, 'that one line, and no questions');
+      assert(/1 of your business details is blank, and prints on this report/.test(body.textContent), `it says what it is: ${body.textContent.slice(0, 120)}`);
+      assert(body.querySelector('.preflight-item').getAttribute('data-opens-business'), 'and opens Settings, not a report section');
+
+      // History, behind its own button.
+      await win.ReportUI.prefillFieldValue(job.id, 'clientDetails', 'inspectionTime', '09:00');
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => /History/.test(doc.getElementById('audit-toggle-btn').textContent), 'the record of changes is called History');
+      assert(doc.getElementById('audit-trail-body').classList.contains('hidden'), 'and is closed until asked for');
+    } finally {
+      win.Org.provider = realProvider;
+      win.localStorage.removeItem('scope-report-sections-open:test');
+    }
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Doubles: on the job screen, booking, the repeat plan and messages sit behind one line', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const first = await win.DB.addJob({ name: 'Fold Job', address: '1 Fold St', clientPhone: '0412 000 111', clientEmail: 'fold@example.com', jobType: 'termite' });
+    const second = await win.DB.addJob({ name: 'Fold Job Two', address: '2 Fold St', clientPhone: '0412 000 222', clientEmail: 'two@example.com', jobType: 'termite' });
+    const host = () => doc.querySelector('#view-job .content');
+    const toggle = () => doc.getElementById('job-more-toggle');
+    await win.showJobViewById(first.id);
+    await waitFor(() => toggle() && doc.getElementById('job-comms-row') && doc.getElementById('job-booking-card'), 'the job screen is drawn');
+    await wait(100);
+    assert(/^Booking, .*messages$/.test(toggle().textContent), `one line names what is behind it: ${toggle().textContent}`);
+    assertEqual(toggle().getAttribute('aria-expanded'), 'false', 'closed when the job opens');
+    assert(!displayed(win, doc.getElementById('job-booking-card')), 'the booking card is folded away');
+    assert(!displayed(win, doc.getElementById('job-comms-row')), 'and the messages row');
+    assert(displayed(win, doc.getElementById('start-inspection-btn')) && displayed(win, doc.getElementById('job-details-card')), 'Start and the client are what is left');
+    const order = win.JobLayout.orderOf();
+    assert(order.indexOf('job-details-card') < order.indexOf('job-more-toggle') && order.indexOf('job-more-toggle') < order.indexOf('job-settings'), `the line sits under the client card: ${order.join(',')}`);
+
+    toggle().click();
+    assertEqual(toggle().getAttribute('aria-expanded'), 'true', 'one tap opens it');
+    assert(displayed(win, doc.getElementById('job-booking-card')) && displayed(win, doc.getElementById('job-comms-row')), 'and everything is there');
+
+    // Redrawing the same job (after a save) leaves it open; another job starts closed.
+    await win.showJobViewById(first.id);
+    await wait(250);
+    assertEqual(toggle().getAttribute('aria-expanded'), 'true', 'the same job stays as it was left');
+    await win.showJobViewById(second.id);
+    await waitFor(() => toggle() && toggle().getAttribute('aria-expanded') === 'false', 'a different job starts folded');
+
+    // A booking the client has not been told about is something to do: its reminder is not folded away.
+    await win.DB.updateJob(second.id, { scheduledAt: Date.now() + 3 * 86400000, scheduledDurationMins: 60 });
+    await win.showJobViewById(second.id);
+    await waitFor(() => doc.getElementById('booking-notice-row'), 'the reminder is drawn');
+    await wait(100);
+    assertEqual(toggle().getAttribute('aria-expanded'), 'false', 'the group is still closed');
+    assert(displayed(win, doc.getElementById('booking-notice-row')), 'but the reminder to send the booking details shows');
+    assert(!displayed(win, doc.getElementById('job-comms-row')) && !displayed(win, doc.getElementById('job-booking-card')), 'and only the reminder');
+    assert(host().classList.contains('job-more-closed'), 'closed is a state of the screen, nothing is moved or removed');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(first.id);
+    await win.DB.deleteJob(second.id);
+  });
+
+  test('Doubles: one way between Today and Jobs, and one Settings', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await win.showJobListView();
+    await waitFor(() => doc.body.classList.contains('has-tabbar') && doc.getElementById('home-tabs'), 'the home screen with its tab bar');
+    assert(!displayed(win, doc.getElementById('home-tabs')), 'the Today / All jobs switch is not shown above tabs that do the same thing');
+    assert(doc.getElementById('home-tab-today') && doc.getElementById('home-tab-all'), 'it is still in the page for the tabs to drive');
+    const settings = doc.getElementById('open-settings-btn');
+    assert(/Settings$/.test(settings.textContent.trim()) && !/Business details and team/.test(settings.textContent), `More has "Settings": ${settings.textContent.trim()}`);
+    assert(doc.getElementById('business-details-btn').classList.contains('hidden'), 'and the second "Settings" link is gone from the sign-in strip');
   });
 
   test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {

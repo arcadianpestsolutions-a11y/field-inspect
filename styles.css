@@ -3890,3 +3890,54 @@ body:has(#inspection-modal.walk-mode:not(.hidden):not(.front-pending)) .toast {
 /* ---------- Carried forward from the last visit (v171) ---------- */
 .carried-note { margin-bottom: 12px; border-left: 4px solid var(--accent-2); display: flex; flex-direction: column; gap: 10px; }
 .carried-note-text { margin: 0; font-size: 0.92rem; line-height: 1.4; }
+
+/* ---------- Doubles removed (v173) ---------- */
+/* The Today / All jobs switch repeated the Today and Jobs tabs under it. With
+   the tab bar on screen the switch is not shown; the tabs do the same job. */
+body.has-tabbar #home-tabs { display: none; }
+
+/* The job screen: booking, repeat plan and messages behind one line. */
+.job-more-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  margin-bottom: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: left;
+}
+.job-more-toggle::after { content: '\25BE'; color: var(--text-dim); }
+.job-more-toggle[aria-expanded="true"]::after { content: '\25B4'; }
+#view-job .content.job-more-closed > #job-booking-card,
+#view-job .content.job-more-closed > #job-settings:not(:has(#booking-notice-row)),
+#view-job .content.job-more-closed > #job-settings > :not(#booking-notice-row) { display: none; }
+
+/* The report: the list of every section behind one line. */
+.report-sections-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  margin-bottom: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: left;
+}
+.report-sections-toggle::after { content: '\25BE'; color: var(--text-dim); }
+.report-sections-toggle[aria-expanded="true"]::after { content: '\25B4'; }
+
+/* Settings: its first part is the business's details. */
+.business-subhead { margin: 0 0 6px; font-size: 0.95rem; color: var(--text-dim); }
