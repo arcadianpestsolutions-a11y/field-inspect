@@ -14198,6 +14198,174 @@
     assert(sw.includes("'./subcontractor.js'") && sw.includes("'./subcontractors-ui.js'"), 'both new files are cached for a start with no signal');
   });
 
+  // ---------- Client report (report-client.js, v167) ----------
+  // The new layout of the inspection report: a cover that answers what was
+  // found and what to do, then the findings, then the detail. A preview beside
+  // the current print. What matters most here is the wording: every sentence
+  // about a finding is fixed, keeps the "found at the time of inspection"
+  // framing, and nothing is ever stated that the technician did not answer.
+  const clientReport = (sections) => ({ jobId: 'x', documentType: 'timber_pest_inspection', sections: sections || {}, auditLog: [] });
+
+  test('Client report: dates and times read the Australian way, and nothing is guessed', () => {
+    const R = frame.contentWindow.ReportClient;
+    assertEqual(R.fmtDate('2026-11-12'), '12 Nov 2026', 'a date');
+    assertEqual(R.fmtDate('2026-02-03'), '3 Feb 2026', 'no leading zero on the day');
+    assertEqual(R.fmtDate('about March'), 'about March', 'a date typed by hand is left as it was');
+    assertEqual(R.fmtDate(''), '', 'nothing stays nothing');
+    assertEqual(R.fmtDate(undefined), '', 'and so does a missing one');
+    assertEqual(R.fmtTime('08:00'), '8:00 am', 'morning');
+    assertEqual(R.fmtTime('13:30'), '1:30 pm', 'afternoon');
+    assertEqual(R.fmtTime('00:05'), '12:05 am', 'just after midnight');
+    assertEqual(R.fmtTime('12:00'), '12:00 pm', 'midday');
+    assertEqual(R.fmtTime(''), '', 'no time, no words');
+    assertEqual(R.dueBy('2026-11-12', '12 months'), 'November 2027', 'next inspection, a year on');
+    assertEqual(R.dueBy('2026-11-12', '3 months'), 'February 2027', 'three months on crosses the new year');
+    assertEqual(R.dueBy('', '12 months'), '', 'no inspection date, no due date');
+    assertEqual(R.dueBy('2026-11-12', ''), '', 'no interval, no due date');
+  });
+
+  test('Client report: the wording keeps the "found at the time of inspection" framing', async () => {
+    const R = frame.contentWindow.ReportClient;
+    assertEqual(R.SAID.live.no, 'No live termites were found at the time of inspection.', 'the protected sentence, exactly');
+    for (const [key, pair] of Object.entries(R.SAID)) {
+      assert(/^No /.test(pair.no) && /(found|located)/.test(pair.no), `${key}: a "No" says nothing was found, never that nothing is there: ${pair.no}`);
+      assert(/(found|located)/.test(pair.yes), `${key}: a "Yes" says what was found: ${pair.yes}`);
+      assert(/[.]$/.test(pair.no) && /[.]$/.test(pair.yes), `${key}: both are whole sentences`);
+    }
+    const src = await (await fetch('../report-client.js', { cache: 'reload' })).text();
+    for (const never of ['free of termites', 'no termites present', 'termite free', 'guarantee']) {
+      assert(!src.toLowerCase().includes(never), `the file never says "${never}"`);
+    }
+  });
+
+  test('Client report: at a glance says only what was answered', () => {
+    const R = frame.contentWindow.ReportClient;
+    assertEqual(R.glance(clientReport({})).length, 0, 'an unanswered report says nothing at all');
+    assertEqual(R.actions(clientReport({})).length, 0, 'and recommends nothing');
+    assertEqual(R.cleared(clientReport({})).length, 0, 'and clears nothing');
+
+    const clean = clientReport({
+      clientDetails: { inspectionDate: '2026-11-12' },
+      findings: { liveTermitesFound: 'No', nestFound: 'No', workingsFound: 'No', borersFound: 'No', susceptibility: 'LOW',
+        managementSystemStatus: 'Adequate — no further works required', durableNoticeFound: 'Yes', reinspectionInterval: '12 months' },
+      conducive: { waterLeaksFound: 'No', highMoistureFound: 'No', fungalDecayFound: 'No' },
+      access: { hinderedObstructions: 'No', restrictedAccess: 'No' },
+    });
+    const g = R.glance(clean);
+    const by = (id) => g.find((l) => l.id === id);
+    assertEqual(by('live').text, 'No live termites were found at the time of inspection.', 'the protected sentence leads');
+    assertEqual(g.map((l) => l.tone).join(','), 'good,good,good,good,good,good', 'a clean house is all green');
+    assert(!by('nest'), 'a nest that was not found does not take a line on the cover');
+    assert(/^Adequate — no further works required\. A durable notice was found/.test(by('protection').text), 'the protection line is the answer chosen, word for word, plus the notice');
+    assert(/is Low\.$/.test(by('risk').text), 'the risk reads as a word, not capitals');
+    assertEqual(R.actions(clean).join(' | '), 'A full inspection and written report should be conducted at this property every 12 months. The next is due by November 2027.', 'the only thing to do is come back in a year');
+    assert(R.cleared(clean).includes('No termite nest was found at the time of inspection.'), 'what was looked for and not found is listed in full');
+    assertEqual(R.cleared(clean).length, 7, 'one sentence for each "No" given, and none for questions left alone');
+
+    const bad = clientReport({
+      clientDetails: { inspectionDate: '2026-11-12' },
+      findings: { liveTermitesFound: 'Yes', liveTermitesAreas: ['The Exterior', 'Subfloor'], nestFound: 'Yes', workingsFound: 'Yes', workingsAreas: ['Roof Void'],
+        damageSeverity: 'Moderate to Extensive', borersFound: 'Yes', majorSafetyHazard: 'Yes', majorSafetyHazardDetails: 'Rear deck bearer.', susceptibility: 'HIGH',
+        treatmentRecommended: 'Yes', treatmentComments: 'Treat the perimeter.', managementSystemStatus: 'None present — management plan proposed', reinspectionInterval: '3 months' },
+      conducive: { waterLeaksFound: 'Yes', waterLeakAreas: ['Taps'], highMoistureFound: 'Yes', fungalDecayFound: 'No', ventilation: 'Inadequate', weepHolesClear: 'No' },
+      access: { hinderedObstructions: 'Yes', hinderedAreas: ['Subfloor'], restrictedAccess: 'No', highRiskAreas: 'Yes', invasiveRecommended: 'Yes', invasiveComments: 'Behind the bath.' },
+    });
+    const b = R.glance(bad);
+    const bb = (id) => b.find((l) => l.id === id);
+    assertEqual(bb('live').text, 'Live termites were found at the time of inspection. Where: the exterior and subfloor.', 'live termites, and where');
+    assertEqual(bb('live').tone, 'bad', 'in red');
+    assert(bb('nest') && bb('hazard') && bb('borers'), 'a nest, a hazard and borers each get a line when found');
+    assert(/The damage appears to be moderate to extensive\.$/.test(bb('workings').text), 'the damage is described in the inspector’s own grade');
+    assertEqual(bb('conducive').text, '4 found: water leaks, high moisture readings, subfloor ventilation and weep holes.', 'the conditions are counted and named');
+    assert(/could not be fully inspected: subfloor\./.test(bb('access').text) && bb('access').tone === 'warn', 'what could not be inspected is on the cover');
+    assertEqual(bb('protection').tone, 'warn', 'no protection in place is a caution');
+    assertEqual(bb('risk').tone, 'bad', 'high risk is red');
+    const todo = R.actions(bad);
+    assert(/^Have the safety hazard made safe by a licensed builder\. Rear deck bearer\.$/.test(todo[0]), 'the hazard comes first, with the inspector’s own words after the fixed sentence');
+    assertEqual(todo[1], 'A termite treatment is recommended. Treat the perimeter.', 'then treatment');
+    assert(todo.some((t) => /management plan is proposed/.test(t)) && todo.some((t) => /invasive inspection is recommended\. Behind the bath\./.test(t)), 'then the plan and the invasive inspection');
+    assert(/every 3 months\. The next is due by February 2027\.$/.test(todo[todo.length - 1]), 'and the next inspection last');
+    assertEqual(R.conduciveFound(bad).map((x) => x.id).join(','), 'leaks,moisture,ventilation,weepHoles', 'each condition found, in the order of the form');
+    assert(R.conduciveFound(bad).every((x) => x.said && /[.]$/.test(x.said)), 'each with a plain statement of its own');
+  });
+
+  test('Client report: the document prints answers as sentences, and leaves unanswered questions out', async () => {
+    const win = frame.contentWindow;
+    const R = win.ReportClient;
+    const job = { id: 'cr1', jobType: 'termite', name: 'Report Layout House', address: '9 Layout Lane' };
+    const report = clientReport({
+      clientDetails: { clientName: 'Mr <b>Bold</b>', propertyAddress: '9 Layout Lane, Camden NSW 2570', inspectionDate: '2026-11-12', inspectionTime: '08:00' },
+      property: { structureType: 'Detached house', floorType: 'Concrete Slab' },
+      findings: { liveTermitesFound: 'No', workingsFound: 'Yes', workingsAreas: ['Subfloor'], evidenceDetails: 'Old mudding on a pier.', susceptibility: 'MODERATE', reinspectionInterval: '12 months' },
+      conducive: { waterLeaksFound: 'No', highMoistureFound: 'No', fungalDecayFound: 'No' },
+      access: { hinderedObstructions: 'No', restrictedAccess: 'No' },
+      inspector: { inspectorName: 'Sam Rivera', inspectorLicence: 'DEMO-0001', signatureDate: '2026-11-12' },
+    });
+    const realOrg = win.Org;
+    const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    try {
+      win.Org = Object.assign({}, realOrg, { logo: () => pixel, provider: () => ({ providerName: 'Host Pest', providerAbn: '11 222 333 444', providerLicence: 'L-9', signedOnBehalfOf: 'Host Pest' }) });
+      const html = R.buildHtml(job, report, {});
+      assert(html.includes(`<img class="cr-logo" src="${pixel}"`), 'the business’s logo heads the page');
+      assert(html.includes('<div class="cr-biz">Host Pest</div>'), 'with its name');
+      assert(html.includes('<h1>9 Layout Lane, Camden NSW 2570</h1>'), 'the property is the title');
+      assert(html.includes('Inspected 12 Nov 2026 at 8:00 am.'), 'the date and time read the way people write them');
+      assert(html.includes('Mr &lt;b&gt;Bold&lt;/b&gt;') && !html.includes('<b>Bold</b>'), 'a name is text, never markup');
+      assert(html.includes('<h2>At a glance</h2>') && html.includes('<h2>What to do now</h2>'), 'the cover answers what was found and what to do');
+      assert(html.indexOf('At a glance') < html.indexOf('What we found') && html.indexOf('What we found') < html.indexOf('Terms and conditions'), 'summary, then findings, then the fine print');
+      assert(html.includes('No live termites were found at the time of inspection.'), 'the protected sentence is printed');
+      assert(html.includes('Old mudding on a pier.'), 'the inspector’s own words are printed as written');
+      assert(html.includes('Looked for and not found'), 'what was not found is listed');
+      assert(html.includes('This page is a summary.'), 'the cover says the full report must be read with it');
+      assert(html.includes('Inspector: Sam Rivera, licence DEMO-0001, for Host Pest.'), 'the inspector is named with their licence, under the business');
+      // Everything before the terms, which mention borers and the like in their own right.
+      const body = html.slice(0, html.indexOf('<h2>Terms and conditions</h2>'));
+      assert(body.length > 500 && body.length < html.length, 'the terms follow the report');
+      for (const unanswered of ['Weather', 'People present', 'Site topography', 'Wall construction', 'Client acknowledgement', 'Borer', 'nest was found']) {
+        assert(!body.includes(unanswered), `a question nobody answered prints nothing: ${unanswered}`);
+      }
+      assert(!/undefined|null|NaN|\[object/.test(html), 'and nothing leaks out as "undefined"');
+      win.Org = Object.assign({}, realOrg, { logo: () => 'javascript:alert(1)', provider: () => ({ providerName: 'Host Pest' }) });
+      assert(!R.buildHtml(job, report, {}).includes('cr-logo'), 'anything that is not a plain picture is not a logo');
+    } finally {
+      win.Org = realOrg;
+    }
+    assert(R.supports(job, report), 'the timber pest inspection is laid out this way');
+    assert(!R.supports({ jobType: 'pest_treatment' }, report), 'a treatment record keeps the current print for now');
+    assert(!R.supports(job, { documentType: 'termite_certificate', sections: {} }), 'and so do the other termite documents');
+  });
+
+  test('Client report: the preview is offered on an inspection report, beside the current print, and not to a subcontractor', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Preview Button Job', jobType: 'termite' });
+    await win.DB.saveReport({ jobId: job.id, documentType: 'timber_pest_inspection', finalizedAt: null, sections: {}, auditLog: [] });
+    const pest = await win.DB.addJob({ name: 'Preview Button Spray', jobType: 'pest_treatment' });
+    try {
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => doc.getElementById('client-preview-btn'), 'the preview button is on the inspection report');
+      assert(doc.getElementById('report-export-btn'), 'and the current export is still there');
+      assert(/new client layout/i.test(doc.getElementById('client-preview-btn').textContent), 'it says what it is');
+      await win.ReportUI.openReview(pest.id);
+      await wait(400);
+      assert(!doc.getElementById('client-preview-btn'), 'a treatment record does not offer it yet');
+      await asSubcontractor(win, {}, async () => {
+        await win.DB.updateJob(job.id, { assignedTo: 'sub@example.com' });
+        await win.ReportUI.openReview(job.id);
+        await wait(400);
+        assert(!doc.getElementById('client-preview-btn'), 'a subcontractor is not offered it');
+      });
+    } finally {
+      await win.DB.deleteJob(job.id);
+      await win.DB.deleteJob(pest.id);
+      await win.showJobListView();
+    }
+    const print = await (await fetch('../report-print.js', { cache: 'reload' })).text();
+    assert(!print.includes('ReportClient'), 'the current print, email and client page do not use the new layout yet');
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(sw.includes("'./report-client.js'"), 'the new file is cached for a start with no signal');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler

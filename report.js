@@ -2369,6 +2369,11 @@
     // stays visible on reopen too, so a technician can come back and send
     // it later without having to re-finalize.
     if (finalizePostActions) finalizePostActions.classList.toggle('hidden', !currentReport.finalizedAt);
+    // The new client layout, offered beside the current print (report-client.js,
+    // v167). A preview: nothing is sent in it yet.
+    if (window.ReportClient && window.ReportClient.renderPreviewButton) {
+      window.ReportClient.renderPreviewButton({ job: currentJob, report: currentReport, anchor: finalizePostActions || finalizeHint });
+    }
   }
 
   reportBackBtn.addEventListener('click', async () => {
