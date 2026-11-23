@@ -3090,7 +3090,13 @@ body.tabbar-typing .fab { bottom: calc(18px + var(--safe-bottom)); }
 .report-progress-top span { font-family: var(--font-readout); color: var(--text-dim); font-size: 0.9rem; }
 .progress-bar { height: 8px; border-radius: 4px; background: var(--bg-elev); border: 1px solid var(--border); overflow: hidden; }
 .progress-bar > span { display: block; height: 100%; width: 0; background: var(--accent); box-shadow: var(--glow-accent); transition: width 0.25s ease; }
-#view-report #finalize-report-btn { position: sticky; bottom: 8px; z-index: 5; box-shadow: 0 -8px 16px var(--bg); }
+/* v172: the button itself was sticky until v163 wrapped it in .finalize-wrap
+   to explain a disabled tap. A sticky element only sticks inside its parent,
+   so from then on it sat at the foot of a long page, out of reach. The
+   wrapper is what sticks now; once the report is signed it is a plain line. */
+#view-report .finalize-wrap { position: sticky; bottom: 8px; z-index: 5; }
+#view-report .finalize-wrap.finalize-wrap-done { position: static; }
+#view-report #finalize-report-btn { box-shadow: 0 -8px 16px var(--bg); }
 /* A greyed-out sticky button must still be solid, or list rows show through it. */
 #view-report #finalize-report-btn:disabled { background: var(--bg-elev); color: var(--text-dim); border: 1px solid var(--border); opacity: 1; box-shadow: 0 -10px 14px var(--bg); }
 
@@ -3835,7 +3841,6 @@ body.is-sub #subs-notice { display: none !important; }
 
 /* The card at the top of the report: what is left, and the way to finish. */
 .report-progress-note { margin: 0; font-size: 0.85rem; line-height: 1.4; color: var(--text-dim); }
-#report-finish-btn[aria-disabled="true"] { opacity: 0.5; }
 
 /* ---------- The walk on its own screen (v170) ----------
    With a guided walk the checklist is the task, so it gets the height. The

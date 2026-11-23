@@ -1003,7 +1003,7 @@
       hide(startInspectionBtn);
       show(finishInspectionBtn);
       show(inspectionTimerEl);
-      finishInspectionBtn.textContent = '✨ Generate Form';
+      finishInspectionBtn.textContent = 'Finish and open report';
     } else if (job.status === 'new') {
       show(startInspectionBtn);
       hide(finishInspectionBtn);
@@ -1018,7 +1018,7 @@
       hide(startInspectionBtn);
       show(finishInspectionBtn);
       hide(inspectionTimerEl);
-      finishInspectionBtn.textContent = '⚠ Recover / Generate Form';
+      finishInspectionBtn.textContent = '⚠ Recover: finish and open report';
     } else {
       hide(startInspectionBtn);
       hide(finishInspectionBtn);
@@ -1711,10 +1711,14 @@
     populateZoneSuggestions();
   }
 
+  // What a photo with no area set is called (v172: was "Untagged"; "zone"
+  // is "area" everywhere a person reads it, the word a client would use).
+  const NO_AREA = 'No area';
+
   function computeZoneCounts() {
     const counts = new Map();
     for (const c of currentCaptures) {
-      const z = c.zone || 'Untagged';
+      const z = c.zone || NO_AREA;
       counts.set(z, (counts.get(z) || 0) + 1);
     }
     return counts;
@@ -1754,7 +1758,7 @@
   function getVisibleCaptures() {
     return activeZoneFilter === null
       ? currentCaptures
-      : currentCaptures.filter((c) => (c.zone || 'Untagged') === activeZoneFilter);
+      : currentCaptures.filter((c) => (c.zone || NO_AREA) === activeZoneFilter);
   }
 
   function renderGalleryTiles() {
@@ -1838,7 +1842,7 @@
 
       const zoneLabel = document.createElement('span');
       zoneLabel.className = 'capture-tile-zone';
-      zoneLabel.textContent = capture.zone || (capture.suggestedZone ? `Untagged — ✨ ${capture.suggestedZone}?` : 'Untagged');
+      zoneLabel.textContent = capture.zone || (capture.suggestedZone ? `No area — ✨ ${capture.suggestedZone}?` : NO_AREA);
       tile.appendChild(zoneLabel);
 
       tile.addEventListener('click', () => {
@@ -1915,7 +1919,7 @@
 
   selectionZoneBtn.addEventListener('click', () => {
     if (!selectedCaptureIds.size) return;
-    bulkZoneHint.textContent = `Set the zone for ${selectedCaptureIds.size} selected capture${selectedCaptureIds.size === 1 ? '' : 's'}.`;
+    bulkZoneHint.textContent = `Set the area for ${selectedCaptureIds.size} selected capture${selectedCaptureIds.size === 1 ? '' : 's'}.`;
     bulkZoneInput.value = '';
     show(bulkZoneModal);
     bulkZoneInput.focus();
@@ -1963,7 +1967,7 @@
       await DB.updateCapture(id, { zone });
     }
     hide(bulkZoneModal);
-    toast(`Zone updated for ${count} capture${count === 1 ? '' : 's'}`);
+    toast(`Area updated for ${count} capture${count === 1 ? '' : 's'}`);
     exitSelectMode();
     await renderGallery();
   });
@@ -2079,7 +2083,7 @@
     try {
       showLastPhoto(null);
       inspectionZoneInput.value = '';
-      inspectionZonePill.textContent = 'Untagged';
+      inspectionZonePill.textContent = NO_AREA;
       show(inspectionModal);
       inspectionActiveJobId = startJobId;
       endPhotoWalk();
@@ -2203,9 +2207,9 @@
     if (photoWalk) {
       toast(frontPhotoPending
         ? 'Front photo first, then follow the steps on screen.'
-        : 'Carry on from the step on screen. Tap Generate Form when you\'re done.');
+        : 'Carry on from the step on screen. Tap Finish and open report when you\'re done.');
     } else {
-      toast('Photograph each area, tagging the zone as you go — tap Generate Form when you\'re done.');
+      toast('Photograph each area, setting the area as you go. Tap Finish and open report when you\'re done.');
     }
 
     // Both are best-effort, fire-and-forget: neither should delay the
@@ -2224,7 +2228,7 @@
   }
 
   inspectionZoneInput.addEventListener('input', () => {
-    inspectionZonePill.textContent = inspectionZoneInput.value.trim() || 'Untagged';
+    inspectionZonePill.textContent = inspectionZoneInput.value.trim() || NO_AREA;
     renderInspectionChecklist();
     if (photoWalk) photoWalk.zoneChanged(inspectionZoneInput.value.trim());
   });
@@ -2385,13 +2389,13 @@
     const setStage = (s) => { finishStage = s; };
 
     const progressTimer = setInterval(() => {
-      if (!watchdogFired) toast('Generating your form — ' + finishStage + '…');
+      if (!watchdogFired) toast('Opening your report: ' + finishStage + '…');
     }, 4000);
 
     const watchdog = setTimeout(() => {
       watchdogFired = true;
       console.warn('[inspection] finishInspection watchdog fired after 45s while ' + finishStage);
-      toast('Still stuck while ' + finishStage + '. Your photos are saved on this device — reopen the job and try Generate Form again.');
+      toast('Still stuck while ' + finishStage + '. Your photos are saved on this device — reopen the job and tap Finish and open report again.');
       finishInspectionInProgress = false;
       finishInspectionBtn.disabled = false;
       inspectionFinishBtn.disabled = false;
@@ -2450,7 +2454,7 @@
           const jobForAi = await DB.getJob(jobIdAtStart);
           window.AI.analyzeInspectionPhotos(photos, jobForAi && jobForAi.jobType)
             .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
-            .then(() => toast('Form generated — review the AI-suggested answers in the report'))
+            .then(() => toast('Your photos have been read. Review the AI-suggested answers in the report.'))
             .catch((err) => {
               // Only logging this would make a failure indistinguishable from
               // "Generate Form does nothing", which is how it once looked.
@@ -2459,7 +2463,7 @@
               // technician would sit there retrying forever.
               console.warn('[ai draft] photo analysis failed:', err.message || err);
               const why = (window.AI && window.AI.humanError) ? window.AI.humanError(err) : (err.message || err);
-              toast('Could not generate the form: ' + why);
+              toast('The AI could not read your photos: ' + why);
             });
         }
       } catch (err) {
@@ -2467,8 +2471,8 @@
       }
 
       toast(photoCount
-        ? `Generating your form from ${photoCount} photo${photoCount === 1 ? '' : 's'} — opening report.`
-        : 'No photos were taken, so there is nothing to generate a form from.');
+        ? `Opening the report with your ${photoCount} photo${photoCount === 1 ? '' : 's'}.`
+        : 'Opening the report. No photos were taken.');
 
       try {
         await ReportUI.openReview(jobIdAtStart);
@@ -2863,7 +2867,7 @@
     const list = getVisibleCaptures();
     currentDetailIndex = list.findIndex((c) => c.id === captureId);
 
-    const zoneText = capture.zone || 'Untagged';
+    const zoneText = capture.zone || NO_AREA;
     detailZoneEl.textContent = list.length > 1
       ? `${zoneText} · ${currentDetailIndex + 1} of ${list.length}`
       : zoneText;
@@ -2894,7 +2898,7 @@
     }
 
     if (!capture.zone && capture.suggestedZone) {
-      detailApplySuggestedZoneBtn.textContent = `✨ Apply suggested zone: ${capture.suggestedZone}`;
+      detailApplySuggestedZoneBtn.textContent = `✨ Use the suggested area: ${capture.suggestedZone}`;
       show(detailApplySuggestedZoneBtn);
     } else {
       hide(detailApplySuggestedZoneBtn);
@@ -2908,7 +2912,7 @@
     const capture = currentCaptures.find((c) => c.id === currentDetailCaptureId) || await findCaptureById(currentDetailCaptureId);
     if (!capture || !capture.suggestedZone) return;
     await DB.updateCapture(currentDetailCaptureId, { zone: capture.suggestedZone });
-    toast(`Zone set to ${capture.suggestedZone}`);
+    toast(`Area set to ${capture.suggestedZone}`);
     await renderGallery();
     await openDetail(currentDetailCaptureId);
   });

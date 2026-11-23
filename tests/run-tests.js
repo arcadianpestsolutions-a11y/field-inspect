@@ -11964,7 +11964,84 @@
     const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
     assert(idx.indexOf('job-layout.js') > idx.indexOf('job-details.js') && idx.indexOf('job-layout.js') < idx.indexOf('src="app.js"'), 'loaded after the details card, before app.js');
     assert(sw.includes("'./job-layout.js'"), 'in the offline shell');
-    assert(/#view-report #finalize-report-btn \{[^}]*position: sticky/.test(css), 'Finalize stays on screen while the list scrolls');
+    assert(/#view-report \.finalize-wrap \{[^}]*position: sticky/.test(css), 'the sign-off button is meant to stay on screen while the list scrolls');
+  });
+
+  // The check above is the one that existed, and it passed from v163 to v171
+  // while the button sat at the foot of a 3,500 pixel page: the rule was on
+  // the button, and v163 had wrapped the button in an element of its own
+  // height. So this one looks at where the button actually is.
+  test('Report: the sign-off button really is on screen, at the top of a long report', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'In Reach Job', address: '9 Reach St', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+    await waitFor(() => doc.querySelectorAll('#report-section-list .report-section-item').length > 5, 'a report with a long list');
+    const main = doc.querySelector('#view-report main');
+    main.scrollTop = 0;
+    const btn = doc.getElementById('finalize-report-btn');
+    const inView = () => { const r = btn.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= doc.documentElement.clientHeight; };
+    assert(main.scrollHeight > main.clientHeight + 200, `the screen scrolls (${main.scrollHeight} in ${main.clientHeight})`);
+    assert(inView(), `the button is on screen without scrolling (top ${Math.round(btn.getBoundingClientRect().top)} of ${doc.documentElement.clientHeight})`);
+    assertEqual(btn.textContent, 'Sign and finish', 'and says what it does');
+    assert(btn.disabled, 'locked while answers are missing');
+    main.scrollTop = main.scrollHeight;
+    assert(inView(), 'and still on screen at the bottom');
+    main.scrollTop = 0;
+
+    // Signed: it is a line at the end of the report, not a bar over it.
+    await win.DB.saveReport({ jobId: job.id, sections: fillRequired(win, win.REPORT_SCHEMA), documentType: 'timber_pest_inspection', finalizedAt: Date.now(), auditLog: [] });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => /Finalized/.test(btn.textContent), 'the report is signed');
+    main.scrollTop = 0;
+    assert(!inView(), 'a signed report does not carry a dead bar over its sections');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Words: the screens say what the buttons do (the audit\'s renames)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    assertEqual(doc.getElementById('inspection-finish-btn').textContent, 'Finish and open report', 'the end of the walk');
+    assertEqual(doc.getElementById('selection-zone-btn').textContent, 'Change area', 'a photo has an area, not a zone');
+    assert(/area/i.test(doc.getElementById('inspection-zone-input').placeholder) && !/zone/i.test(doc.getElementById('inspection-zone-input').placeholder), 'the box says area too');
+    // Nothing a person reads still says the old words.
+    for (const file of ['index.html', 'app.js', 'photo-walk.js', 'report.js', 'sop-templates.js']) {
+      const code = await (await fetch('../' + file, { cache: 'reload' })).text();
+      const shown = code.split('\n').filter((l) => !/^\s*(\/\/|\*|<!--)/.test(l)).join('\n');
+      for (const old of ['Generate Form', 'Finalize Report', 'Untagged', 'Change Zone', 'AI Draft (not configured)', 'watch the footage']) {
+        assert(!shown.includes(old), `"${old}" is no longer shown anywhere in ${file}`);
+      }
+    }
+
+    // The job screen's button for an inspection that is under way.
+    const job = await win.DB.addJob({ name: 'Words Job', address: '1 Word St', jobType: 'termite' });
+    await win.DB.updateJob(job.id, { status: 'in_progress', inspectionStartedAt: Date.now() });
+    await win.showJobViewById(job.id);
+    await waitFor(() => !doc.getElementById('finish-inspection-btn').classList.contains('hidden'), 'the button to finish is offered');
+    assert(/finish and open report/i.test(doc.getElementById('finish-inspection-btn').textContent), `it says what it does: ${doc.getElementById('finish-inspection-btn').textContent}`);
+
+    // With no AI on the device there is no AI card at all; with it, there is.
+    await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+    await waitFor(() => doc.getElementById('report-progress'), 'the report opens');
+    const card = doc.querySelector('#view-report .ai-draft-card');
+    assert(!win.AI, 'tests run with no AI');
+    assert(card.classList.contains('hidden'), 'so the AI card is not shown: no dead button');
+    const realAI = win.AI;
+    win.AI = { analyzeInspectionPhotos: async () => ({ draftFields: {} }), analyzeSectionPhotos: async () => ({ draftFields: {} }) };
+    try {
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => !card.classList.contains('hidden'), 'with AI set up the card is back');
+      assert(/Read my photos/.test(doc.getElementById('ai-draft-btn').textContent) && !doc.getElementById('ai-draft-btn').disabled, 'with a button that works');
+    } finally { win.AI = realAI; }
+
+    // A photo with no area set.
+    await win.DB.addCapture({ jobId: job.id, type: 'photo', photoBlob: new win.Blob([new Uint8Array([1])], { type: 'image/jpeg' }) });
+    await win.showJobViewById(job.id);
+    await waitFor(() => doc.querySelector('#gallery .capture-tile-zone'), 'the photo is in the gallery');
+    assertEqual(doc.querySelector('#gallery .capture-tile-zone').textContent, 'No area', 'it reads "No area", not "Untagged"');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
   });
 
 
@@ -14129,7 +14206,7 @@
     assertEqual(doc.getElementById('report-progress-text').textContent, `${n} questions left`, 'the card counts them');
     const start = doc.getElementById('report-next-btn');
     assertEqual(start.textContent, 'Answer them one at a time', 'and one button asks them');
-    assert(doc.getElementById('report-finish-btn').classList.contains('hidden'), 'no finalize shortcut while something must be answered');
+    assert(doc.getElementById('finalize-report-btn').disabled, 'Sign and finish is locked while something must be answered');
 
     start.click();
     const editor = doc.getElementById('view-report-section');
@@ -14239,9 +14316,11 @@
     await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'back at the report');
     await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Every question is answered', 'the card says nothing is left');
     assert(doc.getElementById('report-next-btn').classList.contains('hidden'), 'nothing more to ask');
-    const shortcut = doc.getElementById('report-finish-btn');
-    await waitFor(() => !shortcut.classList.contains('hidden') && shortcut.getAttribute('aria-disabled') === 'false', 'the finalize button is offered at the top');
-    assertEqual(shortcut.textContent, doc.getElementById('finalize-report-btn').textContent, 'in the same words as the real one');
+    const shortcut = doc.getElementById('finalize-report-btn');
+    await waitFor(() => !shortcut.disabled, 'Sign and finish is ready');
+    assertEqual(shortcut.textContent, 'Sign and finish', 'and says so');
+    const at = shortcut.getBoundingClientRect();
+    assert(at.top >= 0 && at.bottom <= doc.documentElement.clientHeight, 'it is on screen, with no scrolling to find it');
     assert(doc.getElementById('section-save-btn') && !doc.getElementById('section-save-btn').classList.contains('hidden'), 'the editor is back to its usual Save button');
 
     const originalConfirm = win.confirm;
@@ -14255,7 +14334,6 @@
     assertEqual(done.sections.findings.susceptibility, 'LOW', 'with the answers given on the way');
     assertEqual(done.sections.acknowledgement.ackStatus, 'Client not on site', 'including the client not being there');
     await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Report finalized', 'the card says finalized');
-    assert(shortcut.classList.contains('hidden'), 'and the shortcut goes');
     win.hideAllAppViews();
     await win.DB.deleteJob(job.id);
   });
@@ -14266,13 +14344,13 @@
     const job = await win.DB.addJob({ name: 'Finish Soft Job', jobType: 'termite' });
     await win.DB.saveReport({ jobId: job.id, sections: fillRequired(win, win.REPORT_SCHEMA), documentType: 'timber_pest_inspection', finalizedAt: null, auditLog: [] });
     await win.ReportUI.openReview(job.id);
-    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Ready to finalize', 'ready, with only the client questions open');
+    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Ready to sign', 'ready, with only the client questions open');
     const note = doc.getElementById('report-progress-note');
     assert(!note.classList.contains('hidden') && /Client agreement/.test(note.textContent) && /Client acknowledgement/.test(note.textContent), `it names what is still open: ${note.textContent}`);
     const next = doc.getElementById('report-next-btn');
     assertEqual(next.textContent, 'Answer those 2 first', 'answering them is offered');
     assert(next.classList.contains('btn-outline') && !next.classList.contains('btn-primary'), 'as the second choice');
-    await waitFor(() => !doc.getElementById('report-finish-btn').classList.contains('hidden'), 'finalize is the first');
+    await waitFor(() => !doc.getElementById('finalize-report-btn').disabled, 'and Sign and finish is ready');
     win.hideAllAppViews();
     await win.DB.deleteJob(job.id);
   });

@@ -747,7 +747,7 @@
         const todo = outstanding(items, state, doneSet);
         if (!todo.length) {
           container.appendChild(el('div', 'walk-title', '✓ All areas done'));
-          container.appendChild(el('div', 'walk-hint', 'Tap Generate Form when you are ready, or go back to add anything.'));
+          container.appendChild(el('div', 'walk-hint', 'Tap Finish and open report when you are ready, or go back to add anything.'));
         } else {
           container.appendChild(el('div', 'walk-title', `${todo.length} still to do`));
           container.appendChild(el('div', 'walk-hint', 'Tap one to go straight to it.'));

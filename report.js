@@ -756,7 +756,6 @@
         if (fb.dataset.sectionsGreen === '1') { fb.disabled = false; fh.classList.add('hidden'); }
       }
     }
-    syncFinishShortcut();
     if (todo === null || currentReport.finalizedAt) { if (card) card.remove(); return; }
     if (!card) {
       card = document.createElement('div');
@@ -1720,8 +1719,11 @@
 
   // ---------- AI Draft ----------
   function updateAiDraftButton() {
+    // No AI on this device (the demo, or a business with no server): the
+    // whole card goes, rather than a dead button on every report (v172).
+    const aiCard = aiDraftBtn.closest('.ai-draft-card');
+    if (aiCard) aiCard.classList.toggle('hidden', !window.AI);
     if (!window.AI) {
-      aiDraftBtn.textContent = '🤖 AI Draft (not configured)';
       aiDraftBtn.disabled = true;
       return;
     }
@@ -2536,24 +2538,12 @@
       card.innerHTML = '<div class="report-progress-top"><strong id="report-progress-text"></strong><span id="report-progress-pct"></span></div>'
         + '<div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span id="report-progress-fill"></span></div>'
         + '<p id="report-progress-note" class="report-progress-note hidden"></p>'
-        + '<button type="button" id="report-next-btn" class="btn btn-primary full"></button>'
-        + '<button type="button" id="report-finish-btn" class="btn btn-primary full hidden"></button>';
+        + '<button type="button" id="report-next-btn" class="btn btn-primary full"></button>';
       reportSectionList.parentNode.insertBefore(card, reportSectionList);
       card.querySelector('#report-next-btn').addEventListener('click', () => {
         if (card.dataset.finish === '1') { startFinish(); return; }
         const target = card.dataset.nextSection;
         if (target) openSectionEditor(target);
-      });
-      card.querySelector('#report-finish-btn').addEventListener('click', () => {
-        // The button at the foot of the screen, within reach. It presses that
-        // one, so there is still exactly one way a report gets finalized.
-        if (finalizeBtn.disabled) {
-          toast(walkBlocksFinalize()
-            ? 'Finish the walk-through first. What is left is listed on this screen.'
-            : 'Not ready yet: some sections still need an answer.');
-          return;
-        }
-        finalizeBtn.click();
       });
     }
     const pct = total ? Math.round((done / total) * 100) : 0;
@@ -2597,25 +2587,13 @@
       next.textContent = n === 1 ? 'Answer it' : 'Answer them one at a time';
       return;
     }
-    text.textContent = 'Ready to finalize';
+    text.textContent = 'Ready to sign';
     next.className = 'btn btn-outline full';
     next.textContent = n === 1 ? 'Answer it first' : `Answer those ${n} first`;
     if (note) {
-      note.textContent = `Not needed to finalize, and still open: ${questions.map((q) => q.label).join('; ')}.`;
+      note.textContent = `Not needed before you sign, and still open: ${questions.map((q) => q.label).join('; ')}.`;
       note.classList.remove('hidden');
     }
-  }
-
-  // The finalize button, repeated at the top of the report once nothing that
-  // must be answered is left (v169). It mirrors the real one's words and
-  // whether it is ready, and only ever presses it.
-  function syncFinishShortcut() {
-    const btn = document.getElementById('report-finish-btn');
-    if (!btn || !currentReport || !finalizeBtn) return;
-    const ready = !currentReport.finalizedAt && !!window.FinishStep && finalizeBtn.dataset.sectionsGreen === '1';
-    btn.classList.toggle('hidden', !ready);
-    btn.textContent = finalizeBtn.textContent;
-    btn.setAttribute('aria-disabled', finalizeBtn.disabled ? 'true' : 'false');
   }
 
   function renderSectionList() {
@@ -2667,7 +2645,12 @@
     renderWalkTodo();
     finalizeBtn.dataset.sectionsGreen = allRequiredGreen ? '1' : '0';
     finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt || walkBlocksFinalize();
-    finalizeBtn.textContent = currentReport.finalizedAt ? '✓ Report Finalized' : 'Finalize Report';
+    // v172: "Sign and finish", because this is the moment of signing.
+    finalizeBtn.textContent = currentReport.finalizedAt ? '✓ Report Finalized' : 'Sign and finish';
+    // The button stays on screen while the report is being written (the
+    // wrapper is what sticks: styles.css). Once signed it is a plain line.
+    const finalizeWrap = finalizeBtn.closest('.finalize-wrap');
+    if (finalizeWrap) finalizeWrap.classList.toggle('finalize-wrap-done', !!currentReport.finalizedAt);
     // A subcontractor does not finalise and send: they sign, and it goes to
     // the business they work for to review and send (v166).
     if (isSubUser()) {
@@ -2675,7 +2658,6 @@
       finalizeBtn.textContent = currentReport.finalizedAt ? `✓ Submitted to ${host}` : `Sign and submit to ${host}`;
     }
     renderReviewStrip();
-    syncFinishShortcut();
     finalizeHint.classList.toggle('hidden', allRequiredGreen && !walkBlocksFinalize());
     // Send/Save only make sense once the report is actually finalized —
     // stays visible on reopen too, so a technician can come back and send
@@ -2761,7 +2743,8 @@
         text.textContent = `Written by ${name} (subcontractor). Reviewed ${fmtDate(rs.at)}.`;
       }
     }
-    finalizeBtn.parentNode.insertBefore(strip, finalizeBtn);
+    const stripBefore = finalizeBtn.closest('.finalize-wrap') || finalizeBtn;
+    stripBefore.parentNode.insertBefore(strip, stripBefore);
   }
 
   // The business hands a submitted report back for changes. That un-finalises
@@ -2797,7 +2780,7 @@
     // Asked again at the moment of signing, not trusted from the last render.
     const walkLeft = await walkOutstandingFor(currentJobId, currentReport).catch(() => null);
     if (walkLeft && walkLeft.length) {
-      toast(`The walk-through still has ${walkLeft.length} to do. Finish it before finalizing.`);
+      toast(`The walk-through still has ${walkLeft.length} to do. Finish it before you sign.`);
       renderWalkTodo();
       return;
     }
@@ -2807,7 +2790,7 @@
         : 'You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.',
       asSub
         ? { title: `Sign and submit to ${subHost}?`, okLabel: 'Sign and submit' }
-        : { title: 'Finalize this report?', okLabel: 'Finalize' })) return;
+        : { title: 'Sign and finish this report?', okLabel: 'Sign and finish' })) return;
     // Recorded before finalizedAt is set, so the event itself is correctly
     // stamped afterFinalize: false — this is the moment of sign-off, not an
     // amendment to an already-signed document.
@@ -3433,7 +3416,7 @@
     if (!finished) return;
     toast(skipped
       ? `${skipped} question${skipped === 1 ? '' : 's'} skipped. ${skipped === 1 ? 'It is' : 'They are'} still listed here.`
-      : 'Every question is answered. Check the report, then finalize it.');
+      : 'Every question is answered. Check the report, then sign and finish.');
   }
 
   // One tap on an answer moves straight on when that answer is all there is

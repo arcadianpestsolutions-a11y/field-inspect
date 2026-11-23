@@ -175,7 +175,7 @@
       </div>
       <div class="row gap wrap">
         <button id="start-inspection-btn" class="btn btn-primary flex1">▶ Start inspection</button>
-        <button id="finish-inspection-btn" class="btn btn-primary flex1 hidden">✨ Generate Form</button>
+        <button id="finish-inspection-btn" class="btn btn-primary flex1 hidden">Finish and open report</button>
       </div>
       <button id="view-report-btn" class="btn btn-outline full hidden">📄 Open Report</button>
       <div id="doc-type-row" class="doc-type-row hidden"></div>
@@ -235,7 +235,7 @@
     <button id="selection-cancel-btn" class="icon-btn" aria-label="Cancel selection">✕</button>
     <span id="selection-count" class="selection-count">0 selected</span>
     <button id="selection-save-btn" class="btn btn-secondary" aria-label="Save the selected photos to this phone">⬇ Save</button>
-    <button id="selection-zone-btn" class="btn btn-secondary">Change Zone</button>
+    <button id="selection-zone-btn" class="btn btn-secondary">Change area</button>
     <button id="selection-delete-btn" class="btn btn-danger">Delete</button>
   </div>
 </section>
@@ -243,9 +243,9 @@
 <!-- ============ BULK ZONE-CHANGE MODAL ============ -->
 <section id="bulk-zone-modal" class="modal bulk-zone-modal hidden">
   <div class="bulk-zone-card">
-    <h2>Change Zone</h2>
+    <h2>Change area</h2>
     <p id="bulk-zone-hint" class="import-hint"></p>
-    <input id="bulk-zone-input" list="zone-suggestions" type="text" placeholder="e.g. Attic, North Foundation…" autocomplete="off" />
+    <input id="bulk-zone-input" list="zone-suggestions" type="text" placeholder="e.g. Roof void, Subfloor, Back fence…" autocomplete="off" />
     <div class="row gap">
       <button id="bulk-zone-cancel" class="btn btn-secondary flex1">Cancel</button>
       <button id="bulk-zone-save" class="btn btn-primary flex1">Apply</button>
@@ -275,7 +275,7 @@
     <div id="inspection-flash" class="inspection-flash" aria-hidden="true"></div>
     <div class="camera-zone-pill" id="inspection-zone-pill"></div>
     <div id="inspection-checklist-row" class="inspection-checklist-row hidden"></div>
-    <input id="inspection-zone-input" list="zone-suggestions" type="text" placeholder="Zone / area you're in now…" autocomplete="off" />
+    <input id="inspection-zone-input" list="zone-suggestions" type="text" placeholder="The area you're in now…" autocomplete="off" />
   </div>
   <div class="camera-controls inspection-controls">
     <button id="inspection-still-btn" class="btn btn-primary inspection-take-btn" aria-label="Take photo">📷 Take photo</button>
@@ -285,7 +285,7 @@
     <input id="inspection-camera-input" type="file" accept="image/*" capture="environment" class="hidden" />
     <input id="inspection-gallery-input" type="file" accept="image/*" multiple class="hidden" />
   </div>
-  <button id="inspection-finish-btn" class="btn btn-primary generate-form-btn" aria-label="Generate form from these photos">✨ Generate Form</button>
+  <button id="inspection-finish-btn" class="btn btn-primary generate-form-btn" aria-label="Finish the inspection and open the report">Finish and open report</button>
 </section>
 
 <!-- ============ CAPTURE DETAIL MODAL ============ -->
@@ -304,7 +304,7 @@
     <div id="detail-audio-wrap" class="detail-audio-wrap hidden">
       <audio id="detail-audio" controls></audio>
     </div>
-    <button id="detail-apply-suggested-zone" class="btn btn-outline detail-add-memo hidden">✨ Apply suggested zone</button>
+    <button id="detail-apply-suggested-zone" class="btn btn-outline detail-add-memo hidden">✨ Use the suggested area</button>
     <button id="detail-save-btn" class="btn btn-outline detail-add-memo hidden">⬇ Save to phone</button>
   </div>
 </section>
@@ -325,7 +325,7 @@
       <div class="row spread">
         <div>
           <strong>AI Draft</strong>
-          <p class="ai-draft-hint">Have AI watch the footage and draft this report for you to review.</p>
+          <p class="ai-draft-hint">Have AI read your photos and suggest answers for you to review.</p>
         </div>
       </div>
       <button id="ai-draft-btn" class="btn btn-outline full">🤖 Generate AI Draft</button>
@@ -344,7 +344,7 @@
       <div id="preflight-body" class="preflight-body"></div>
     </div>
 
-    <button id="finalize-report-btn" class="btn btn-primary full" disabled>Finalize Report</button>
+    <button id="finalize-report-btn" class="btn btn-primary full" disabled>Sign and finish</button>
     <p id="finalize-hint" class="empty-hint">All sections need a green tick before the report can be finalized.</p>
     <div id="finalize-post-actions" class="finalize-post-actions hidden">
       <button id="report-send-btn" class="btn btn-primary">📧 Send Report</button>

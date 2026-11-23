@@ -37,9 +37,9 @@ A visual, non-invasive termite inspection to AS 3660.2-2017, reported the same w
 6. Do not disturb active termite workings. Note them, photograph them, and tell the client.
 
 ## The report
-1. Generate Form, then check every AI suggestion yourself. Never accept a finding you did not see.
+1. Tap Finish and open report, then check every AI suggestion yourself. Never accept a finding you did not see.
 2. Record areas not inspected and why, in Areas We Were Unable to Inspect.
-3. Finalize only when every section is complete. Send it to the client from Scope.
+3. Sign and finish only when every section is complete. Send it to the client from Scope.
 
 ## Records
 Keep the report, photos and notes for at least three years (Scope keeps them).`,
@@ -102,7 +102,7 @@ Report any hazard found to the client in the report, and to the business if it n
 Every client gets a complete, accurate report, and their information is looked after.
 
 ## Reports
-1. Finalize a report only when it is complete and checked.
+1. Sign and finish a report only when it is complete and checked.
 2. A finalized report is changed only by amendment, with a reason. Scope records who changed what.
 3. Send reports from Scope, to the client's own email, and to nobody else without the client's permission.
 
