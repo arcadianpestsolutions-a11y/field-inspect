@@ -14215,11 +14215,16 @@
     await waitFor(() => finishRows(doc).includes('susceptibility'), 'then the one that must be answered');
 
     // Next with nothing chosen: says so, goes nowhere.
-    doc.getElementById('finish-next-btn').click();
+    // The toast is one shared element, and another message (the address
+    // lookup finishing) can land in it at any moment. So each try taps Next
+    // and reads what that tap said, which is written before the tap returns.
+    await waitFor(() => {
+      doc.getElementById('finish-next-btn').click();
+      const said = (doc.querySelector('.toast') || {}).textContent || '';
+      return /Needs an answer/.test(said) && /Or tap Skip\./.test(said);
+    }, 'Next says what is missing and how to move on');
     await wait(300);
-    assert(finishRows(doc).includes('susceptibility'), 'Next does not leave an unanswered question');
-    const said = (doc.querySelector('.toast') || {}).textContent || '';
-    assert(/Needs an answer/.test(said) && /Or tap Skip\./.test(said), `it says what is missing and how to move on: ${said}`);
+    assert(finishRows(doc).includes('susceptibility'), 'and does not leave an unanswered question');
 
     finishTap(doc, 'susceptibility', 'LOW');
     await wait(350);
