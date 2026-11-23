@@ -14399,6 +14399,103 @@
     assert(sw.includes("'./finish-step.js'"), 'and it is in the offline shell');
   });
 
+  // =====================================================================
+  // The walk on its own screen (v170)
+  // =====================================================================
+  const walkModal = (doc) => doc.getElementById('inspection-modal');
+  const isShown = (win, el) => !!el && win.getComputedStyle(el).display !== 'none';
+  async function openInspection(win, doc, job, { guided }) {
+    await win.showJobViewById(job.id);
+    doc.getElementById('start-inspection-btn').click();
+    await waitFor(() => !walkModal(doc).classList.contains('hidden') && walkModal(doc).classList.contains('front-pending')
+      && (!guided || walkModal(doc).classList.contains('walk-mode')), 'the inspection opens on the front photo', 8000);
+  }
+  async function closeInspection(win, doc, job) {
+    doc.getElementById('inspection-finish-btn').click();
+    await waitFor(() => walkModal(doc).classList.contains('hidden') && !doc.getElementById('view-report').classList.contains('hidden'), 'the inspection closes onto the report', 10000);
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  }
+
+  test('Walk screen: the checklist has the screen, and the zone label, chips and zone box are gone', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Walk Screen Job', address: '3 Walk St', jobType: 'termite' });
+    await openInspection(win, doc, job, { guided: true });
+    const modal = walkModal(doc);
+    assert(isShown(win, modal.querySelector('.inspection-stage')), 'the front photo still has the screen to itself');
+    assert(!isShown(win, modal.querySelector('.camera-zone-pill')), 'with no "Untagged" label above it');
+    await snap(win, doc);
+    await waitFor(() => !modal.classList.contains('front-pending') && !doc.getElementById('inspection-walk').classList.contains('hidden'), 'then the walk takes over');
+    for (const sel of ['.camera-zone-pill', '#inspection-checklist-row', '#inspection-zone-input', '.inspection-stage']) {
+      assert(!isShown(win, modal.querySelector(sel)), `${sel} is not shown during the walk`);
+    }
+    const wrap = modal.querySelector('.camera-wrap').getBoundingClientRect();
+    const card = doc.getElementById('inspection-walk').getBoundingClientRect();
+    assert(card.top - wrap.top <= 24 && wrap.bottom - card.bottom <= 24, `the checklist runs the full height (${Math.round(card.height)} of ${Math.round(wrap.height)})`);
+    assertEqual(win.getComputedStyle(doc.querySelector('#inspection-walk .walk-actions')).position, 'sticky', 'Back, Rest are OK and Next stay in reach');
+    const thumb = doc.getElementById('inspection-last-photo');
+    assert(thumb.parentNode.classList.contains('inspection-controls') && !thumb.classList.contains('hidden'), 'the last photo sits beside Take photo');
+    assert(/camera opens/.test(doc.querySelector('#inspection-walk .walk-hint').textContent), 'the hint says the camera opens on Issue');
+    await closeInspection(win, doc, job);
+    assert(!modal.classList.contains('walk-mode'), 'the screen is put back when the inspection ends');
+    assert(thumb.parentNode.classList.contains('inspection-stage'), 'with the last photo back where it was');
+  });
+
+  test('Walk: an answer that needs a photo opens the camera, and nothing else does', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Walk Camera Job', address: '5 Walk St', jobType: 'termite' });
+    await openInspection(win, doc, job, { guided: true });
+    await snap(win, doc);
+    await waitFor(() => !doc.getElementById('inspection-walk').classList.contains('hidden') && doc.querySelector('#inspection-walk .walk-check'), 'the outside list is up');
+    const input = doc.getElementById('inspection-camera-input');
+    let opened = 0;
+    input.click = () => { opened++; };
+    const row = (id) => doc.querySelector(`#inspection-walk .walk-check[data-item="${id}"]`);
+    try {
+      row('slabEdge').querySelector('[data-result="issue"]').click();
+      assertEqual(opened, 1, 'Issue opens the camera');
+      assertEqual(doc.getElementById('inspection-zone-input').value, 'Slab Edge', 'and the photo will be filed under that item');
+      assert(doc.querySelector('#inspection-walk .walk-issue[data-box="slabEdge"]'), 'with the box for what is wrong open underneath');
+      row('weepHoles').querySelector('[data-result="ok"]').click();
+      assertEqual(opened, 1, 'OK does not');
+      row('meterBox').querySelector('[data-result="ok"]').click();
+      assertEqual(opened, 2, '"Notice found" does: a notice that is found is photographed');
+      row('meterBox').querySelector('[data-result="issue"]').click();
+      assertEqual(opened, 2, '"No notice" has nothing to show');
+      row('outsideTaps').querySelector('[data-result="nothere"]').click();
+      assertEqual(opened, 2, 'nor has N/A');
+
+      // Photo first, then Issue: that photo is the item's, so no second one is asked for.
+      await snap(win, doc); // Take photo itself is one more opening of the camera
+      assertEqual(opened, 3, 'the Take photo button still opens it');
+      row('hotWater').querySelector('[data-result="issue"]').click();
+      await waitFor(() => row('hotWater') && !row('hotWater').querySelector('[data-need="photo"]'), 'the photo taken first is filed under the item');
+      assertEqual(opened, 3, 'so the camera is not opened again');
+      row('hotWater').querySelector('[data-result="issue"]').click();
+      assertEqual(opened, 3, 'and an item that has its photo never reopens it');
+    } finally {
+      delete input.click;
+    }
+    await closeInspection(win, doc, job);
+  });
+
+  test('Walk screen: a job with no guided walk keeps its chips and its zone box', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'No Walk Job', address: '4 Chip St', jobType: 'pest_treatment' });
+    await openInspection(win, doc, job, { guided: false });
+    const modal = walkModal(doc);
+    await snap(win, doc);
+    await waitFor(() => !modal.classList.contains('front-pending'), 'the front photo is taken');
+    assert(!modal.classList.contains('walk-mode'), 'no walk, so not the walk screen');
+    assert(isShown(win, doc.getElementById('inspection-zone-input')), 'the zone box is there to file photos by');
+    assert(isShown(win, doc.getElementById('inspection-checklist-row')), 'and so are the chips');
+    assert(doc.getElementById('inspection-last-photo').parentNode.classList.contains('inspection-stage'), 'the last photo shows large, as before');
+    await closeInspection(win, doc, job);
+  });
+
   test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {
     const sql = await (await fetch('../supabase-migration-048-subcontractors.sql', { cache: 'reload' })).text();
     const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');

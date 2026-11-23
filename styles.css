@@ -3836,3 +3836,48 @@ body.is-sub #subs-notice { display: none !important; }
 /* The card at the top of the report: what is left, and the way to finish. */
 .report-progress-note { margin: 0; font-size: 0.85rem; line-height: 1.4; color: var(--text-dim); }
 #report-finish-btn[aria-disabled="true"] { opacity: 0.5; }
+
+/* ---------- The walk on its own screen (v170) ----------
+   With a guided walk the checklist is the task, so it gets the height. The
+   zone pill, chip row and zone box are for jobs with no walk, and hidden. */
+#inspection-modal.walk-mode .camera-zone-pill,
+#inspection-modal.walk-mode .inspection-checklist-row,
+#inspection-modal.walk-mode #inspection-zone-input { display: none !important; }
+#inspection-modal.walk-mode:not(.front-pending) .inspection-stage { display: none; }
+#inspection-modal.walk-mode .inspection-walk {
+  top: calc(10px + var(--safe-top));
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  max-width: 560px;
+  max-height: none;
+  padding-bottom: 0;
+}
+/* Back, "Rest are OK" and Next stay in reach however long the list is. */
+#inspection-modal.walk-mode .walk-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 4px -14px 0;
+  padding: 10px 14px 12px;
+  background: rgb(15, 23, 42);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+#inspection-modal.walk-mode .walk-check { padding: 6px 0; }
+/* The last photo taken, beside the button that took it. */
+.inspection-controls > .inspection-last-photo {
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
+  max-width: 56px;
+  max-height: 56px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: none;
+}
+/* On the walk a toast would sit on Back, "Rest are OK" and Next, so it goes
+   to the top, over the area buttons, which are used far less often. */
+body:has(#inspection-modal.walk-mode:not(.hidden):not(.front-pending)) .toast {
+  bottom: auto;
+  top: calc(10px + var(--safe-top));
+}

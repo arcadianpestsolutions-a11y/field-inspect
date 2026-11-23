@@ -180,10 +180,26 @@
   // for the rest, which keep the chips alone.
   let photoWalk = null;
 
+  // v170: with a guided walk the checklist IS the screen. The zone pill, the
+  // chip row and the zone box were how a photo was filed before the walk
+  // existed. The walk files every photo itself, so they are hidden while it
+  // runs (styles.css, .walk-mode), the list gets the full height, and the
+  // last photo taken sits beside the Take photo button instead of behind it.
+  function setWalkMode(on) {
+    if (!inspectionModal) return;
+    inspectionModal.classList.toggle('walk-mode', !!on);
+    if (!inspectionLastPhoto) return;
+    const controls = inspectionStillBtn ? inspectionStillBtn.parentNode : null;
+    const stage = inspectionModal.querySelector('.inspection-stage');
+    if (on && controls && inspectionLastPhoto.parentNode !== controls) controls.insertBefore(inspectionLastPhoto, inspectionStillBtn);
+    if (!on && stage && inspectionLastPhoto.parentNode !== stage) stage.insertBefore(inspectionLastPhoto, stage.firstChild);
+  }
+
   function endPhotoWalk() {
     if (photoWalk) photoWalk.destroy();
     photoWalk = null;
     if (inspectionWalkEl) inspectionWalkEl.classList.add('hidden');
+    setWalkMode(false);
   }
 
   function renderInspectionChecklist() {
@@ -2002,6 +2018,8 @@
   function showFrontPhotoPrompt(on) {
     if (!inspectionPrompt) return;
     frontPhotoPending = on;
+    // The front photo has the screen to itself, walk or no walk.
+    if (inspectionModal) inspectionModal.classList.toggle('front-pending', !!on);
     inspectionPrompt.classList.toggle('hidden', !on);
     if (inspectionZoneInput) inspectionZoneInput.classList.toggle('hidden', on);
     if (photoWalk) photoWalk.setVisible(!on);
@@ -2122,6 +2140,13 @@
             inspectionZoneInput.value = label;
             inspectionZoneInput.dispatchEvent(new Event('input', { bubbles: true }));
           },
+          // An Issue needs a photo, so tapping Issue opens the phone's camera
+          // (v170). The zone is already the item's, set by the walk.
+          takePhoto: () => {
+            if (!inspectionActiveJobId || !inspectionCameraInput) return;
+            pendingShot = shotForNow();
+            inspectionCameraInput.click();
+          },
           saveNotes: async (list) => {
             if (!(window.ReportUI && window.ReportUI.recordInteriorObstructions)) return false;
             try {
@@ -2150,6 +2175,7 @@
           },
         });
         photoWalk.start();
+        setWalkMode(true);
       }
     } catch (err) {
       console.error('[inspection] the inspection screen failed to open:', err);

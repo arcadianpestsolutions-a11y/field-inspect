@@ -283,7 +283,9 @@
   // saveAnswer(area, value) does the same for a question's answer.
   // saveResults(state): told after every change, to copy the walk into the
   // report. remote: the report's copy of the walk, if it has one.
-  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, suggest, refile, remote, visible: startVisible }) {
+  // takePhoto(item): opens the camera (v170), called when an answer that
+  // needs a photo is tapped and there is none yet.
+  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, suggest, refile, takePhoto, remote, visible: startVisible }) {
     let state = remote ? mergeStates(loadState(jobId), remote) : loadState(jobId);
     let steps = buildSteps(items, state);
     let index = firstOpenIndex(steps, done(), state);
@@ -559,7 +561,9 @@
         container.appendChild(el('div', 'walk-title', (inside ? 'Inside' : step.areaTitle) + ': tick each one'));
         container.appendChild(el('div', 'walk-hint', inside
           ? 'No photos needed inside unless something is wrong. Mark an Issue, then photograph it.'
-          : 'Tap Issue only where something is wrong, then photograph it. Then “Rest are OK”.'));
+          : (takePhoto
+            ? 'Tap Issue only where something is wrong: the camera opens for the photo. Then “Rest are OK”.'
+            : 'Tap Issue only where something is wrong, then photograph it. Then “Rest are OK”.')));
         const list = el('div', 'walk-checks');
         const closeBox = () => { commitDraft(); noteOpenFor = null; draft = null; setZone(zoneFor(step)); render(); };
         for (const item of step.items) {
@@ -585,7 +589,14 @@
             // The next photo is of this item, so it is filed under it.
             setZone(wantsBox ? item.label : zoneFor(step));
             render();
-            if (needsPhoto(item, state.results[item.id])) claimLoose(item, step);
+            if (needsPhoto(item, state.results[item.id]) && !done().has(item.label)) {
+              // A photo taken just before this tap is this item's (v151).
+              // Otherwise the camera opens now (v170): the answer needs a
+              // photo, and asking for another tap to take it was one too many.
+              const waiting = !!loose && !!refile && Date.now() - loose.at <= LOOSE_MS && loose.area === step.area;
+              if (waiting) claimLoose(item, step);
+              else if (takePhoto) { try { takePhoto(item); } catch (e) { /* Take photo is still on screen */ } }
+            }
           };
           const ok = btn(item.okLabel || 'OK', 'walk-mini' + (!gone && result && result.r === 'ok' ? ' chosen-ok' : ''), () => open('ok'));
           ok.dataset.result = 'ok';
