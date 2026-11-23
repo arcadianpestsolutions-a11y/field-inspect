@@ -374,7 +374,7 @@
         liveTermitesFound: 'No', nestFound: 'No', workingsFound: 'Yes',
         workingsAreas: ['Subfloor', 'Landscaping Timbers'],
         evidenceDetails: 'Inactive mudding to the eastern subfloor pier and to a retaining sleeper on the southern boundary. No live activity detected at the time of inspection.',
-        damageSeverity: 'Minor', treatmentRecommended: 'Yes',
+        damageSeverity: 'Minor', workingsDamagePotential: 'Low', treatmentRecommended: 'Yes',
         treatmentComments: 'Recommend a perimeter chemical treated zone and removal of the sleeper in contact with soil.',
         priorTreatmentEvidence: 'No', borersFound: 'No', durableNoticeFound: 'No',
         reinspectionInterval: '12 months', susceptibility: 'MODERATE',
@@ -384,6 +384,13 @@
         moistureDetails: 'Elevated readings to the eastern subfloor, consistent with poor cross-flow ventilation.',
         fungalDecayFound: 'No', siteDrainage: 'Adequate', subfloorDrainage: 'Inadequate',
         ventilation: 'Inadequate', antCappingCondition: 'Adequate', weepHolesClear: 'Yes',
+        // The conditions AS 3660.2 names (question set 10): a sample report is
+        // a complete one, so it answers them like any other.
+        bridgingFound: 'No', storedTimberFound: 'No',
+        gardenBedsAgainstWall: 'Yes',
+        gardenBedsDetails: 'Garden bed and mulch built up against the eastern wall. Clear it back so the slab edge and weep holes can be seen.',
+        timberInGroundFound: 'Yes',
+        timberInGroundDetails: 'Retaining sleeper in contact with the soil on the southern boundary. Remove it, or replace it with a wall that is not timber.',
       });
       Object.assign(s.inspector, inspectorBlock(media.techSignature));
       Object.assign(s.acknowledgement, {
@@ -400,7 +407,10 @@
         liveTermitesFound: 'Yes', nestFound: 'No', workingsFound: 'Yes',
         workingsAreas: ['Subfloor', 'Interior', 'Fencing'],
         evidenceDetails: 'Live subterranean termites (Coptotermes sp. suspected, not identified to species on site) located in the subfloor to the south-east bearer, with active mudding tracking up the adjacent pier. Damage extends into the bearer and one floor joist. Live workings also present in the boundary fence palings.',
-        damageSeverity: 'Major', treatmentRecommended: 'Yes',
+        termiteSpecies: 'Coptotermes (not identified to species on site)', riskOfAssociatedDamage: 'High',
+        liveTermitesAreas: ['Subfloor', 'Fences'],
+        liveTermitesLocation: 'South-east subfloor bearer and the adjacent pier; boundary fence palings.',
+        damageSeverity: 'Major', workingsDamagePotential: 'High', treatmentRecommended: 'Yes',
         treatmentComments: 'URGENT. Do not disturb the workings. Recommend a chemical treated zone to AS 3660.1 plus in-situ treatment of active workings, followed by a timber replacement assessment by a licensed builder.',
         priorTreatmentEvidence: 'No', borersFound: 'No', durableNoticeFound: 'No',
         reinspectionInterval: '3 months', susceptibility: 'HIGH',
