@@ -101,7 +101,8 @@ const PEST_TREATMENT_SCHEMA = [
       // Regulation 2017 cl 36 — "time of application including start and
       // finish time". inspectionTime keeps its id (auto-filled when the
       // technician taps Start Inspection) and is relabelled as the start.
-      { id: 'inspectionTime', label: 'Application Start Time', type: 'time', required: true },
+      // `askWith` (finish-step.js): the finish time is asked on the same screen.
+      { id: 'inspectionTime', label: 'Application Start Time', type: 'time', required: true, askWith: ['applicationFinishTime'] },
       { id: 'applicationFinishTime', label: 'Application Finish Time', type: 'time', required: true },
       { id: 'weather', label: 'Weather Conditions at time of treatment', type: 'text', aiFillable: true },
       {
@@ -424,7 +425,7 @@ const PEST_TREATMENT_SCHEMA = [
       { id: 'inspectorLicence', label: 'Pest Control Licence Number', type: 'text', required: true },
       { id: 'inspectorPhone', label: 'Technician Phone', type: 'text' },
       { id: 'signedOnBehalfOf', label: 'Signed on behalf of', type: 'static', orgField: 'signedOnBehalfOf' },
-      { id: 'inspectorSignature', label: 'Technician Signature', type: 'signature', required: true },
+      { id: 'inspectorSignature', label: 'Technician Signature', type: 'signature', required: true, askWith: ['inspectorName', 'inspectorLicence'] },
       { id: 'signatureDate', label: 'Date', type: 'date' },
     ],
   },

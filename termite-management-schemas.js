@@ -50,7 +50,7 @@
         { id: 'inspectorLicence', label: 'Pest Management Licence Number', type: 'text', required: true },
         { id: 'inspectorPhone', label: 'Technician Phone', type: 'text' },
         { id: 'signedOnBehalfOf', label: 'Signed on behalf of', type: 'static', orgField: 'signedOnBehalfOf' },
-        { id: 'inspectorSignature', label: 'Technician Signature', type: 'signature', required: true },
+        { id: 'inspectorSignature', label: 'Technician Signature', type: 'signature', required: true, askWith: ['inspectorName', 'inspectorLicence'] },
         { id: 'signatureDate', label: 'Date', type: 'date' },
       ],
     };

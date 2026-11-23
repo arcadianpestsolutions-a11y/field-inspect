@@ -15087,6 +15087,32 @@
     assert(!/\b(drop|grant|revoke|create policy|alter policy|delete from|truncate)\b/i.test(code), 'nothing is removed, granted or loosened');
   });
 
+  test('Finish step: on every form, signing is one screen, and a treatment\'s two times are one', async () => {
+    const win = frame.contentWindow;
+    const F = win.FinishStep;
+    const forms = {
+      inspection: win.REPORT_SCHEMA, treatment: win.PEST_TREATMENT_SCHEMA, plan: win.TERMITE_ACTION_PLAN_SCHEMA,
+      certificate: win.TERMITE_CERTIFICATE_SCHEMA, monitoring: win.TERMITE_MONITORING_SCHEMA,
+    };
+    for (const [name, schema] of Object.entries(forms)) {
+      assert(Array.isArray(schema) && schema.length, `the ${name} form is loaded`);
+      const sections = {};
+      for (const s of schema) sections[s.id] = win.ReportSchemaUtils.defaultValuesForSection(s);
+      const keys = F.questions(schema, { sections }).map((q) => q.key);
+      const signing = keys.filter((k) => /^inspector\./.test(k));
+      assertEqual(signing.join(), 'inspector.inspectorSignature', `${name}: name, licence and signature are asked together: ${signing.join()}`);
+      const inspector = schema.find((s) => s.id === 'inspector');
+      const screen = F.screenFields(inspector, 'inspectorSignature').map((f) => f.id);
+      assert(screen.includes('inspectorName') && screen.includes('inspectorLicence') && screen.includes('inspectorSignature'), `${name}: all three are on the signing screen: ${screen.join()}`);
+    }
+    const treatment = {};
+    for (const s of win.PEST_TREATMENT_SCHEMA) treatment[s.id] = win.ReportSchemaUtils.defaultValuesForSection(s);
+    const tKeys = F.questions(win.PEST_TREATMENT_SCHEMA, { sections: treatment }).map((q) => q.key);
+    assert(tKeys.includes('clientDetails.inspectionTime') && !tKeys.includes('clientDetails.applicationFinishTime'), 'the start and finish times are one question');
+    const client = win.PEST_TREATMENT_SCHEMA.find((s) => s.id === 'clientDetails');
+    assertEqual(F.screenFields(client, 'inspectionTime').map((f) => f.id).join(), 'inspectionTime,applicationFinishTime', 'with both on its screen');
+  });
+
   test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {
     const sql = await (await fetch('../supabase-migration-048-subcontractors.sql', { cache: 'reload' })).text();
     const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
