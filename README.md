@@ -44,8 +44,10 @@ including explicit GRANTs. Functions: `supabase functions deploy <name>`; add
 Keep the empty `.nojekyll` file at the top. Without it GitHub Pages leaves out
 every folder whose name starts with an underscore, and `join.html` loads its
 rules from `supabase/functions/_shared`. The test suite is served straight from
-the folder and cannot see that difference, so after each release check the live
-site too: every file in the `sw.js` shell, and that rules file, must answer 200.
+the folder and cannot see that difference, so after each release ask the live
+site too: `tools/check-live.ps1 -Version vNNN` requests every file in the live
+`sw.js` shell and everything `join.html` and `portal.html` load, and fails on
+any that is missing.
 
 ## Backups
 See `docs/BACKUP-RUNBOOK.md` and `tools/backup-scope.ps1` (`-Check` first).

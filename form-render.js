@@ -166,10 +166,20 @@
       row.append(toggle, panel);
     }
 
-    function setValue(field, value) {
+    // `how` is 'tap' when the answer was chosen with one tap on a button (yes
+    // or no, a choice button, a quick pick, a kept signature). A host that
+    // moves on after an answer (the Finish step, v169) must only ever do it
+    // for those: typing is never finished just because a key was pressed.
+    function setValue(field, value, how) {
       values[field.id] = value;
-      if (onFieldChange) onFieldChange(field, value);
+      if (onFieldChange) onFieldChange(field, value, how || 'edit');
     }
+    // A short list as large buttons rather than a dropdown, when the host asks
+    // for it (the Finish step shows one question per screen).
+    const selectAsButtons = typeof o.selectAsButtons === 'function' ? o.selectAsButtons : null;
+    // Extra controls above a signature pad (report.js: "Sign as ..." with the
+    // signature kept on this phone). Returns an element, or nothing.
+    const signatureTools = typeof o.signatureTools === 'function' ? o.signatureTools : null;
 
     // Re-evaluates every showIf on screen without rebuilding the section, so
     // answering a gate question does not cost the technician their scroll
@@ -252,10 +262,13 @@
         if (ink >= MIN_INK) hasSignature = true;
         e.preventDefault();
       }
+      const drawnListeners = [];
       function end() {
         if (!drawing) return;
         drawing = false;
-        setValue(field, hasSignature ? canvas.toDataURL('image/png') : '');
+        const signed = hasSignature ? canvas.toDataURL('image/png') : '';
+        setValue(field, signed);
+        for (const fn of drawnListeners) { try { fn(signed); } catch (e) { /* a host's extra must not lose the signature */ } }
       }
       canvas.addEventListener('mousedown', start);
       canvas.addEventListener('mousemove', move);
@@ -273,8 +286,30 @@
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         hasSignature = false;
         setValue(field, '');
+        for (const fn of drawnListeners) { try { fn(''); } catch (e) { /* as above */ } }
       });
       wrap.appendChild(clearBtn);
+
+      if (signatureTools) {
+        const tools = signatureTools(field, {
+          current: () => values[field.id] || '',
+          // Puts a stored signature on the pad, as the person's own tap.
+          use(dataUrl) {
+            const img = new Image();
+            img.onload = () => {
+              ctx.fillStyle = '#fff';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            };
+            img.src = dataUrl;
+            hasSignature = true;
+            setValue(field, dataUrl, 'tap');
+          },
+          // Told each time the pad is signed by hand ('' when it is cleared).
+          onDrawn(fn) { if (typeof fn === 'function') drawnListeners.push(fn); },
+        });
+        if (tools) wrap.insertBefore(tools, canvas);
+      }
       return wrap;
     }
 
@@ -400,7 +435,33 @@
         if (field.maxLength) input.maxLength = field.maxLength;
         if (field.autocapitalize) input.setAttribute('autocapitalize', field.autocapitalize);
         input.value = values[field.id] || '';
-        input.addEventListener('input', () => setValue(field, input.value));
+        // `quickPicks` (v169): the usual answers as one-tap chips above the
+        // box. What is stored is still the text, so anything can be typed and
+        // an older answer keeps showing exactly as it was written.
+        let picks = null;
+        const markPicks = () => {
+          if (picks) picks.querySelectorAll('.quick-pick').forEach((b) => b.classList.toggle('active', b.dataset.pick === input.value));
+        };
+        if (Array.isArray(field.quickPicks) && field.quickPicks.length) {
+          picks = document.createElement('div');
+          picks.className = 'quick-picks';
+          for (const pick of field.quickPicks) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'quick-pick';
+            b.dataset.pick = pick;
+            b.textContent = pick;
+            b.addEventListener('click', () => {
+              input.value = pick;
+              markPicks();
+              setValue(field, pick, 'tap');
+            });
+            picks.appendChild(b);
+          }
+          row.appendChild(picks);
+          markPicks();
+        }
+        input.addEventListener('input', () => { markPicks(); setValue(field, input.value); });
         row.appendChild(input);
       } else if (field.type === 'textarea') {
         const ta = document.createElement('textarea');
@@ -422,6 +483,33 @@
         input.value = values[field.id] || '';
         input.addEventListener('input', () => setValue(field, input.value));
         row.appendChild(input);
+      } else if (field.type === 'select' && selectAsButtons && selectAsButtons(field)) {
+        const wrap = document.createElement('div');
+        wrap.className = 'choice-buttons';
+        wrap.setAttribute('role', 'radiogroup');
+        for (const opt of field.options) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'choice-button' + (values[field.id] === opt ? ' active' : '');
+          btn.setAttribute('role', 'radio');
+          btn.setAttribute('aria-checked', values[field.id] === opt ? 'true' : 'false');
+          btn.dataset.value = opt;
+          btn.textContent = opt;
+          btn.addEventListener('click', () => {
+            wrap.querySelectorAll('.choice-button').forEach((b) => {
+              b.classList.toggle('active', b === btn);
+              b.setAttribute('aria-checked', b === btn ? 'true' : 'false');
+            });
+            // Shown and hidden rows first, so a host deciding what to do next
+            // sees the screen as it now stands.
+            values[field.id] = opt;
+            refreshVisibility();
+            setValue(field, opt, 'tap');
+            refreshVisibility();
+          });
+          wrap.appendChild(btn);
+        }
+        row.appendChild(wrap);
       } else if (field.type === 'select') {
         const select = document.createElement('select');
         const blank = document.createElement('option');
@@ -476,7 +564,11 @@
           btn.addEventListener('click', () => {
             wrap.querySelectorAll('.yesno-btn').forEach((b) => b.classList.remove('active'));
             btn.classList.add('active');
-            setValue(field, opt);
+            // Rows first, then the host (see the choice buttons above), then
+            // rows again in case the host changed another answer.
+            values[field.id] = opt;
+            refreshVisibility();
+            setValue(field, opt, 'tap');
             refreshVisibility();
           });
           wrap.appendChild(btn);

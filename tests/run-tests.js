@@ -11915,7 +11915,7 @@
     await win.DB.deleteJob(job.id);
   });
 
-  test('Report: a progress card says how far through, and one button goes to what is next', async () => {
+  test('Report: a progress card says what is left, and one button goes to it', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'Progress Job', jobType: 'termite' });
@@ -11924,17 +11924,20 @@
     await waitFor(() => doc.getElementById('report-progress'), 'the progress card is drawn');
     const items = doc.querySelectorAll('#report-section-list .report-section-item').length;
     const greens = doc.querySelectorAll('#report-section-list .status-dot-green').length;
-    assertEqual(doc.getElementById('report-progress-text').textContent, `${greens} of ${items} sections done`, 'the count matches the ticks on the list');
-    assertEqual(doc.getElementById('report-progress-pct').textContent, `${Math.round((greens / items) * 100)}%`, 'and the percentage');
+    // v169: what is left is counted in questions (finish-step.js); the bar
+    // and the percentage still follow the ticks on the list underneath.
+    const left = win.ReportUI.finishQuestions().length;
+    assertEqual(doc.getElementById('report-progress-text').textContent, `${left} questions left`, 'the card counts the questions left');
+    assertEqual(doc.getElementById('report-progress-pct').textContent, `${Math.round((greens / items) * 100)}%`, 'the percentage matches the ticks on the list');
     assertEqual(doc.getElementById('report-progress-fill').style.width, `${Math.round((greens / items) * 100)}%`, 'and the bar');
     const next = doc.getElementById('report-next-btn');
-    assert(!next.classList.contains('hidden') && /^Continue: \d+\. /.test(next.textContent), `a button names the next section: ${next.textContent}`);
-    // It goes to the first section that is not ticked.
-    const firstOpenName = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
-      .find((li) => !li.querySelector('.status-dot-green')).querySelector('.section-name').textContent;
-    assert(next.textContent.includes(firstOpenName.replace(/^\d+\.\s*/, '')) || next.textContent.includes(firstOpenName), 'it names the first one still open');
+    assert(!next.classList.contains('hidden') && next.textContent === 'Answer them one at a time', `one button asks them: ${next.textContent}`);
     next.click();
-    await waitFor(() => !doc.getElementById('view-report-section').classList.contains('hidden'), 'tapping it opens that section');
+    await waitFor(() => !doc.getElementById('view-report-section').classList.contains('hidden'), 'tapping it opens the first question');
+    // The first question belongs to the first section that is not ticked.
+    const firstOpenName = Array.from(doc.querySelectorAll('#report-section-list .report-section-item'))
+      .find((li) => !li.querySelector('.status-dot-green')).querySelector('.section-name').textContent.replace(/^\d+\.\s*/, '');
+    assertEqual(doc.querySelector('.finish-where').textContent, firstOpenName, 'starting in the first section still open');
     win.hideAllAppViews();
     await win.DB.deleteJob(job.id);
   });
@@ -14026,6 +14029,374 @@
         assert(res.ok, `${pageName} loads ${u}, and it is there`);
       }
     }
+  });
+
+  // =====================================================================
+  // The Finish step (v169): what is left, one question per screen
+  // =====================================================================
+  const finishRows = (doc) => Array.from(doc.querySelectorAll('#report-section-fields .field-row'))
+    .filter((r) => !r.classList.contains('hidden')).map((r) => r.dataset.fieldRow);
+  // The section editor redraws only after an async look for unsaved work, so
+  // "is X on screen" has to wait for the editor itself or it sees the old one.
+  const editorOpen = (doc) => !doc.getElementById('view-report-section').classList.contains('hidden');
+  const finishTap = (doc, fieldId, text) => {
+    const row = doc.querySelector(`#report-section-fields [data-field-row="${fieldId}"]`);
+    assert(row, `the ${fieldId} question is on screen`);
+    const btn = Array.from(row.querySelectorAll('button')).find((b) => b.textContent.trim() === text);
+    assert(btn, `"${text}" is a button under ${fieldId}`);
+    btn.click();
+  };
+  // Signs a signature pad by hand, the way a finger does.
+  const signPad = (win, canvas) => {
+    const r = canvas.getBoundingClientRect();
+    const ev = (type, x, y) => canvas.dispatchEvent(new win.MouseEvent(type, { bubbles: true, clientX: r.left + x, clientY: r.top + y }));
+    ev('mousedown', 20, 40);
+    for (let i = 1; i <= 10; i++) ev('mousemove', 20 + i * 14, 40 + (i % 2 ? 22 : -8));
+    win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }));
+  };
+  const freshSections = (win) => {
+    const sections = {};
+    for (const s of win.REPORT_SCHEMA) sections[s.id] = win.ReportSchemaUtils.defaultValuesForSection(s);
+    return sections;
+  };
+
+  test('Finish step: missing answers are handed to the question that owns them', async () => {
+    const win = frame.contentWindow;
+    const F = win.FinishStep;
+    assert(F, 'finish-step.js is loaded');
+    const schema = win.REPORT_SCHEMA;
+    const section = (id) => schema.find((s) => s.id === id);
+    const sections = freshSections(win);
+    const qs = F.questions(schema, { sections });
+    const keys = qs.map((q) => q.key);
+    assertEqual(new Set(keys).size, keys.length, 'no question is asked twice');
+
+    const agreement = qs.find((q) => q.key === 'agreement.agreementStatus');
+    assert(agreement && agreement.soft, 'the client agreement is one question, and one that does not block');
+    assertEqual(agreement.missing.map((m) => m.fieldId).sort().join(), 'agreementAcceptedAt,agreementAcceptedBy,agreementSignature', 'it owns the name, date and signature under it');
+    assert(!keys.includes('agreement.agreementSignature'), 'so the signature is not a question of its own');
+
+    const inspector = qs.find((q) => q.key === 'inspector.inspectorSignature');
+    assert(inspector && !inspector.soft, 'signing is one question that must be answered');
+    assertEqual(inspector.missing.length, 3, 'name, licence and signature together');
+    assert(keys.includes('clientDetails.weather'), 'the weather is asked');
+    assert(keys.includes('acknowledgement.ackStatus'), 'and the client acknowledgement');
+    assert(!keys.some((k) => k.startsWith('proposedWorks.')), 'a section that is not on the report asks nothing');
+
+    const pos = qs.map((q) => F.position(schema, q.sectionId, q.fieldId));
+    assert(pos.every((p, i) => i === 0 || p > pos[i - 1]), `questions come in the order of the form: ${keys.join(' > ')}`);
+
+    // An answer that adds sections adds their questions.
+    sections.findings = { ...sections.findings, managementSystemStatus: 'None present — management plan proposed' };
+    assert(F.questions(schema, { sections }).some((q) => q.sectionId === 'proposedWorks'), 'answering "none present" brings in the plan questions');
+
+    // Owners: up the showIf chain, and across askWith.
+    assertEqual(F.ownerOf(section('conducive'), 'tankDetails').id, 'waterTankPresent', 'two levels of "only if" lead back to the first question');
+    assertEqual(F.ownerOf(section('findings'), 'liveTermitesPhotos').id, 'liveTermitesFound', 'a required photo belongs to its yes or no');
+    assertEqual(F.screenFields(section('findings'), 'managementSystemStatus').map((f) => f.id).join(), 'existingManagementSystem,managementSystemStatus', 'the description sits with the judgement about it');
+    assertEqual(F.screenFields(section('findings'), 'treatmentRecommended').map((f) => f.id).join(), 'treatmentRecommended,treatmentComments', 'the comment box sits with the answer');
+    assertEqual(F.screenFields(section('findings'), 'susceptibility').map((f) => f.id).join(), 'reinspectionInterval,susceptibility', 'and the interval with the susceptibility');
+    assert(!F.screenFields(section('siteSketch'), 'sketchImage').some((f) => f.type === 'sketchData'), 'a data slot is never a row');
+
+    // askWith names real fields of the same section, in every schema.
+    for (const sch of [win.REPORT_SCHEMA, win.PEST_TREATMENT_SCHEMA, win.TERMITE_ACTION_PLAN_SCHEMA, win.TERMITE_CERTIFICATE_SCHEMA, win.TERMITE_MONITORING_SCHEMA]) {
+      for (const s of sch || []) {
+        const ids = new Set(s.fields.map((f) => f.id));
+        for (const f of s.fields) for (const id of (f.askWith || [])) {
+          assert(ids.has(id), `${s.id}.${f.id} asks with "${id}", which is in the same section`);
+          assert(id !== f.id, `${s.id}.${f.id} does not ask with itself`);
+        }
+      }
+    }
+
+    // One-tap answers.
+    const field = (sid, fid) => section(sid).fields.find((f) => f.id === fid);
+    assert(F.tapAnswers(field('access', 'restrictedAccess')), 'yes or no is one tap');
+    assert(F.tapAnswers(field('findings', 'susceptibility')), 'so is a short list');
+    assert(!F.tapAnswers(field('property', 'wallConstruction')), 'a long list stays a dropdown');
+    assert(!F.tapAnswers(field('clientDetails', 'clientName')), 'and typing is never a tap');
+  });
+
+  test('Finish step: the card counts questions, and one tap answers and moves on', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Finish Step Job', address: '1 Finish St', jobType: 'termite' });
+    await win.DB.updateJob(job.id, { status: 'review' });
+    await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+    await waitFor(() => doc.getElementById('report-progress'), 'the card is drawn');
+    const n = win.ReportUI.finishQuestions().length;
+    assert(n > 5, `a new report has questions left (${n})`);
+    assertEqual(doc.getElementById('report-progress-text').textContent, `${n} questions left`, 'the card counts them');
+    const start = doc.getElementById('report-next-btn');
+    assertEqual(start.textContent, 'Answer them one at a time', 'and one button asks them');
+    assert(doc.getElementById('report-finish-btn').classList.contains('hidden'), 'no finalize shortcut while something must be answered');
+
+    start.click();
+    const editor = doc.getElementById('view-report-section');
+    await waitFor(() => !editor.classList.contains('hidden') && editor.classList.contains('finish-mode'), 'the first question opens');
+    assertEqual(doc.getElementById('section-title').textContent, `${n} questions left`, 'the header counts down, not a section name');
+    assertEqual(finishRows(doc).join(), 'weather', 'one question on the screen: the weather');
+    assert(!doc.getElementById('finish-bar').classList.contains('hidden'), 'Skip and Next are showing');
+    assert(doc.getElementById('section-save-btn').classList.contains('hidden'), 'in place of Save & Back to Report');
+    assertEqual(doc.querySelector('.finish-where').textContent, 'Client Details', 'it says which part of the report this is');
+
+    // One tap on a usual answer saves it and moves on.
+    finishTap(doc, 'weather', 'Overcast');
+    await waitFor(() => finishRows(doc)[0] === 'agreementStatus', 'the next question appears by itself');
+    let saved = await win.DB.getReport(job.id);
+    assertEqual(saved.sections.clientDetails.weather, 'Overcast', 'the answer is in the report');
+    assert(saved.auditLog.some((e) => e.event === 'field-changed' && e.fieldId === 'weather' && e.to === 'Overcast'), 'and in the audit trail, like any other edit');
+    assertEqual(doc.getElementById('section-title').textContent, `${n - 1} questions left`, 'one fewer left');
+
+    // A short list is buttons here, not a dropdown.
+    const agreementRow = doc.querySelector('[data-field-row="agreementStatus"]');
+    assert(agreementRow.querySelectorAll('.choice-button').length === 2 && !agreementRow.querySelector('select'), 'two large buttons, no dropdown');
+    assert(agreementRow.querySelector('.choice-button.active').textContent === 'Signed by the client', 'the current answer is the lit one');
+    assert(finishRows(doc).includes('agreementSignature'), 'what it needs is on the same screen');
+
+    // Skip leaves it unanswered and moves on.
+    doc.getElementById('finish-skip-btn').click();
+    await waitFor(() => finishRows(doc)[0] === 'hinderedObstructions', 'Skip goes to the next question');
+    assertEqual(doc.getElementById('section-title').textContent, `${n - 2} questions left`, 'a skipped question is not counted again in this run');
+    assertEqual((await win.DB.getReport(job.id)).sections.agreement.agreementSignature || '', '', 'and nothing was made up for it');
+
+    finishTap(doc, 'hinderedObstructions', 'No');
+    await waitFor(() => finishRows(doc)[0] === 'restrictedAccess', 'No is one tap');
+    finishTap(doc, 'restrictedAccess', 'No');
+    await waitFor(() => finishRows(doc)[0] === 'highRiskAreas', 'and so is the next');
+    saved = await win.DB.getReport(job.id);
+    assertEqual(saved.sections.access.hinderedObstructions, 'No', 'both saved');
+    assertEqual(saved.sections.access.restrictedAccess, 'No', 'both saved');
+
+    // An answer that asks for more stays put.
+    finishTap(doc, 'highRiskAreas', 'Yes');
+    await wait(450);
+    assertEqual(finishRows(doc).join(), 'highRiskAreas,highRiskDetails', 'Yes shows the details box and waits');
+    doc.getElementById('finish-next-btn').click();
+    await waitFor(() => finishRows(doc)[0] === 'invasiveRecommended', 'Next moves on');
+    saved = await win.DB.getReport(job.id);
+    assertEqual(saved.sections.access.highRiskAreas, 'Yes', 'saved');
+
+    // The arrow is "the question before", with nothing lost.
+    assertEqual(doc.getElementById('section-back-btn').getAttribute('aria-label'), 'Previous question', 'the arrow says what it does here');
+    doc.getElementById('section-back-btn').click();
+    await waitFor(() => finishRows(doc)[0] === 'highRiskAreas', 'back to the question before');
+    assert(doc.querySelector('[data-field-row="highRiskAreas"] .yesno-btn.active').textContent === 'Yes', 'with its answer showing');
+
+    // The whole section is one tap away.
+    doc.getElementById('finish-whole-btn').click();
+    await waitFor(() => !editor.classList.contains('finish-mode'), 'the whole section opens');
+    assert(finishRows(doc).includes('accessPhotos') && finishRows(doc).includes('invasiveRecommended'), 'every question of the section is there');
+    assert(!doc.getElementById('section-save-btn').classList.contains('hidden') && doc.getElementById('finish-bar').classList.contains('hidden'), 'with the usual Save button');
+    assert(/^\d+\. /.test(doc.getElementById('section-title').textContent), 'and the usual numbered title');
+    assert(doc.querySelector('[data-field-row="restrictedAccess"] .yesno-btn'), 'yes or no is still two buttons');
+    assertEqual(doc.getElementById('section-back-btn').getAttribute('aria-label'), 'Back', 'the arrow is Back again');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Finish step: Next names what is missing and stays; the end hands over to Finalize', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Finish Ends Job', jobType: 'termite' });
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    delete sections.findings.susceptibility;
+    await win.DB.saveReport({ jobId: job.id, sections, documentType: 'timber_pest_inspection', finalizedAt: null, auditLog: [], schemaVersion: win.REPORT_SCHEMA_VERSION - 1 });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => doc.getElementById('report-progress-text').textContent === '3 questions left', 'three questions: two for the client, one that must be answered');
+    assert(doc.getElementById('schema-mismatch-notice').classList.contains('hidden'), 'an unfinished report is not warned about an older question set');
+
+    doc.getElementById('report-next-btn').click();
+    await waitFor(() => finishRows(doc)[0] === 'agreementStatus', 'the client agreement first');
+    finishTap(doc, 'agreementStatus', 'No client agreement');
+    await wait(350);
+    assertEqual(finishRows(doc).join(), 'agreementStatus,noAgreementReason', 'the reason box appears, so it waits');
+    doc.getElementById('finish-next-btn').click();
+    await waitFor(() => finishRows(doc).includes('susceptibility'), 'then the one that must be answered');
+
+    // Next with nothing chosen: says so, goes nowhere.
+    doc.getElementById('finish-next-btn').click();
+    await wait(300);
+    assert(finishRows(doc).includes('susceptibility'), 'Next does not leave an unanswered question');
+    const said = (doc.querySelector('.toast') || {}).textContent || '';
+    assert(/Needs an answer/.test(said) && /Or tap Skip\./.test(said), `it says what is missing and how to move on: ${said}`);
+
+    finishTap(doc, 'susceptibility', 'LOW');
+    await wait(350);
+    assert(finishRows(doc).includes('susceptibility'), 'the interval is on the same screen, so one tap does not move on');
+    doc.getElementById('finish-next-btn').click();
+    await waitFor(() => finishRows(doc)[0] === 'ackStatus', 'the last question');
+    assertEqual(doc.getElementById('section-title').textContent, 'Last question', 'and the header says so');
+    finishTap(doc, 'ackStatus', 'Client not on site');
+    await wait(350);
+    doc.getElementById('finish-next-btn').click();
+
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'back at the report');
+    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Every question is answered', 'the card says nothing is left');
+    assert(doc.getElementById('report-next-btn').classList.contains('hidden'), 'nothing more to ask');
+    const shortcut = doc.getElementById('report-finish-btn');
+    await waitFor(() => !shortcut.classList.contains('hidden') && shortcut.getAttribute('aria-disabled') === 'false', 'the finalize button is offered at the top');
+    assertEqual(shortcut.textContent, doc.getElementById('finalize-report-btn').textContent, 'in the same words as the real one');
+    assert(doc.getElementById('section-save-btn') && !doc.getElementById('section-save-btn').classList.contains('hidden'), 'the editor is back to its usual Save button');
+
+    const originalConfirm = win.confirm;
+    win.confirm = () => true;
+    try {
+      shortcut.click();
+      await waitFor(async () => !!(await win.DB.getReport(job.id)).finalizedAt, 'it finalizes the report');
+    } finally { win.confirm = originalConfirm; }
+    const done = await win.DB.getReport(job.id);
+    assertEqual(done.schemaVersion, win.REPORT_SCHEMA_VERSION, 'signed against the question set of the day it was signed');
+    assertEqual(done.sections.findings.susceptibility, 'LOW', 'with the answers given on the way');
+    assertEqual(done.sections.acknowledgement.ackStatus, 'Client not on site', 'including the client not being there');
+    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Report finalized', 'the card says finalized');
+    assert(shortcut.classList.contains('hidden'), 'and the shortcut goes');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Finish step: questions only the client can answer do not block, and are named', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Finish Soft Job', jobType: 'termite' });
+    await win.DB.saveReport({ jobId: job.id, sections: fillRequired(win, win.REPORT_SCHEMA), documentType: 'timber_pest_inspection', finalizedAt: null, auditLog: [] });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Ready to finalize', 'ready, with only the client questions open');
+    const note = doc.getElementById('report-progress-note');
+    assert(!note.classList.contains('hidden') && /Client agreement/.test(note.textContent) && /Client acknowledgement/.test(note.textContent), `it names what is still open: ${note.textContent}`);
+    const next = doc.getElementById('report-next-btn');
+    assertEqual(next.textContent, 'Answer those 2 first', 'answering them is offered');
+    assert(next.classList.contains('btn-outline') && !next.classList.contains('btn-primary'), 'as the second choice');
+    await waitFor(() => !doc.getElementById('report-finish-btn').classList.contains('hidden'), 'finalize is the first');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Kept signature: only one signed by hand on that screen is kept, and using it is a tap', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const store = win.FinishStep.Signature;
+    // Any signature kept by the real app or the demo on this computer: a test
+    // must leave those exactly as they are.
+    const others = () => Object.keys(win.localStorage)
+      .filter((k) => k.startsWith('scope.signature.v1:') && k !== 'scope.signature.v1:test')
+      .map((k) => `${k}=${win.localStorage.getItem(k).length}`).sort().join();
+    const othersBefore = others();
+    store.clear();
+    assertEqual(store.get(), '', 'nothing kept to begin with');
+    assert(!store.save('not a picture'), 'only a picture is kept');
+    assert(!store.save('data:text/html;base64,PHNjcmlwdD4='), 'and only a png, jpeg or webp');
+    assertEqual(store.get(), '', 'so neither was stored');
+
+    const job = await win.DB.addJob({ name: 'Kept Signature Job', jobType: 'termite' });
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    const someoneElses = sections.inspector.inspectorSignature;
+    await win.DB.saveReport({ jobId: job.id, sections, documentType: 'timber_pest_inspection', finalizedAt: null, auditLog: [] });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the report is open');
+
+    // A signature already on the report is not this person's to keep.
+    openReportSection(doc, 'Inspector Details');
+    await waitFor(() => editorOpen(doc) && doc.querySelector('.keep-signature input'), 'the offer to keep a signature is there');
+    assert(doc.querySelector('.keep-signature input').checked, 'ticked, and said in words beside the pad');
+    assert(!doc.querySelector('.saved-signature-use'), 'with nothing kept there is no "Sign as"');
+    doc.getElementById('section-save-btn').click();
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved without signing');
+    assertEqual(store.get(), '', 'the signature that was already there is not kept');
+
+    // Signed by hand here, and saved: kept.
+    openReportSection(doc, 'Inspector Details');
+    await waitFor(() => editorOpen(doc) && doc.querySelector('#report-section-fields canvas'), 'the pad');
+    signPad(win, doc.querySelector('#report-section-fields canvas'));
+    doc.getElementById('section-save-btn').click();
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+    const signed = (await win.DB.getReport(job.id)).sections.inspector.inspectorSignature;
+    assert(signed && signed !== someoneElses && signed.startsWith('data:image/png;base64,'), 'the new signature is on the report');
+    assertEqual(store.get(), signed, 'and kept on this phone');
+    assertEqual(win.localStorage.getItem('scope.signature.v1:test'), signed, 'in the slot tests use');
+
+    // Next time: one tap, and only when tapped.
+    await win.DB.saveReport({ ...(await win.DB.getReport(job.id)), sections: { ...sections, inspector: { ...sections.inspector, inspectorName: 'Pat Example', inspectorLicence: 'L-123', inspectorSignature: '' } } });
+    await win.ReportUI.openReview(job.id);
+    openReportSection(doc, 'Inspector Details');
+    await waitFor(() => editorOpen(doc) && doc.querySelector('.saved-signature-use'), '"Sign as" is offered');
+    assertEqual(doc.querySelector('.saved-signature-use').textContent, 'Sign as Pat Example, licence L-123', 'it names who is signing');
+    assert(!doc.querySelector('.keep-signature'), 'and does not ask to keep one again');
+    doc.getElementById('section-save-btn').click();
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved without tapping it');
+    assertEqual((await win.DB.getReport(job.id)).sections.inspector.inspectorSignature, '', 'opening the screen signs nothing');
+    openReportSection(doc, 'Inspector Details');
+    await waitFor(() => editorOpen(doc) && doc.querySelector('.saved-signature-use'), 'offered again');
+    doc.querySelector('.saved-signature-use').click();
+    doc.getElementById('section-save-btn').click();
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+    assertEqual((await win.DB.getReport(job.id)).sections.inspector.inspectorSignature, signed, 'the tap put the kept signature on the report');
+
+    // And it can be forgotten.
+    openReportSection(doc, 'Inspector Details');
+    await waitFor(() => editorOpen(doc) && doc.querySelector('.saved-signature-forget'), 'a way to forget it');
+    doc.querySelector('.saved-signature-forget').click();
+    assertEqual(store.get(), '', 'forgotten');
+    assert(doc.querySelector('.keep-signature input') && !doc.querySelector('.saved-signature-use'), 'and the screen goes back to asking');
+    win.hideAllAppViews();
+    store.clear();
+    assertEqual(others(), othersBefore, 'no real or demo signature was touched');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Weather: required, one tap for the usual answers, and anything can still be typed', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const field = win.REPORT_SCHEMA.find((s) => s.id === 'clientDetails').fields.find((f) => f.id === 'weather');
+    assert(field.required === true, 'the weather must be recorded');
+    assertEqual(field.quickPicks.join(), 'Fine,Overcast,Light rain,Heavy rain,Windy', 'five usual answers');
+    assertEqual(field.type, 'text', 'still text, so the looked-up line and older answers read as written');
+
+    const job = await win.DB.addJob({ name: 'Weather Job', address: '2 Weather St', jobType: 'termite' });
+    await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+    await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the report is open');
+    openReportSection(doc, 'Client Details');
+    await waitFor(() => editorOpen(doc) && doc.querySelector('[data-field-row="weather"] .quick-pick'), 'the chips are above the box');
+    const row = doc.querySelector('[data-field-row="weather"]');
+    const input = row.querySelector('input[type="text"]');
+    finishTap(doc, 'weather', 'Windy');
+    assertEqual(input.value, 'Windy', 'a tap fills the box');
+    assert(row.querySelector('.quick-pick.active').textContent === 'Windy', 'and lights the chip');
+    assert(doc.getElementById('view-report').classList.contains('hidden'), 'in the section editor a tap never leaves the screen');
+    setTextInput(win, input, 'Windy, gusts to 40 km/h');
+    assert(!row.querySelector('.quick-pick.active'), 'typing something else unlights it');
+    doc.getElementById('section-save-btn').click();
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+    assertEqual((await win.DB.getReport(job.id)).sections.clientDetails.weather, 'Windy, gusts to 40 km/h', 'what was typed is what is kept');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Report: the question-set warning is for signed reports, and questions are not in capitals', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Question Set Job', jobType: 'termite' });
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    await win.DB.saveReport({ jobId: job.id, sections, documentType: 'timber_pest_inspection', finalizedAt: Date.now(), auditLog: [], schemaVersion: win.REPORT_SCHEMA_VERSION - 1 });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => !doc.getElementById('schema-mismatch-notice').classList.contains('hidden'), 'a signed report written under an older question set says so');
+    await win.DB.saveReport({ jobId: job.id, sections, documentType: 'timber_pest_inspection', finalizedAt: null, auditLog: [], schemaVersion: win.REPORT_SCHEMA_VERSION - 1 });
+    await win.ReportUI.openReview(job.id);
+    await waitFor(() => doc.getElementById('schema-mismatch-notice').classList.contains('hidden'), 'one still being written does not');
+
+    openReportSection(doc, 'Findings');
+    await waitFor(() => editorOpen(doc) && doc.querySelector('#report-section-fields .field-label'), 'a question is on screen');
+    assertEqual(win.getComputedStyle(doc.querySelector('#report-section-fields .field-label')).textTransform, 'none', 'questions read as written, not in capitals');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Finish step: registered, before the report editor that uses it', async () => {
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.includes('<script src="finish-step.js"></script>'), 'index.html loads it');
+    assert(idx.indexOf('finish-step.js') > idx.indexOf('report-schema.js') && idx.indexOf('finish-step.js') < idx.indexOf('"report.js"'), 'after the questions, before the editor');
+    assert(sw.includes("'./finish-step.js'"), 'and it is in the offline shell');
   });
 
   test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {

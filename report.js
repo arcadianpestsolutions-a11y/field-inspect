@@ -311,6 +311,13 @@
   let aiDeclinedFieldIds = new Set();
   let aiDraftInProgress = false;
   let aiDraftProgressText = '';
+  // The Finish step (v169, finish-step.js): set while the section editor is
+  // showing one question at a time instead of a whole section.
+  // { fieldId, history: [{sectionId, fieldId}], skipped: Set(keys), busy }
+  let finishRun = null;
+  // Beside the signature pad: whether to keep what is signed on this phone,
+  // and what was signed by hand while this section was open. { want, drawn }
+  let keepSignature = null;
   const objectUrls = [];
 
   function trackUrl(url) { objectUrls.push(url); return url; }
@@ -749,6 +756,7 @@
         if (fb.dataset.sectionsGreen === '1') { fb.disabled = false; fh.classList.add('hidden'); }
       }
     }
+    syncFinishShortcut();
     if (todo === null || currentReport.finalizedAt) { if (card) card.remove(); return; }
     if (!card) {
       card = document.createElement('div');
@@ -1393,6 +1401,9 @@
     // job has no walk (not a timber pest inspection) or it was never started.
     walkOutstanding: (jobId) => walkOutstandingFor(jobId),
     confirmWalkNoneFound: (jobId) => confirmWalkNoneFound(jobId),
+    // The Finish step (v169): what is left on the open report, and the way in.
+    finishQuestions: () => finishQuestions(),
+    startFinish: () => startFinish(),
     // The subfloor and roof void questions of the photo walk. Each has three
     // answers, because "no" meant two different things a report must keep
     // apart: there is none (a slab, a flat roof), or there is one and it could
@@ -1894,7 +1905,11 @@
     // Reports written before versioning existed have no stamp. That is not a
     // mismatch to shout about — it is simply unknown, and saying so would be
     // noise on every legacy report.
-    if (stamped == null || current == null || stamped === current) {
+    // Nor is it a mismatch while the report is still being written (v169):
+    // it is being finished against the questions on screen now, and is
+    // stamped with them when it is signed (see the finalize handler). The
+    // warning is for a signed document read under a later question set.
+    if (stamped == null || current == null || stamped === current || !currentReport.finalizedAt) {
       schemaMismatchNotice.classList.add('hidden');
       return;
     }
@@ -2282,30 +2297,87 @@
       card.className = 'card report-progress';
       card.innerHTML = '<div class="report-progress-top"><strong id="report-progress-text"></strong><span id="report-progress-pct"></span></div>'
         + '<div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span id="report-progress-fill"></span></div>'
-        + '<button type="button" id="report-next-btn" class="btn btn-primary full"></button>';
+        + '<p id="report-progress-note" class="report-progress-note hidden"></p>'
+        + '<button type="button" id="report-next-btn" class="btn btn-primary full"></button>'
+        + '<button type="button" id="report-finish-btn" class="btn btn-primary full hidden"></button>';
       reportSectionList.parentNode.insertBefore(card, reportSectionList);
       card.querySelector('#report-next-btn').addEventListener('click', () => {
+        if (card.dataset.finish === '1') { startFinish(); return; }
         const target = card.dataset.nextSection;
         if (target) openSectionEditor(target);
+      });
+      card.querySelector('#report-finish-btn').addEventListener('click', () => {
+        // The button at the foot of the screen, within reach. It presses that
+        // one, so there is still exactly one way a report gets finalized.
+        if (finalizeBtn.disabled) {
+          toast(walkBlocksFinalize()
+            ? 'Finish the walk-through first. What is left is listed on this screen.'
+            : 'Not ready yet: some sections still need an answer.');
+          return;
+        }
+        finalizeBtn.click();
       });
     }
     const pct = total ? Math.round((done / total) * 100) : 0;
     const finalized = !!(currentReport && currentReport.finalizedAt);
-    card.querySelector('#report-progress-text').textContent = finalized
-      ? 'Report finalized'
-      : `${done} of ${total} section${total === 1 ? '' : 's'} done`;
+    const text = card.querySelector('#report-progress-text');
+    const next = card.querySelector('#report-next-btn');
+    const note = card.querySelector('#report-progress-note');
     card.querySelector('#report-progress-pct').textContent = `${pct}%`;
     card.querySelector('#report-progress-fill').style.width = `${pct}%`;
     card.querySelector('.progress-bar').setAttribute('aria-valuenow', String(pct));
-    const next = card.querySelector('#report-next-btn');
-    if (firstOpen && !finalized) {
-      card.dataset.nextSection = firstOpen.section.id;
-      next.textContent = `Continue: ${firstOpen.number}. ${firstOpen.section.title}`;
-      next.classList.remove('hidden');
-    } else {
-      delete card.dataset.nextSection;
-      next.classList.add('hidden');
+    delete card.dataset.nextSection;
+    delete card.dataset.finish;
+    next.className = 'btn btn-primary full hidden';
+    if (note) note.classList.add('hidden');
+
+    if (finalized) { text.textContent = 'Report finalized'; return; }
+
+    // An older page paired with this script has no finish-step.js: the card
+    // as it was, sections counted and one button to the next open one.
+    if (!window.FinishStep) {
+      text.textContent = `${done} of ${total} section${total === 1 ? '' : 's'} done`;
+      if (firstOpen) {
+        card.dataset.nextSection = firstOpen.section.id;
+        next.textContent = `Continue: ${firstOpen.number}. ${firstOpen.section.title}`;
+        next.classList.remove('hidden');
+      }
+      return;
     }
+
+    // v169: what is left as questions, and one button that asks them one at
+    // a time. Questions that do not stop the report being finalized (the
+    // client's signatures) are named, and offered second.
+    const questions = finishQuestions();
+    const must = questions.filter((q) => !q.soft).length;
+    const n = questions.length;
+    if (!n) { text.textContent = 'Every question is answered'; return; }
+    card.dataset.finish = '1';
+    next.classList.remove('hidden');
+    if (must) {
+      text.textContent = `${n} question${n === 1 ? '' : 's'} left`;
+      next.textContent = n === 1 ? 'Answer it' : 'Answer them one at a time';
+      return;
+    }
+    text.textContent = 'Ready to finalize';
+    next.className = 'btn btn-outline full';
+    next.textContent = n === 1 ? 'Answer it first' : `Answer those ${n} first`;
+    if (note) {
+      note.textContent = `Not needed to finalize, and still open: ${questions.map((q) => q.label).join('; ')}.`;
+      note.classList.remove('hidden');
+    }
+  }
+
+  // The finalize button, repeated at the top of the report once nothing that
+  // must be answered is left (v169). It mirrors the real one's words and
+  // whether it is ready, and only ever presses it.
+  function syncFinishShortcut() {
+    const btn = document.getElementById('report-finish-btn');
+    if (!btn || !currentReport || !finalizeBtn) return;
+    const ready = !currentReport.finalizedAt && !!window.FinishStep && finalizeBtn.dataset.sectionsGreen === '1';
+    btn.classList.toggle('hidden', !ready);
+    btn.textContent = finalizeBtn.textContent;
+    btn.setAttribute('aria-disabled', finalizeBtn.disabled ? 'true' : 'false');
   }
 
   function renderSectionList() {
@@ -2364,6 +2436,7 @@
       finalizeBtn.textContent = currentReport.finalizedAt ? `✓ Submitted to ${host}` : `Sign and submit to ${host}`;
     }
     renderReviewStrip();
+    syncFinishShortcut();
     finalizeHint.classList.toggle('hidden', allRequiredGreen && !walkBlocksFinalize());
     // Send/Save only make sense once the report is actually finalized —
     // stays visible on reopen too, so a technician can come back and send
@@ -2500,6 +2573,9 @@
     // stamped afterFinalize: false — this is the moment of sign-off, not an
     // amendment to an already-signed document.
     appendAudit(currentReport, { event: 'finalized' });
+    // Signed against the questions as they are today, whichever set it was
+    // started under: this is the set the pre-flight check just passed.
+    if (window.REPORT_SCHEMA_VERSION) currentReport.schemaVersion = window.REPORT_SCHEMA_VERSION;
     currentReport.finalizedAt = Date.now();
     await DB.saveReport(currentReport);
     const { dueAt, intervalMonths } = computeNextDueAt(currentJob, currentReport);
@@ -2774,11 +2850,35 @@
       else renderSummary();
     } else if (section.id === 'terms') {
       renderFixedTerms();
+    } else if (finishRun && window.FinishStep) {
+      // One question: the answer that owns this screen and whatever it shows.
+      const only = new Set(window.FinishStep.screenFields(section, finishRun.fieldId).map((f) => f.id));
+      const where = document.createElement('p');
+      where.className = 'finish-where';
+      where.textContent = section.title;
+      sectionFieldsEl.appendChild(where);
+      for (const field of section.fields) {
+        if (only.has(field.id)) renderField(field);
+      }
+      const whole = document.createElement('button');
+      whole.type = 'button';
+      whole.id = 'finish-whole-btn';
+      whole.className = 'link-btn finish-whole';
+      whole.textContent = 'Open the whole section';
+      whole.addEventListener('click', () => {
+        // The same answers, every question of the section, the usual Save.
+        finishRun = null;
+        applyFinishChrome();
+        renderSectionHeader(section);
+        renderCurrentSectionFields();
+      });
+      sectionFieldsEl.appendChild(whole);
     } else {
       for (const field of section.fields) {
         renderField(field);
       }
     }
+    sectionFieldsEl.classList.toggle('finish-fields', !!finishRun);
   }
 
   // Called after a triggersAiFill photos field's background analysis
@@ -2894,7 +2994,10 @@
     return diffSection(section, committed, { ...committed, ...draftValues }).length > 0;
   }
 
-  async function openSectionEditor(sectionId) {
+  async function openSectionEditor(sectionId, opts) {
+    // Every way in except the Finish step itself is the whole section.
+    if (!(opts && opts.finish)) finishRun = null;
+    keepSignature = null;
     currentSectionId = sectionId;
     const section = findSection(sectionId);
     pendingSectionValues = cloneSectionValues(currentReport.sections[sectionId]);
@@ -2944,6 +3047,28 @@
     const aiFieldsForSection = (currentReport.aiDraft && currentReport.aiDraft.draftFields && currentReport.aiDraft.draftFields[sectionId]) || {};
     applyDraftFieldsToPending(section, aiFieldsForSection);
 
+    renderSectionHeader(section);
+    applyFinishChrome();
+    renderCurrentSectionFields();
+
+    hide(viewReport);
+    show(viewReportSection);
+  }
+
+  // The editor's title. In the Finish step it counts what is left instead of
+  // naming a section, because the question is the thing on screen.
+  function renderSectionHeader(section) {
+    if (finishRun) {
+      const open = finishQuestions().filter((q) => !finishRun.skipped.has(q.key));
+      const left = open.length;
+      // "Last question" only when this screen is the one that is left: Back
+      // can show a question that is already answered.
+      const hereIsOpen = open.some((q) => q.sectionId === section.id && q.fieldId === finishRun.fieldId);
+      sectionTitleEl.textContent = !left ? 'All answered'
+        : (left === 1 && hereIsOpen ? 'Last question' : `${left} question${left === 1 ? '' : 's'} left`);
+      sectionSubtitleEl.textContent = 'One at a time. Skip any you cannot answer yet.';
+      return;
+    }
     // The same number the list shows (v163): the list counts the sections on
     // screen, and the header used the schema's fixed number, so "11. Client
     // Acknowledgement" opened as "13. Client Acknowledgement".
@@ -2951,11 +3076,210 @@
     const shownAt = shownSections.findIndex((s) => s.id === section.id);
     sectionTitleEl.textContent = `${shownAt >= 0 ? shownAt + 1 : section.number}. ${section.title}`;
     sectionSubtitleEl.textContent = section.subtitle || '';
+  }
 
-    renderCurrentSectionFields();
+  // ---------- The Finish step (v169) ----------
+  // After the walk: only what is still unanswered, one question per screen,
+  // each answer saved as it is given. It is the section editor showing one
+  // question instead of a section, so everything the editor does (the audit
+  // trail, AI offers, required photos, common comments, the unsaved-work net)
+  // works the same here. The grouping into questions is finish-step.js.
+  function finishQuestions() {
+    if (!window.FinishStep || !currentReport) return [];
+    return window.FinishStep.questions(currentSchema(), currentReport);
+  }
 
-    hide(viewReport);
-    show(viewReportSection);
+  // Skip and Next replace "Save & Back to Report" while the step is open.
+  // Built here rather than in index.html, for the reason renderPreflight gives.
+  function applyFinishChrome() {
+    const on = !!finishRun;
+    let bar = document.getElementById('finish-bar');
+    if (!bar && sectionSaveBtn && sectionSaveBtn.parentNode) {
+      bar = document.createElement('div');
+      bar.id = 'finish-bar';
+      bar.className = 'finish-bar hidden';
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.id = 'finish-skip-btn';
+      skip.className = 'btn btn-secondary';
+      skip.textContent = 'Skip';
+      skip.addEventListener('click', () => finishNext({ skip: true }));
+      const next = document.createElement('button');
+      next.type = 'button';
+      next.id = 'finish-next-btn';
+      next.className = 'btn btn-primary';
+      next.textContent = 'Next';
+      next.addEventListener('click', () => finishNext());
+      bar.append(skip, next);
+      sectionSaveBtn.parentNode.appendChild(bar);
+    }
+    if (bar) bar.classList.toggle('hidden', !on);
+    if (sectionSaveBtn) sectionSaveBtn.classList.toggle('hidden', on);
+    viewReportSection.classList.toggle('finish-mode', on);
+    sectionBackBtn.setAttribute('aria-label', on ? 'Previous question' : 'Back');
+  }
+
+  async function startFinish() {
+    if (!currentReport || currentReport.finalizedAt || !window.FinishStep) return;
+    finishRun = { fieldId: null, history: [], skipped: new Set(), busy: false };
+    await finishGo(-1);
+  }
+
+  // The next question after `after` (a FinishStep.position) that has not been
+  // skipped; failing that, an earlier one an answer has just added.
+  async function finishGo(after) {
+    if (!finishRun) return;
+    const open = finishQuestions().filter((q) => !finishRun.skipped.has(q.key));
+    const schema = currentSchema();
+    const next = open.find((q) => window.FinishStep.position(schema, q.sectionId, q.fieldId) > after) || open[0];
+    if (!next) { leaveFinish(true); return; }
+    await finishShow(next.sectionId, next.fieldId);
+  }
+
+  async function finishShow(sectionId, fieldId) {
+    if (!finishRun) return;
+    finishRun.fieldId = fieldId;
+    finishRun.busy = false;
+    await openSectionEditor(sectionId, { finish: true });
+    const main = viewReportSection.querySelector('main');
+    if (main) main.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }
+
+  // Next saves what is on screen and moves on. With something still missing
+  // it says what, and stays: Skip is the way past a question that cannot be
+  // answered yet (the client is not here to sign).
+  async function finishNext({ skip } = {}) {
+    if (!finishRun || !window.FinishStep) return;
+    const section = findSection(currentSectionId);
+    const here = { sectionId: currentSectionId, fieldId: finishRun.fieldId };
+    const errors = window.FinishStep.screenErrors(section, pendingSectionValues, here.fieldId);
+    if (errors.length && !skip) {
+      finishRun.busy = false;
+      toast(String(errors[0].message).replace(/[.\s]+$/, '')
+        + (errors.length > 1 ? `, and ${errors.length - 1} more on this screen` : '') + '. Or tap Skip.');
+      return;
+    }
+    let saved = null;
+    try { saved = await commitSection(); } catch (e) { toast(DB.describeSaveFailure(e, 'That answer')); }
+    if (!saved || !finishRun) { if (finishRun) finishRun.busy = false; return; }
+    announceSectionChanges(saved.sectionsBefore, saved.section);
+    if (errors.length) finishRun.skipped.add(`${here.sectionId}.${here.fieldId}`);
+    finishRun.history.push(here);
+    await finishGo(window.FinishStep.position(currentSchema(), here.sectionId, here.fieldId));
+  }
+
+  // The header arrow in the Finish step: the question before this one, with
+  // what was typed here kept. From the first question it leaves the step.
+  async function finishBack() {
+    let saved = null;
+    try { saved = await commitSection(); } catch (e) { toast(DB.describeSaveFailure(e, 'That answer')); }
+    if (!saved || !finishRun) return;
+    const prev = finishRun.history.pop();
+    if (prev) await finishShow(prev.sectionId, prev.fieldId);
+    else leaveFinish(false);
+  }
+
+  function leaveFinish(finished) {
+    const skipped = finishRun ? finishRun.skipped.size : 0;
+    finishRun = null;
+    stopAutosave();
+    applyFinishChrome();
+    hide(viewReportSection);
+    renderSectionList();
+    show(viewReport);
+    const main = viewReport.querySelector('main');
+    if (main) main.scrollTop = 0;
+    window.scrollTo(0, 0);
+    if (!finished) return;
+    toast(skipped
+      ? `${skipped} question${skipped === 1 ? '' : 's'} skipped. ${skipped === 1 ? 'It is' : 'They are'} still listed here.`
+      : 'Every question is answered. Check the report, then finalize it.');
+  }
+
+  // One tap on an answer moves straight on when that answer is all there is
+  // on the screen and nothing more is needed. A screen with a comment box, a
+  // photo or a follow-up waits for Next.
+  function finishTapped(field) {
+    if (!finishRun || finishRun.busy || !window.FinishStep) return;
+    const section = findSection(currentSectionId);
+    if (!section) return;
+    const showing = window.FinishStep.screenFields(section, finishRun.fieldId)
+      .filter((f) => isFieldVisible(f, pendingSectionValues));
+    if (showing.length !== 1 || showing[0].id !== field.id) return;
+    if (window.FinishStep.screenErrors(section, pendingSectionValues, finishRun.fieldId).length) return;
+    finishRun.busy = true;
+    // Long enough to see the answer light up, short enough not to wait for.
+    setTimeout(() => { if (finishRun && finishRun.busy) finishNext(); }, 220);
+  }
+
+  // ---------- The signature kept on this phone (v169) ----------
+  // Above the inspector's signature pad. With one kept: "Sign as <name>,
+  // licence <n>", which puts it on this report when tapped and not before.
+  // Without: a tick box to keep what is about to be signed.
+  const OWN_SIGNATURE_FIELDS = new Set(['inspectorSignature']);
+
+  function signatureToolsFor(field, pad) {
+    if (!OWN_SIGNATURE_FIELDS.has(field.id) || !window.FinishStep) return null;
+    const store = window.FinishStep.Signature;
+    const box = document.createElement('div');
+    box.className = 'saved-signature';
+    // Only a signature made by hand on this screen can be kept. One that was
+    // already on the report is somebody's earlier signature, and whoever has
+    // the section open now may not be that person.
+    pad.onDrawn((signed) => { if (keepSignature) keepSignature.drawn = signed; });
+    const draw = () => {
+      box.innerHTML = '';
+      const kept = store.get();
+      if (kept) {
+        keepSignature = null;
+        const who = String(pendingSectionValues.inspectorName || '').trim();
+        const licence = String(pendingSectionValues.inspectorLicence || '').trim();
+        const use = document.createElement('button');
+        use.type = 'button';
+        use.className = 'btn btn-primary full saved-signature-use';
+        use.dataset.action = 'use-kept-signature';
+        use.textContent = `Sign as ${who || 'me'}${licence ? `, licence ${licence}` : ''}`;
+        use.addEventListener('click', () => pad.use(kept));
+        const forget = document.createElement('button');
+        forget.type = 'button';
+        forget.className = 'link-btn saved-signature-forget';
+        forget.dataset.action = 'forget-kept-signature';
+        forget.textContent = 'Forget the signature kept on this phone';
+        forget.addEventListener('click', () => { store.clear(); draw(); toast('Forgotten. Sign below as usual.'); });
+        const or = document.createElement('p');
+        or.className = 'saved-signature-note';
+        or.textContent = 'Uses the signature kept on this phone. Or sign below.';
+        box.append(use, or, forget);
+        return;
+      }
+      const mine = { want: true, drawn: '' };
+      keepSignature = mine;
+      const label = document.createElement('label');
+      label.className = 'keep-signature';
+      const tick = document.createElement('input');
+      tick.type = 'checkbox';
+      tick.checked = true;
+      tick.dataset.action = 'keep-signature';
+      tick.addEventListener('change', () => { mine.want = tick.checked; });
+      label.append(tick, document.createTextNode('Keep my signature on this phone, so next time is one tap'));
+      box.appendChild(label);
+    };
+    draw();
+    return box;
+  }
+
+  // Called once the section is saved: the signature is only kept when the
+  // answer it was given for was kept.
+  function keepSignatureIfAsked() {
+    const asked = keepSignature;
+    keepSignature = null;
+    if (!asked || !asked.want || !asked.drawn || !window.FinishStep) return;
+    for (const id of OWN_SIGNATURE_FIELDS) {
+      if (pendingSectionValues[id] !== asked.drawn) continue;
+      if (window.FinishStep.Signature.save(asked.drawn)) toast('Signature kept on this phone for next time.');
+      return;
+    }
   }
 
   // ---------- the form renderer ----------
@@ -3003,9 +3327,17 @@
       hiddenCount: (field) => window.CommentTemplates.hiddenCount(field.id),
     } : null,
 
-    onFieldChange: (field, value) => {
+    onFieldChange: (field, value, how) => {
       if (field.id === 'jobCategory') applyJobCategoryPrefill(value);
+      if (how === 'tap') finishTapped(field);
     },
+
+    // The Finish step shows one question per screen, so a short list is
+    // large buttons there. In the section editor it stays a dropdown.
+    selectAsButtons: (field) => !!finishRun && !!window.FinishStep && window.FinishStep.tapAnswers(field),
+
+    // "Sign as ..." with the signature kept on this phone (v169).
+    signatureTools: (field, pad) => signatureToolsFor(field, pad),
   });
 
   function renderField(field) {
@@ -3913,7 +4245,12 @@
     sectionFieldsEl.appendChild(wrap);
   }
 
-  sectionSaveBtn.addEventListener('click', async () => {
+  // Writes the open section's answers into the report: each change audited,
+  // the report saved, the unsaved-work draft cleared. Resolves to what it did,
+  // or to null when nothing was saved (an amendment with no reason given, or
+  // a subcontractor's report that has already been submitted). Shared by
+  // "Save & Back to Report" and the Finish step (v169).
+  async function commitSection() {
     const section = findSection(currentSectionId);
     const changes = diffSection(section, currentReport.sections[currentSectionId], pendingSectionValues);
 
@@ -3921,7 +4258,7 @@
     // would refuse the save, so say so here rather than let it look saved.
     if (currentReport.finalizedAt && changes.length && isSubUser()) {
       toast(`This report has been submitted. Ask ${window.Subcontractor.hostName()} to send it back if it needs a change.`);
-      return;
+      return null;
     }
 
     // Amending a finalized report is allowed — corrections are a normal part
@@ -3942,7 +4279,7 @@
       ) || '').trim();
       if (!reason) {
         toast('Amendment cancelled — a reason is required to change a finalized report.');
-        return;
+        return null;
       }
     }
 
@@ -3977,12 +4314,19 @@
     await DB.saveReport(currentReport);
     stopAutosave();
     DB.deleteSectionDraft(currentReport.jobId, currentSectionId).catch(() => {});
+    keepSignatureIfAsked();
+    return { section, changes, reason, sectionsBefore };
+  }
+
+  sectionSaveBtn.addEventListener('click', async () => {
+    const saved = await commitSection();
+    if (!saved) return;
     hide(viewReportSection);
     renderSectionList();
     show(viewReport);
-    if (reason) toast(`Amendment recorded (${changes.length} field${changes.length === 1 ? '' : 's'}).`);
+    if (saved.reason) toast(`Amendment recorded (${saved.changes.length} field${saved.changes.length === 1 ? '' : 's'}).`);
 
-    announceSectionChanges(sectionsBefore, section);
+    announceSectionChanges(saved.sectionsBefore, saved.section);
   });
 
   // Why a gated section is on screen, in the words of the answer that put it
@@ -4050,6 +4394,9 @@
   // confirming there's actually something to lose, and lets them cancel
   // back into the editor rather than lose work to a habitual tap.
   sectionBackBtn.addEventListener('click', async () => {
+    // In the Finish step the arrow is "the question before", and nothing
+    // typed is thrown away by it.
+    if (finishRun) { await finishBack(); return; }
     const section = findSection(currentSectionId);
     const changes = diffSection(section, currentReport.sections[currentSectionId], pendingSectionValues);
     if (changes.length && !await askConfirm(

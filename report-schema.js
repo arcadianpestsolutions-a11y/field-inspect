@@ -57,7 +57,14 @@ const REPORT_SCHEMA = [
       { id: 'propertyAddress', label: 'Property Inspected Address', type: 'text', required: true },
       { id: 'inspectionDate', label: 'Inspection Date', type: 'date', required: true },
       { id: 'inspectionTime', label: 'Inspection Time', type: 'time' },
-      { id: 'weather', label: 'Weather Conditions at time of inspection', type: 'text', aiFillable: true },
+      // v169: required, and one tap. It was optional and typed, so it was
+      // usually blank unless the weather lookup at Start had a signal. The
+      // chips are the usual answers; the lookup's fuller line ("Fine, 24°C,
+      // wind 9 km/h") still lands here by itself and still counts.
+      {
+        id: 'weather', label: 'Weather Conditions at time of inspection', type: 'text', required: true, aiFillable: true,
+        quickPicks: ['Fine', 'Overcast', 'Light rain', 'Heavy rain', 'Windy'],
+      },
       // v139, from Tal's Formitize Timber Pest Inspection form (AS 4349.3).
       { id: 'peoplePresent', label: 'People present at the time of inspection', type: 'multiselect', options: ['Client', 'Vendor', 'Purchaser', 'Real Estate Agent', 'Tenant'] },
       {
@@ -251,7 +258,9 @@ const REPORT_SCHEMA = [
       { id: 'damagePhotos', label: 'Damage Photos', type: 'photos', photoRequired: true, showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'damageSeverity', label: 'Damage appears to be', type: 'select', options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive', 'Extensive to Severe', 'Severe'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'findingsAdditionalComments', label: 'Additional Comments', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
-      { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
+      // `askWith` (v169): what else goes on this question's screen in the
+      // Finish step (finish-step.js). The comment box belongs with the answer.
+      { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true, askWith: ['treatmentComments'] },
       // Shown whatever the answer since v139: "Termite management system in
       // place" was one of Tal's commonest comments here, written when NO
       // treatment was recommended.
@@ -273,6 +282,7 @@ const REPORT_SCHEMA = [
         id: 'managementSystemStatus',
         label: 'Is the existing termite management system adequate for this property?',
         type: 'select', required: true, aiFillable: true, confirmBeforeUse: true,
+        askWith: ['existingManagementSystem'],
         options: [
           'Adequate — no further works proposed',
           'None present — management plan proposed',
@@ -324,7 +334,7 @@ const REPORT_SCHEMA = [
       { id: 'majorSafetyHazardDetails', label: 'Details & location of the safety hazard (must be rectified by a licensed builder)', type: 'textarea', showIf: { field: 'majorSafetyHazard', equals: 'Yes' }, aiFillable: true },
       { id: 'otherTimberPestsObserved', label: 'Evidence of other timber pests observed (e.g. drywood termites) — outside the scope of this Standard but noted as a duty to warn', type: 'textarea', aiFillable: true },
       { id: 'reinspectionInterval', label: 'A full inspection and written report should be conducted at this property every', type: 'select', options: ['3 months', '6 months', '12 months'], default: '12 months' },
-      { id: 'susceptibility', label: 'In our opinion, the susceptibility of this property to termites is considered to be', type: 'select', required: true, options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true, confirmBeforeUse: true },
+      { id: 'susceptibility', label: 'In our opinion, the susceptibility of this property to termites is considered to be', type: 'select', required: true, options: ['LOW', 'MODERATE', 'HIGH'], aiFillable: true, confirmBeforeUse: true, askWith: ['reinspectionInterval'] },
     ],
   },
   {
@@ -520,7 +530,7 @@ const REPORT_SCHEMA = [
       { id: 'inspectorLicence', label: 'Inspector Licence', type: 'text', required: true },
       { id: 'inspectorPhone', label: 'Inspector Phone', type: 'text' },
       { id: 'signedOnBehalfOf', label: 'Signed on behalf of', type: 'static', orgField: 'signedOnBehalfOf' },
-      { id: 'inspectorSignature', label: 'Inspector Signature', type: 'signature', required: true },
+      { id: 'inspectorSignature', label: 'Inspector Signature', type: 'signature', required: true, askWith: ['inspectorName', 'inspectorLicence'] },
       { id: 'signatureDate', label: 'Date', type: 'date' },
     ],
   },
@@ -795,7 +805,10 @@ function defaultValuesForSection(section, org) {
 //       photo fields liveTermitesPhotos, waterLeakPhotos, moisturePhotos and
 //       fungalDecayPhotos; "<field>NoPhotoReason" records why one could not
 //       be taken
-const SCHEMA_VERSION = 8;
+//   9 — termite inspection: weather is required and offers one-tap answers
+//       (quickPicks). `askWith` added to four questions: it only says which
+//       fields share a screen in the Finish step and changes no answer
+const SCHEMA_VERSION = 9;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;
