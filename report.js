@@ -765,9 +765,9 @@
     if (fb && !currentReport.finalizedAt) {
       if (walkBlocksFinalize()) {
         fb.disabled = true;
-        if (fh) { fh.classList.remove('hidden'); fh.textContent = 'Finish the walk-through (listed above) and get a green tick on every section before the report can be finalized.'; }
+        if (fh) { fh.classList.remove('hidden'); fh.textContent = 'Finish the walk-through (listed above) and answer the questions left. Then you can sign.'; }
       } else if (fh) {
-        fh.textContent = 'All sections need a green tick before the report can be finalized.';
+        fh.textContent = 'Answer the questions left. Then you can sign.';
         if (fb.dataset.sectionsGreen === '1') { fb.disabled = false; fh.classList.add('hidden'); }
       }
     }
