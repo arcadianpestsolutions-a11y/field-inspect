@@ -41,6 +41,12 @@ including explicit GRANTs. Functions: `supabase functions deploy <name>`; add
 `--no-verify-jwt` for `client-portal`, `sms-inbound`, `calendar-feed`,
 `send-due-reminders`. Secrets are set by the owner in Supabase, never in code.
 
+Keep the empty `.nojekyll` file at the top. Without it GitHub Pages leaves out
+every folder whose name starts with an underscore, and `join.html` loads its
+rules from `supabase/functions/_shared`. The test suite is served straight from
+the folder and cannot see that difference, so after each release check the live
+site too: every file in the `sw.js` shell, and that rules file, must answer 200.
+
 ## Backups
 See `docs/BACKUP-RUNBOOK.md` and `tools/backup-scope.ps1` (`-Check` first).
 

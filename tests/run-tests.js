@@ -13929,6 +13929,105 @@
     assert(page.includes('autocomplete="new-password"'), 'a phone offers to save the new password');
   });
 
+  // ---------- The sign-up page, opened as a page (v168) ----------
+  // v166 tested join.html only as text. On the live site its one import was
+  // not being served: GitHub Pages leaves out any folder whose name starts
+  // with an underscore, and the rules file is in supabase/functions/_shared.
+  // The page sat on "Checking your link…" for ever and nothing here could
+  // tell. These open the page itself.
+  async function joinFrame(setup) {
+    const f = document.createElement('iframe');
+    f.style.cssText = 'position:fixed;left:-2000px;width:380px;height:800px';
+    setup(f);
+    document.body.appendChild(f);
+    await waitFor(() => f.contentDocument && f.contentDocument.getElementById('state-broken'), 'the sign-up page loads', 8000);
+    return f;
+  }
+  const joinShown = (doc, id) => !doc.getElementById(id).classList.contains('hidden');
+
+  test('Subcontractors: the sign-up page opens as a page, names every gap, and sends a complete form (the sample)', async () => {
+    const f = await joinFrame((el) => { el.src = `../join.html?demo=1&cb=${Date.now()}`; });
+    try {
+      await waitFor(() => joinShown(f.contentDocument, 'state-form'), 'the form appears', 8000);
+      const doc = f.contentDocument;
+      const win = f.contentWindow;
+      assert(!joinShown(doc, 'state-loading') && !joinShown(doc, 'state-broken') && !joinShown(doc, 'state-refused'), 'nothing else is left showing');
+      assert(joinShown(doc, 'demo-note'), 'it says it is a sample');
+      assert(doc.getElementById('title').textContent.includes('Sample Pest Co'), 'it names the business');
+      assert(doc.getElementById('agreement').textContent.includes('SAMPLE ONLY'), 'and shows its agreement');
+      // The sample must never reach a server.
+      let calls = 0;
+      win.fetch = () => { calls++; return Promise.reject(new Error('the sample must not call out')); };
+
+      // Sent empty: each gap is named beside its own box, and nothing goes.
+      doc.getElementById('submit').click();
+      await waitFor(() => joinShown(doc, 'summary'), 'the gaps are summarised');
+      assert(/things need fixing/.test(doc.getElementById('summary').textContent), 'in words');
+      assert(joinShown(doc, 'err-fullName') && joinShown(doc, 'err-password') && joinShown(doc, 'err-agreed'), 'each gap is marked where it belongs');
+      assertEqual(doc.getElementById('fullName').getAttribute('aria-invalid'), 'true', 'a screen reader is told which box');
+      assert(!joinShown(doc, 'state-done'), 'and nothing was sent');
+
+      // Filled in.
+      const set = (id, v) => { doc.getElementById(id).value = v; };
+      set('fullName', 'Jordan Lee'); set('businessName', 'Lee Pest Services'); set('phone', '0400 000 111');
+      set('licenceNumber', '5012345'); set('licenceExpiry', '2099-01-31');
+      set('insurer', 'Sample Insurance'); set('insurancePolicy', 'PL-1'); set('insuranceExpiry', '2099-01-31');
+      set('email', 'jordan@example.com'); set('password', 'correct horse 9'); set('acceptedName', 'Jordan Lee');
+      doc.getElementById('agreed').checked = true;
+      doc.getElementById('submit').click();
+      await waitFor(() => joinShown(doc, 'state-done'), 'a complete form goes through');
+      assert(!joinShown(doc, 'state-form'), 'the form is put away');
+      assert(doc.getElementById('done-title').textContent.includes('Sample Pest Co'), 'and it says who it went to');
+      assertEqual(calls, 0, 'the sample never called a server');
+    } finally { f.remove(); }
+  });
+
+  test('Subcontractors: the sign-up page says so when its own code cannot load', async () => {
+    const html = await (await fetch('../join.html', { cache: 'reload' })).text();
+    const importLine = "from './supabase/functions/_shared/subcontractor.js'";
+    assert(html.includes(importLine) && html.includes('<head>'), 'the page is shaped as this test expects');
+    // The same page with its rules file missing, which is what the live site
+    // served in v166.
+    const root = new URL('../', location.href).href;
+    const broken = html
+      .replace('<head>', () => `<head><base href="${root}">`)
+      .replace(importLine, () => "from './no-such-folder/missing.js'");
+    const f = await joinFrame((el) => { el.srcdoc = broken; });
+    try {
+      const doc = f.contentDocument;
+      await waitFor(() => joinShown(doc, 'state-broken'), 'the page says it did not load', 8000);
+      assert(!joinShown(doc, 'state-loading'), 'instead of "Checking your link…" for ever');
+      assert(/did not load/i.test(doc.getElementById('state-broken').textContent), 'in plain words');
+      assert(!joinShown(doc, 'state-form') && !joinShown(doc, 'state-refused'), 'and it does not blame the link');
+    } finally { f.remove(); }
+  });
+
+  // ---------- What the web host publishes (v168) ----------
+  test('Hosting: the site is published as it is, and every file a standalone page loads is there', async () => {
+    // GitHub Pages runs a site through Jekyll unless a file named .nojekyll
+    // is at the top, and Jekyll leaves out every folder and file whose name
+    // starts with an underscore. This suite is served straight from the
+    // folder, so it cannot see that difference. It can insist the switch
+    // stays on, and that nothing a page asks for is missing here.
+    const marker = await fetch('../.nojekyll', { cache: 'reload' });
+    assert(marker.ok, '.nojekyll is at the top of the site, so folders that start with an underscore are published');
+    for (const pageName of ['join.html', 'portal.html']) {
+      const pageUrl = new URL(`../${pageName}`, location.href);
+      const html = await (await fetch(pageUrl.href, { cache: 'reload' })).text();
+      const wanted = [
+        ...[...html.matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1]),
+        ...[...html.matchAll(/<link[^>]*\shref="([^"]+)"/g)].map((m) => m[1]),
+        ...[...html.matchAll(/\bfrom\s+'(\.[^']+)'/g)].map((m) => m[1]),
+        ...[...html.matchAll(/\bimport\(\s*'(\.[^']+)'\s*\)/g)].map((m) => m[1]),
+      ].filter((u) => !/^(https?:|data:|\/\/)/.test(u));
+      if (pageName === 'join.html') assert(wanted.some((u) => u.includes('/_shared/')), 'the sign-up page is known to load a file from an underscore folder');
+      for (const u of wanted) {
+        const res = await fetch(new URL(u, pageUrl).href, { cache: 'reload' });
+        assert(res.ok, `${pageName} loads ${u}, and it is there`);
+      }
+    }
+  });
+
   test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {
     const sql = await (await fetch('../supabase-migration-048-subcontractors.sql', { cache: 'reload' })).text();
     const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');

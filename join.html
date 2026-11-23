@@ -16,7 +16,10 @@
 
   The rules for a complete application are the same file the server uses
   (supabase/functions/_shared/subcontractor.js), so the page and the server
-  cannot disagree about what is required.
+  cannot disagree about what is required. That file sits in a folder whose
+  name starts with an underscore, which GitHub Pages leaves out of the site
+  unless a file named .nojekyll is at the top. v166 went live without one and
+  this page sat on "Checking your link…" for ever: keep .nojekyll.
 
   noindex and no-referrer because the URL carries the business's link.
 -->
@@ -95,6 +98,12 @@
   <section id="state-refused" class="card hidden" role="alert">
     <h1 style="font-size:1.25rem">This link is not active</h1>
     <p id="refused-text" class="lead" style="margin:0"></p>
+  </section>
+
+  <!-- This page's own code could not load (a blocked or missing file). -->
+  <section id="state-broken" class="card hidden" role="alert">
+    <h1 style="font-size:1.25rem">This page did not load</h1>
+    <p class="lead" style="margin:0">Check your connection and open the link again. If it keeps happening, tell the business that sent you the link.</p>
   </section>
 
   <!-- The form. -->
@@ -216,6 +225,23 @@
 
 </main>
 
+<script>
+  // If this page's own code cannot load (a blocked or missing file), say so
+  // instead of sitting on "Checking your link…" for ever. The code below
+  // sets joinStarted as its first act. Until then, any loading error, or 15
+  // seconds of nothing, shows "This page did not load". A slow start that
+  // does arrive puts the page right again.
+  window.joinStarted = false;
+  window.joinBroken = function () {
+    if (window.joinStarted) return;
+    document.getElementById('state-loading').classList.add('hidden');
+    document.getElementById('state-broken').classList.remove('hidden');
+  };
+  // Capturing, because a file that fails to load reports the error on its own
+  // tag and that report does not travel up the page by itself.
+  window.addEventListener('error', window.joinBroken, true);
+  setTimeout(window.joinBroken, 15000);
+</script>
 <script src="supabase-config.js"></script>
 <script type="module">
   import { checkApplication, validToken, LINK_REFUSAL } from './supabase/functions/_shared/subcontractor.js';
@@ -223,6 +249,11 @@
   const $ = (id) => document.getElementById(id);
   const show = (id) => $(id).classList.remove('hidden');
   const hide = (id) => $(id).classList.add('hidden');
+
+  // This code has loaded: stand the "did not load" message down.
+  window.joinStarted = true;
+  hide('state-broken');
+  show('state-loading');
   const FIELDS = ['fullName', 'businessName', 'abn', 'phone', 'licenceNumber', 'licenceExpiry',
     'insurer', 'insurancePolicy', 'insuranceExpiry', 'email', 'password', 'acceptedName'];
   // Errors that belong to no text box.
@@ -313,7 +344,10 @@
 
   async function start() {
     if (DEMO) show('demo-note');
-    if (!DEMO && (!validToken(token) || !window.SUPABASE_URL)) { refuse(); return; }
+    // No server address means supabase-config.js did not load: that is this
+    // page failing, not the link being switched off.
+    if (!DEMO && !window.SUPABASE_URL) { hide('state-loading'); show('state-broken'); return; }
+    if (!DEMO && !validToken(token)) { refuse(); return; }
     let reply;
     try {
       reply = await call({ action: 'invite', token });
