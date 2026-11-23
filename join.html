@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Subcontractor sign-up</title>
+<!--
+  Where a subcontractor signs up to work under a host business. Standalone on
+  purpose, like portal.html: it is NOT the app. It loads no database client
+  and holds no credentials. It takes the token out of its own URL, asks the
+  subcontractor-join Edge Function which business that link belongs to and
+  what its agreement says, and sends back one application.
+
+  What an application makes is a login that can see nothing, and a row marked
+  PENDING. The business approves it from inside Scope before anything opens.
+
+  The rules for a complete application are the same file the server uses
+  (supabase/functions/_shared/subcontractor.js), so the page and the server
+  cannot disagree about what is required.
+
+  noindex and no-referrer because the URL carries the business's link.
+-->
+<meta name="robots" content="noindex, nofollow" />
+<meta name="referrer" content="no-referrer" />
+<style>
+  :root {
+    --bg: #f6f7f5; --card: #fff; --ink: #14201a; --dim: #5d6d63;
+    --line: #dfe4e0; --accent: #0a6b37; --accent-ink: #fff; --bad: #a12b1f; --bad-bg: #fdf1ef;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55; -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; }
+  .hidden { display: none !important; }
+  .logo { display: block; max-height: 64px; max-width: 220px; margin: 0 0 12px; }
+  .biz { font-size: .78rem; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin: 0; }
+  h1 { font-size: 1.5rem; margin: 6px 0 8px; line-height: 1.25; }
+  h2 { font-size: 1.05rem; margin: 0 0 4px; }
+  p { margin: 0 0 12px; }
+  .lead { color: var(--dim); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 16px; margin: 0 0 14px; }
+  .steps { margin: 0; padding: 0 0 0 20px; color: var(--dim); }
+  .steps li { margin: 0 0 4px; }
+  label { display: block; font-weight: 600; font-size: .93rem; margin: 14px 0 4px; }
+  label .opt { font-weight: 400; color: var(--dim); }
+  .help { font-size: .86rem; color: var(--dim); margin: 2px 0 0; }
+  input[type="text"], input[type="tel"], input[type="email"], input[type="password"], input[type="date"] {
+    width: 100%; font: inherit; font-size: 16px; padding: 12px; min-height: 48px;
+    border: 1px solid #b9c2bc; border-radius: 8px; background: #fff; color: var(--ink);
+  }
+  input:focus-visible, button:focus-visible, .agreement:focus-visible { outline: 3px solid #7fc79f; outline-offset: 1px; }
+  input.bad { border-color: var(--bad); background: var(--bad-bg); }
+  .err { color: var(--bad); font-size: .88rem; margin: 4px 0 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 420px) { .two { grid-template-columns: 1fr; gap: 0; } }
+  .pw-row { display: flex; gap: 8px; }
+  .pw-row input { flex: 1; }
+  .pw-row button { flex: none; }
+  .agreement {
+    white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto;
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fbfcfb;
+    font-size: .93rem; margin: 8px 0 0;
+  }
+  .tick { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; margin: 14px 0 0; }
+  .tick input { width: 24px; height: 24px; margin: 1px 0 0; flex: none; }
+  button {
+    font: inherit; font-size: 1rem; font-weight: 600; min-height: 48px; padding: 12px 16px;
+    border-radius: 8px; border: 1px solid #b9c2bc; background: #fff; color: var(--ink); cursor: pointer;
+  }
+  button.primary { width: 100%; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); margin-top: 6px; }
+  button:disabled { opacity: .6; cursor: default; }
+  .summary { border: 1px solid var(--bad); background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 12px; margin: 0 0 14px; }
+  .small { font-size: .84rem; color: var(--dim); }
+  a.button {
+    display: block; text-align: center; text-decoration: none; font-weight: 600; min-height: 48px; padding: 12px 16px;
+    border-radius: 8px; background: var(--accent); color: var(--accent-ink);
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+  <p id="demo-note" class="summary hidden" style="color:var(--ink);border-color:var(--line);background:#fff8e1">Demo: this is a sample of the page a subcontractor opens from a business's link. The business and the agreement are made up, and nothing you type is sent or saved.</p>
+
+  <!-- While the link is being checked. -->
+  <section id="state-loading" class="card" aria-live="polite">
+    <p class="lead" style="margin:0">Checking your link…</p>
+  </section>
+
+  <!-- A link that is switched off, replaced or mistyped. -->
+  <section id="state-refused" class="card hidden" role="alert">
+    <h1 style="font-size:1.25rem">This link is not active</h1>
+    <p id="refused-text" class="lead" style="margin:0"></p>
+  </section>
+
+  <!-- The form. -->
+  <section id="state-form" class="hidden">
+    <img id="biz-logo" class="logo hidden" alt="" />
+    <p class="biz" id="biz-kicker"></p>
+    <h1 id="title"></h1>
+    <p class="lead" id="lead"></p>
+
+    <div class="card">
+      <h2>What happens</h2>
+      <ol class="steps">
+        <li>You fill in your details and accept the agreement below.</li>
+        <li id="step-approve"></li>
+        <li id="step-work"></li>
+      </ol>
+    </div>
+
+    <div id="summary" class="summary hidden" role="alert" tabindex="-1"></div>
+
+    <form id="form" novalidate>
+      <div class="card">
+        <h2>About you</h2>
+        <label for="fullName">Your full name</label>
+        <input id="fullName" name="fullName" type="text" autocomplete="name" maxlength="120" />
+        <p class="help">This goes on every report you write, as the inspector.</p>
+        <p class="err hidden" id="err-fullName"></p>
+
+        <label for="businessName">Your business or trading name</label>
+        <input id="businessName" name="businessName" type="text" autocomplete="organization" maxlength="160" />
+        <p class="err hidden" id="err-businessName"></p>
+
+        <label for="abn">ABN <span class="opt">(optional)</span></label>
+        <input id="abn" name="abn" type="text" inputmode="numeric" autocomplete="off" maxlength="20" />
+        <p class="err hidden" id="err-abn"></p>
+
+        <label for="phone">Phone</label>
+        <input id="phone" name="phone" type="tel" autocomplete="tel" maxlength="30" />
+        <p class="err hidden" id="err-phone"></p>
+      </div>
+
+      <div class="card">
+        <h2>Licence and insurance</h2>
+        <label for="licenceNumber">Pest management licence number</label>
+        <input id="licenceNumber" name="licenceNumber" type="text" autocomplete="off" maxlength="60" />
+        <p class="help">Printed on your reports beside your name.</p>
+        <p class="err hidden" id="err-licenceNumber"></p>
+
+        <label for="licenceExpiry">Licence expires <span class="opt hidden" id="opt-licenceExpiry">(optional)</span></label>
+        <input id="licenceExpiry" name="licenceExpiry" type="date" />
+        <p class="err hidden" id="err-licenceExpiry"></p>
+
+        <label for="insurer">Insurer <span class="opt hidden" id="opt-insurer">(optional)</span></label>
+        <input id="insurer" name="insurer" type="text" autocomplete="off" maxlength="120" />
+        <p class="err hidden" id="err-insurer"></p>
+
+        <div class="two">
+          <div>
+            <label for="insurancePolicy">Policy number <span class="opt hidden" id="opt-insurancePolicy">(optional)</span></label>
+            <input id="insurancePolicy" name="insurancePolicy" type="text" autocomplete="off" maxlength="80" />
+            <p class="err hidden" id="err-insurancePolicy"></p>
+          </div>
+          <div>
+            <label for="insuranceExpiry">Insurance expires <span class="opt hidden" id="opt-insuranceExpiry">(optional)</span></label>
+            <input id="insuranceExpiry" name="insuranceExpiry" type="date" />
+            <p class="err hidden" id="err-insuranceExpiry"></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Your sign-in</h2>
+        <p class="help" id="signin-help"></p>
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="200" />
+        <p class="err hidden" id="err-email"></p>
+
+        <label for="password">Choose a password</label>
+        <div class="pw-row">
+          <input id="password" name="password" type="password" autocomplete="new-password" maxlength="200" />
+          <button type="button" id="pw-show" aria-pressed="false">Show</button>
+        </div>
+        <p class="help">At least 8 characters. Only you know it.</p>
+        <p class="err hidden" id="err-password"></p>
+      </div>
+
+      <div class="card">
+        <h2 id="agreement-title"></h2>
+        <p class="help" id="agreement-help"></p>
+        <div id="agreement" class="agreement" tabindex="0" role="document" aria-labelledby="agreement-title"></div>
+        <label class="tick" for="agreed">
+          <input id="agreed" name="agreed" type="checkbox" />
+          <span id="agreed-text"></span>
+        </label>
+        <p class="err hidden" id="err-agreed"></p>
+        <p class="err hidden" id="err-agreementVersion"></p>
+
+        <label for="acceptedName">Type your full name to sign</label>
+        <input id="acceptedName" name="acceptedName" type="text" autocomplete="off" maxlength="120" />
+        <p class="err hidden" id="err-acceptedName"></p>
+      </div>
+
+      <button type="submit" class="primary" id="submit">Send my application</button>
+      <p class="small" id="privacy" style="margin-top:12px"></p>
+    </form>
+  </section>
+
+  <!-- After it has been sent. -->
+  <section id="state-done" class="hidden">
+    <img id="done-logo" class="logo hidden" alt="" />
+    <div class="card" role="status">
+      <h1 id="done-title" style="font-size:1.3rem"></h1>
+      <p id="done-text"></p>
+      <p id="done-next" class="lead"></p>
+      <a class="button" href="index.html">Open Scope to sign in</a>
+    </div>
+    <p class="small">Keep the email address and password you chose. You will use them to sign in.</p>
+  </section>
+
+</main>
+
+<script src="supabase-config.js"></script>
+<script type="module">
+  import { checkApplication, validToken, LINK_REFUSAL } from './supabase/functions/_shared/subcontractor.js';
+
+  const $ = (id) => document.getElementById(id);
+  const show = (id) => $(id).classList.remove('hidden');
+  const hide = (id) => $(id).classList.add('hidden');
+  const FIELDS = ['fullName', 'businessName', 'abn', 'phone', 'licenceNumber', 'licenceExpiry',
+    'insurer', 'insurancePolicy', 'insuranceExpiry', 'email', 'password', 'acceptedName'];
+  // Errors that belong to no text box.
+  const LOOSE = ['agreed', 'agreementVersion'];
+
+  const token = (new URLSearchParams(location.search).get('t') || '').trim().toLowerCase();
+  const endpoint = `${window.SUPABASE_URL || ''}/functions/v1/subcontractor-join`;
+  let settings = { agreementVersion: 0, requireInsurance: true, requireLicenceExpiry: true };
+  let businessName = '';
+
+  function refuse(text) {
+    hide('state-loading'); hide('state-form');
+    $('refused-text').textContent = text || LINK_REFUSAL;
+    show('state-refused');
+  }
+
+  // A sample of this page, opened from the demo (&demo=1): a made-up business
+  // and agreement, and nothing is sent anywhere.
+  const DEMO = new URLSearchParams(location.search).get('demo') === '1';
+  const DEMO_INVITE = {
+    ok: true,
+    business: { name: 'Sample Pest Co', logoDataUrl: '' },
+    agreement: {
+      version: 1,
+      text: 'SAMPLE ONLY. This is where the business\'s own agreement appears.\n\n'
+        + '1. The work. You carry out the jobs we assign to you, to the Australian Standards that apply, and record them in Scope.\n\n'
+        + '2. Licences and insurance. You hold a current pest management licence and public liability insurance, and tell us before either lapses.\n\n'
+        + '3. Our clients. Clients you meet through us are ours. You contact them only about the job you were given.\n\n'
+        + '4. Ending it. Either of us can end this arrangement at any time.',
+    },
+    requires: { insurance: true, licenceExpiry: true },
+  };
+
+  async function call(body) {
+    if (DEMO) {
+      return { status: 200, data: body.action === 'invite' ? DEMO_INVITE : { ok: true, business: { name: 'Sample Pest Co' } } };
+    }
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    return { status: res.status, data: data || {} };
+  }
+
+  function setLogo(id, url) {
+    // A raster image data URL only: the same rule the app uses for stored images.
+    if (/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(url || '')) {
+      $(id).src = url;
+      show(id);
+    }
+  }
+
+  function showErrors(errors) {
+    const keys = Object.keys(errors || {});
+    for (const f of FIELDS.concat(LOOSE)) {
+      const box = $(`err-${f}`);
+      const input = $(f);
+      const msg = errors && errors[f];
+      if (box) { box.textContent = msg || ''; box.classList.toggle('hidden', !msg); }
+      if (input && input.type !== 'checkbox') {
+        input.classList.toggle('bad', !!msg);
+        if (msg) { input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', `err-${f}`); }
+        else { input.removeAttribute('aria-invalid'); input.removeAttribute('aria-describedby'); }
+      }
+    }
+    const summary = $('summary');
+    if (!keys.length) { hide('summary'); return; }
+    summary.textContent = keys.length === 1
+      ? 'One thing needs fixing before this can be sent. It is marked below.'
+      : `${keys.length} things need fixing before this can be sent. They are marked below.`;
+    show('summary');
+    const first = FIELDS.concat(['agreed']).find((f) => errors[f]);
+    const target = first ? $(first) : summary;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    try { target.focus({ preventScroll: true }); } catch (e) { /* older browsers */ }
+  }
+
+  function readForm() {
+    const v = {};
+    for (const f of FIELDS) v[f] = $(f).value;
+    v.agreed = $('agreed').checked;
+    v.agreementVersion = settings.agreementVersion;
+    return v;
+  }
+
+  async function start() {
+    if (DEMO) show('demo-note');
+    if (!DEMO && (!validToken(token) || !window.SUPABASE_URL)) { refuse(); return; }
+    let reply;
+    try {
+      reply = await call({ action: 'invite', token });
+    } catch (e) {
+      refuse('Could not reach the server. Check your connection and open the link again.');
+      return;
+    }
+    if (reply.status !== 200 || !reply.data.ok) {
+      refuse(reply.status >= 500 ? 'Something went wrong on our side. Try the link again shortly.' : (reply.data.message || LINK_REFUSAL));
+      return;
+    }
+    const d = reply.data;
+    businessName = (d.business && d.business.name) || 'this business';
+    settings = {
+      agreementVersion: d.agreement.version,
+      requireInsurance: !!(d.requires && d.requires.insurance),
+      requireLicenceExpiry: !!(d.requires && d.requires.licenceExpiry),
+    };
+    document.title = `Work with ${businessName}`;
+    setLogo('biz-logo', d.business && d.business.logoDataUrl);
+    setLogo('done-logo', d.business && d.business.logoDataUrl);
+    $('biz-kicker').textContent = businessName;
+    $('title').textContent = `Sign up to work with ${businessName}`;
+    $('lead').textContent = `${businessName} uses Scope for its inspection and treatment reports. As a subcontractor you fill in the reports for the jobs they give you, under their name.`;
+    $('step-approve').textContent = `${businessName} checks your details and approves you. Until then you cannot see anything.`;
+    $('step-work').textContent = `You sign in to Scope and see only the jobs ${businessName} gives you. Your reports go to them to review and send to the client.`;
+    $('signin-help').textContent = `You will sign in to Scope with these. ${businessName} sees your email address, never your password.`;
+    $('agreement-title').textContent = `${businessName}'s subcontractor agreement`;
+    $('agreement-help').textContent = `This agreement is between you and ${businessName}. Read it through before you accept. A copy of exactly what you accept is kept with the date and the name you sign with.`;
+    $('agreement').textContent = d.agreement.text;
+    $('agreed-text').textContent = `I have read this agreement and I accept it.`;
+    $('privacy').textContent = `Your details go to ${businessName} and are stored in Scope so they can manage who works for them.`;
+    if (!settings.requireLicenceExpiry) show('opt-licenceExpiry');
+    if (!settings.requireInsurance) { show('opt-insurer'); show('opt-insurancePolicy'); show('opt-insuranceExpiry'); }
+    hide('state-loading');
+    show('state-form');
+  }
+
+  $('pw-show').addEventListener('click', () => {
+    const input = $('password');
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    $('pw-show').textContent = showing ? 'Show' : 'Hide';
+    $('pw-show').setAttribute('aria-pressed', showing ? 'false' : 'true');
+  });
+
+  let sending = false;
+  $('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (sending) return;
+    const check = checkApplication(readForm(), settings, Date.now());
+    showErrors(check.errors);
+    if (!check.ok) return;
+
+    sending = true;
+    const btn = $('submit');
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      const reply = await call({ action: 'apply', token, application: readForm() });
+      if (reply.status === 200 && reply.data.ok) {
+        hide('state-form');
+        $('done-title').textContent = `Sent to ${businessName}`;
+        $('done-text').textContent = `Your details and the agreement you signed have gone to ${businessName}. They need to approve you before you can start.`;
+        $('done-next').textContent = `Once they do, sign in to Scope and the jobs they give you will be there. You can sign in now to see whether you have been approved yet.`;
+        show('state-done');
+        window.scrollTo(0, 0);
+        return;
+      }
+      if (reply.status === 400 && reply.data.errors) { showErrors(reply.data.errors); return; }
+      if (reply.status === 404) { refuse(reply.data.message); return; }
+      const summary = $('summary');
+      summary.textContent = reply.data.message || 'That did not go through. Nothing was saved. Try again shortly.';
+      show('summary');
+      summary.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      try { summary.focus({ preventScroll: true }); } catch (e) { /* older browsers */ }
+    } catch (e) {
+      const summary = $('summary');
+      summary.textContent = 'Could not reach the server, so nothing was sent. Check your connection and try again.';
+      show('summary');
+      summary.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } finally {
+      sending = false;
+      btn.disabled = false;
+      btn.textContent = 'Send my application';
+    }
+  });
+
+  start();
+</script>
+</body>
+</html>

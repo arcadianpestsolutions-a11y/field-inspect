@@ -149,8 +149,12 @@
     function showView(current) {
       view.textContent = '';
       view.appendChild(line('Phone', current.clientPhone, telHref(current.clientPhone), 'Call'));
-      view.appendChild(line('Email', current.clientEmail,
-        /^[^\s@]+@[^\s@]+$/.test(str(current.clientEmail)) ? `mailto:${current.clientEmail}` : '', 'Email'));
+      // A subcontractor is not given the client's email (v166): no row at all,
+      // rather than one that says "Not set" about an address that exists.
+      if (!(hooks && hooks.hideEmail)) {
+        view.appendChild(line('Email', current.clientEmail,
+          /^[^\s@]+@[^\s@]+$/.test(str(current.clientEmail)) ? `mailto:${current.clientEmail}` : '', 'Email'));
+      }
       view.appendChild(line('Address', current.address, directionsUrl(current), 'Directions'));
       if (str(current.notes).trim()) view.appendChild(line('Notes', current.notes));
       if (canEdit) {

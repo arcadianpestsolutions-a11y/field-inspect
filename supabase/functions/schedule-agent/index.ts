@@ -18,6 +18,9 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 import { loadBusiness, orgIdForUser } from '../_shared/business.js';
+// Signed in is not enough (v166): the booking assistant is for a business's
+// own people. See _shared/access.js.
+import { ACCESS_REFUSAL, callerAccess, mayUse } from '../_shared/access.js';
 
 // The prompt names the business from the signed-in user's own record rather
 // than from a name typed into this file. See _shared/business.js.
@@ -150,6 +153,9 @@ Deno.serve(async (req) => {
     });
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
+    const access = await callerAccess(supabaseClient);
+    if (!access) return json({ error: ACCESS_REFUSAL.unknown }, 503);
+    if (!mayUse(access, 'business')) return json({ error: ACCESS_REFUSAL.business }, 403);
 
     const body = await req.json();
     const { messages, today, dayName } = body;

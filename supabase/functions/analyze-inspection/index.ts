@@ -19,6 +19,7 @@
 // authenticated technician, matching the existing shared-team RLS model).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
+import { ACCESS_REFUSAL, callerAccess, mayUse } from '../_shared/access.js';
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
@@ -665,6 +666,12 @@ Deno.serve(async (req) => {
     });
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
+    // A business's own people, or a subcontractor the business has approved
+    // (v166). Each call costs real money, and a login that has only applied,
+    // or has been removed, is still a login. See _shared/access.js.
+    const access = await callerAccess(supabaseClient);
+    if (!access) return json({ error: ACCESS_REFUSAL.unknown }, 503);
+    if (!mayUse(access, 'forms')) return json({ error: ACCESS_REFUSAL.forms }, 403);
 
     const body = await req.json();
     if (body.action === 'draft-report') return await handleDraftReport(body);

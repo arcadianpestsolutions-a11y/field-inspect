@@ -26,6 +26,10 @@
     // A business trialling Scope (migration 045): tester.js records its use
     // and asks after each report. Never true for Arcadian.
     tester: false,
+    // The business's logo, as a small data: URL kept in the row (migration
+    // 048), so a report prints it with no signal. logoSupported is whether
+    // the server has the column: see assistantSupported above.
+    logoSupported: false, logoDataUrl: '',
   };
   const EMPTY_ME = { displayName: '', licenceNumber: '', phone: '', address: '' };
 
@@ -46,6 +50,10 @@
   }
 
   const ROSTER_KEY = 'scope.roster.v1';
+  // The business's approved subcontractors (v166): [{ email, name, businessName }].
+  // Kept apart from the roster because the app treats them differently: their
+  // reports wait for the business to review and send.
+  const SUBS_KEY = 'scope.subs.v1';
 
   // The demo is a made-up business (v165). It read the cached profile of
   // whoever last signed in on this device, so a tester trying the demo on
@@ -55,13 +63,22 @@
     abn: '00 000 000 000', licenceNumber: 'DEMO-0000', phone: '02 0000 0000',
     email: 'office@samplepest.example', address: '1 Example Street, Sampleton NSW 2000', website: '',
   };
-  const DEMO_ME = { displayName: 'Sam Rivera', licenceNumber: 'DEMO-0001', phone: '0400 000 000', address: '' };
+  // Opened with &as=sub the demo is a subcontractor of the made-up business
+  // (subcontractor.js): the business stays the provider, they are the inspector.
+  const DEMO_ME = /[?&]as=sub(&|$)/.test(window.location.search || '')
+    ? { displayName: 'Jordan Lee', licenceNumber: 'DEMO-0002', phone: '0400 000 001', address: '' }
+    : { displayName: 'Sam Rivera', licenceNumber: 'DEMO-0001', phone: '0400 000 000', address: '' };
   let org = window.IS_DEMO ? { ...DEMO_ORG } : read(ORG_KEY, EMPTY_ORG);
   let me = window.IS_DEMO ? { ...DEMO_ME } : read(ME_KEY, EMPTY_ME);
   // email -> display name, for turning a job's assignedTo into something a
   // person recognises on a job list. Cached with the rest so a shared job list
   // still reads properly with no signal.
   let roster = window.IS_DEMO ? {} : read(ROSTER_KEY, {});
+  let subs = [];
+  if (!window.IS_DEMO) {
+    try { const raw = JSON.parse(localStorage.getItem(SUBS_KEY) || '[]'); if (Array.isArray(raw)) subs = raw; } catch (e) { /* none cached */ }
+  }
+  const lower = (s) => String(s || '').toLowerCase();
 
   // What a document should show as the provider. tradingName first: a company
   // registered as one thing and known to clients as another should print the
@@ -79,8 +96,19 @@
     // "someone" is always more use than nothing on a shared job list.
     nameFor(email) {
       if (!email) return '';
-      return roster[String(email).toLowerCase()] || email;
+      const key = String(email).toLowerCase();
+      if (roster[key]) return roster[key];
+      const sub = subs.find((s) => lower(s.email) === key);
+      return (sub && sub.name) || email;
     },
+
+    // The business's logo for a document header, or '' when there is none.
+    logo: () => org.logoDataUrl || '',
+
+    // Approved subcontractors of this business (empty for a subcontractor's
+    // own login, which cannot see the list).
+    subcontractors: () => subs.map((s) => ({ ...s })),
+    isSubcontractorEmail: (email) => !!email && subs.some((s) => lower(s.email) === lower(email)),
 
     // The provider block every document carries. One place, so a report, an
     // invoice and an email cannot disagree about who issued them.
@@ -104,6 +132,44 @@
       inspectorPhone: me.phone || org.phone || '',
       inspectorAddress: me.address || '',
     }),
+
+    // Turns a chosen image into something small enough to keep in the
+    // business record and print on every report: at most 480 x 200 pixels,
+    // PNG (which keeps a see-through background) unless that comes out too
+    // big, then JPEG on white. Resolves to a data: URL, or throws a sentence
+    // a person can act on.
+    async prepareLogo(file) {
+      if (!file || !/^image\/(png|jpeg|webp)$/.test(file.type || '')) {
+        throw new Error('Choose a PNG or JPG picture of your logo.');
+      }
+      const url = URL.createObjectURL(file);
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const el = new Image();
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error('That picture could not be read. Try a different file.'));
+          el.src = url;
+        });
+        const scale = Math.min(1, 480 / img.naturalWidth, 200 / img.naturalHeight);
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        let out = canvas.toDataURL('image/png');
+        if (out.length > 150000) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          out = canvas.toDataURL('image/jpeg', 0.85);
+        }
+        if (out.length > 190000) throw new Error('That picture is too detailed to use as a logo. Try a simpler one.');
+        return out;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    },
 
     // Refreshes from the server. Best-effort and never throws: the app must
     // open on a cached profile when there is no signal, and an org that
@@ -129,8 +195,38 @@
             assistantEnabled: orgRow.portal_assistant_enabled === true,
             assistantNotes: orgRow.portal_assistant_notes || '',
             tester: orgRow.tester === true,
+            logoSupported: Object.prototype.hasOwnProperty.call(orgRow, 'logo_data_url'),
+            logoDataUrl: orgRow.logo_data_url || '',
           };
           write(ORG_KEY, org);
+        } else if (window.Sync && window.Sync.isActiveSubcontractor && window.Sync.isActiveSubcontractor()) {
+          // A subcontractor cannot read the organisations table. What they
+          // are given about their host (sub_my_hosts, migration 048) is what
+          // goes on the documents they produce: the host's name, licence and
+          // logo as the provider, and their own name and licence as the
+          // inspector.
+          const s = window.Sync.subcontractor();
+          const b = (s && s.business) || {};
+          const m = (s && s.me) || {};
+          org = {
+            ...EMPTY_ORG,
+            id: (s && s.orgId) || '',
+            name: b.name || '', tradingName: b.tradingName || '', abn: b.abn || '',
+            licenceNumber: b.licenceNumber || '', phone: b.phone || '', email: b.email || '',
+            address: b.address || '', website: b.website || '',
+            logoDataUrl: b.logoDataUrl || '',
+          };
+          write(ORG_KEY, org);
+          me = {
+            displayName: m.fullName || '', licenceNumber: m.licenceNumber || '',
+            phone: m.phone || '', address: '',
+          };
+          write(ME_KEY, me);
+          roster = {};
+          write(ROSTER_KEY, roster);
+          subs = [];
+          write(SUBS_KEY, subs);
+          return { ...org };
         }
 
         const { data: people } = await client
@@ -143,6 +239,21 @@
           roster = next;
           write(ROSTER_KEY, roster);
         }
+
+        // Approved subcontractors, for names on job lists and the "assign to"
+        // picker. A database without migration 048 has no such function, and
+        // that is simply an empty list.
+        try {
+          const { data: subRows, error: subError } = await client.rpc('sub_roster');
+          if (!subError && Array.isArray(subRows)) {
+            subs = subRows.filter((r) => r && r.email).map((r) => ({
+              email: String(r.email).toLowerCase(),
+              name: r.full_name || r.business_name || r.email,
+              businessName: r.business_name || '',
+            }));
+            write(SUBS_KEY, subs);
+          }
+        } catch (e) { /* keep the cached list */ }
 
         const uid = window.Sync && window.Sync.currentUserId && window.Sync.currentUserId();
         if (uid) {
@@ -179,6 +290,9 @@
       if (org.assistantSupported && 'assistantEnabled' in changes) {
         row.portal_assistant_enabled = changes.assistantEnabled === true;
         row.portal_assistant_notes = String(changes.assistantNotes || '').slice(0, 3000);
+      }
+      if (org.logoSupported && 'logoDataUrl' in changes) {
+        row.logo_data_url = String(changes.logoDataUrl || '');
       }
       const { data, error } = await client
         .from('organisations').update(row).eq('id', org.id).select('id');

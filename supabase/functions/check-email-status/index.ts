@@ -17,6 +17,8 @@
 // technician, checked the same way.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
+// Signed in is not enough (v166). See _shared/access.js.
+import { ACCESS_REFUSAL, callerAccess, mayUse } from '../_shared/access.js';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -57,6 +59,9 @@ Deno.serve(async (req) => {
     });
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
+    const access = await callerAccess(supabaseClient);
+    if (!access) return json({ error: ACCESS_REFUSAL.unknown }, 503);
+    if (!mayUse(access, 'business')) return json({ error: ACCESS_REFUSAL.business }, 403);
 
     const body = await req.json().catch(() => ({}));
     const emailId = body.emailId;

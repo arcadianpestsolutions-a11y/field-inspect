@@ -1,7 +1,7 @@
-// Keep this in sync with version.js's APP_VERSION â€” that's what drives the
+// Keep this in sync with version.js's APP_VERSION — that's what drives the
 // login screen's build-color/label indicator, so a mismatched bump here
 // defeats the whole point of it.
-const CACHE_NAME = 'field-inspect-v165';
+const CACHE_NAME = 'field-inspect-v166';
 const APP_SHELL = [
   './',
   './index.html',
@@ -43,6 +43,8 @@ const APP_SHELL = [
   './sync-merge.js',
   './sync.js',
   './org.js',
+  './subcontractor.js',
+  './subcontractors-ui.js',
   './media.js',
   './xero.js',
   './sharepoint.js',
@@ -103,7 +105,7 @@ const APP_SHELL = [
 // browser's ordinary HTTP cache and goes to the network.
 //
 // Without it, cache.addAll() is served by the HTTP cache like any other
-// fetch â€” and GitHub Pages sends these files with a ten-minute max-age that
+// fetch — and GitHub Pages sends these files with a ten-minute max-age that
 // its CDN can stretch further. So a browser holding yesterday's app.js will
 // copy YESTERDAY'S app.js into the new version's cache, where it then sits
 // permanently: the service worker believes it precached the new build, the
@@ -111,7 +113,7 @@ const APP_SHELL = [
 // nothing dislodges it until the NEXT deploy happens to catch the file
 // fresh. Different files go stale at different moments, so what a device
 // ends up running is a mix of builds, which is the worst possible failure
-// mode â€” it looks like a bug in whichever feature happens to straddle the
+// mode — it looks like a bug in whichever feature happens to straddle the
 // split rather than like a caching problem at all.
 //
 // Caught in the act on the live site: a browser running APP_VERSION v66
@@ -137,7 +139,7 @@ self.addEventListener('activate', (event) => {
 });
 
 // Finds the cached copy of a request. caches.match() compares the FULL url
-// including the query string, so a cached "/" is not a hit for "/?demo=1" â€”
+// including the query string, so a cached "/" is not a hit for "/?demo=1" —
 // which meant every mode the app is entered by (?demo=1, ?test=1, any link
 // carrying a parameter) failed to open with no signal, while the bare URL
 // worked. On a job site with no reception that is the difference between an
@@ -183,7 +185,7 @@ self.addEventListener('fetch', (event) => {
       .then((networkResponse) => {
         // Navigations are deliberately not written back. caches.put() keys on
         // the full URL, so every distinct query string stores ANOTHER copy of
-        // the same document â€” the suite's cache-busted iframe loads alone had
+        // the same document — the suite's cache-busted iframe loads alone had
         // put 8 identical copies of index.html in here, growing without bound.
         // The shell is precached at install, which is what actually makes the
         // app open with no signal, so runtime-caching a navigation buys

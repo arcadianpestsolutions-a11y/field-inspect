@@ -82,6 +82,7 @@
     body{font-family:Arial,Helvetica,sans-serif;color:#222;margin:0;padding:24px;}
     h1{color:#c0552a;} h2{margin:0;color:#fff;}
     .brand{font-weight:bold;font-size:20px;color:#c0552a;margin-bottom:4px;}
+    .brand-logo{display:block;max-height:72px;max-width:260px;margin-bottom:8px;}
     .section{margin-bottom:28px;page-break-inside:avoid;}
     .section-head{padding:8px 14px;border-radius:4px;margin-bottom:8px;}
     .field{padding:6px 0;border-bottom:1px dotted #ccc;}
@@ -117,7 +118,10 @@
     const standardLine = isPestTreatment
       ? 'Chemical Application Record'
       : (std ? std.coverLine : 'In Accordance with AS 3660.2-2017');
-    let html = `<div class="brand">${escapeHtml((window.Org && window.Org.businessName()) || "")}</div>
+    // The business's own logo above its name (v166). For a subcontractor this
+    // is the host's: the report goes out under the business the client hired.
+    const logo = window.Org && window.Org.logo ? HtmlSafe.imageSrc(window.Org.logo()) : '';
+    let html = `${logo ? `<img class="brand-logo" src="${logo}" alt="">` : ''}<div class="brand">${escapeHtml((window.Org && window.Org.businessName()) || "")}</div>
       <h1>${escapeHtml(reportTitleFor(job && job.jobType, report))}</h1>
       <p>${standardLine}<br>${escapeHtml(job ? job.address : '')}</p>`;
 

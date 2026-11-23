@@ -128,11 +128,14 @@
   // Takes the client rather than closing over it, so the suite can hand it a
   // double. Throws on error instead of returning one: a half-read table must
   // not be mistaken for a complete one by the caller.
-  async function fetchAllRows(client, table) {
+  async function fetchAllRows(client, table, opts) {
     const keys = TABLE_KEYS[table] || ['id'];
     const rows = [];
     for (let page = 0; page < MAX_PAGES; page++) {
-      let query = client.from(table).select('*');
+      // A subcontractor's jobs come from a function, not the table (v166): it
+      // hands over only the jobs assigned to them, with the client's email
+      // blanked. Paged and ordered exactly like a table.
+      let query = (opts && opts.rpc) ? client.rpc(opts.rpc).select('*') : client.from(table).select('*');
       for (const key of keys) query = query.order(key, { ascending: true });
       const from = page * PAGE_ROWS;
       const { data, error } = await query.range(from, from + PAGE_ROWS - 1);
@@ -147,6 +150,38 @@
   }
 
   window.SyncPaging = { fetchAllRows, PAGE_ROWS, MAX_PAGES, TABLE_KEYS };
+
+  // ---------- Subcontractors (v166, migration 048) ----------
+  // Pure, and above the test/demo guard so the suite can reach it.
+  //
+  // A subcontractor has one membership row per host business. This picks the
+  // one that decides what the app shows: a business that has approved them
+  // comes first, then one still deciding, then whichever answered last.
+  function pickHost(hosts) {
+    const list = (Array.isArray(hosts) ? hosts : []).filter((h) => h && h.orgId && h.status);
+    if (!list.length) return null;
+    const by = (status) => list.find((h) => h.status === status);
+    const h = by('active') || by('pending') || list[list.length - 1];
+    return {
+      subId: h.subId || '',
+      orgId: h.orgId,
+      status: h.status,
+      business: h.business || {},
+      me: h.me || {},
+      agreementVersion: h.agreementVersion || 0,
+      agreementAcceptedAt: h.agreementAcceptedAt || null,
+    };
+  }
+
+  // Which jobs leave a subcontractor's phone: ones the server no longer lists
+  // for them (reassigned, or their access ended) that this phone had already
+  // synced. A job made here and not yet uploaded has no agreed copy and stays.
+  function jobsNoLongerMine(localJobs, remoteJobs, hasBase) {
+    const remoteIds = new Set((remoteJobs || []).map((r) => r.id));
+    return (localJobs || []).filter((j) => !remoteIds.has(j.id) && hasBase(j.id)).map((j) => j.id);
+  }
+
+  window.SyncSub = { pickHost, jobsNoLongerMine };
 
   // ---------- Reconciling a table, record by record (sync-merge.js) ----------
   // Replaces "whichever whole record was saved last wins". For every record on
@@ -262,7 +297,7 @@
   // here. Nothing is ever wiped to make room: there is no reliable way to know
   // that all of it reached the server.
   const OWNER_KEY = 'scope.device-owner.v1';
-  const PROFILE_KEYS = ['scope.org.v1', 'scope.me.v1', 'scope.roster.v1', 'field-inspect-last-rates'];
+  const PROFILE_KEYS = ['scope.org.v1', 'scope.me.v1', 'scope.roster.v1', 'field-inspect-last-rates', 'scope.sub.v1'];
   const readOwner = () => { try { return localStorage.getItem(OWNER_KEY) || ''; } catch (e) { return ''; } };
   const writeOwner = (id) => { try { localStorage.setItem(OWNER_KEY, id); } catch (e) { /* private window: checked again next time */ } };
   let verifiedFor = null;   // the user id this device has been checked for
@@ -342,9 +377,45 @@
   // missing row never hands out admin rights by accident.
   let currentRole = 'technician';
 
+  // ---------- Subcontractor (v166, migration 048) ----------
+  // A subcontractor has no row in user_roles. They have a row in
+  // public.subcontractors for the business they work under, and the server
+  // gives them only the jobs assigned to them. subState is that row, as
+  // sub_my_hosts() reports it: { subId, orgId, status, business, me }.
+  //
+  // Cached, because the app has to open as a subcontractor's app with no
+  // signal too. Without the cache an offline start would not know what this
+  // login is, and would draw a technician's screens over their jobs.
+  const SUB_KEY = 'scope.sub.v1';
+  let subState = null;
+  const readSub = () => { try { const raw = localStorage.getItem(SUB_KEY); return raw ? JSON.parse(raw) : null; } catch (e) { return null; } };
+  const writeSub = (v) => { try { if (v) localStorage.setItem(SUB_KEY, JSON.stringify(v)); else localStorage.removeItem(SUB_KEY); } catch (e) { /* private window */ } };
+  // What this device last knew about this same login, or null.
+  const cachedSubFor = (uid) => { const c = readSub(); return (c && uid && c.userId === uid) ? c : null; };
+
+  async function refreshSubState() {
+    const uid = currentUserId();
+    try {
+      const { data, error } = await supabaseClient.rpc('sub_my_hosts');
+      if (error) {
+        // A database without migration 048 has no subcontractors at all.
+        if (/could not find the function|does not exist|schema cache/i.test(error.message || '')) {
+          subState = null; writeSub(null); return;
+        }
+        throw error;
+      }
+      const picked = pickHost(data);
+      subState = picked ? { ...picked, userId: uid, checkedAt: Date.now() } : null;
+      writeSub(subState);
+    } catch (e) {
+      // No signal: go by what was true last time this login was checked.
+      subState = cachedSubFor(uid);
+    }
+  }
+
   async function refreshRole() {
     const uid = currentUserId();
-    if (!uid) { currentRole = 'technician'; return currentRole; }
+    if (!uid) { currentRole = 'technician'; subState = null; return currentRole; }
     try {
       const { data, error } = await supabaseClient
         .from('user_roles').select('role').eq('user_id', uid).maybeSingle();
@@ -356,17 +427,36 @@
         currentRole = /relation .* does not exist|could not find the table|schema cache/i.test(error.message || '')
           ? 'admin'
           : 'technician';
+        // The lookup failed (usually no signal). A login this device already
+        // knows to be a subcontractor stays one.
+        subState = currentRole === 'admin' ? null : cachedSubFor(uid);
+        if (subState) currentRole = 'subcontractor';
         return currentRole;
       }
       currentRole = (data && data.role === 'admin') ? 'admin' : 'technician';
+      if (data) {
+        subState = null;
+        writeSub(null);
+      } else {
+        // No row in user_roles: not linked to a business, or a subcontractor.
+        await refreshSubState();
+        if (subState) currentRole = 'subcontractor';
+      }
     } catch (e) {
       currentRole = 'technician';
+      subState = cachedSubFor(uid);
+      if (subState) currentRole = 'subcontractor';
     }
     return currentRole;
   }
 
   function role() { return currentRole; }
   function isAdmin() { return currentRole === 'admin'; }
+  function isSubcontractor() { return currentRole === 'subcontractor'; }
+  // Approved by the host and able to work. False while an application is
+  // waiting, and after access has ended.
+  function isActiveSubcontractor() { return currentRole === 'subcontractor' && !!subState && subState.status === 'active'; }
+  function subcontractor() { return subState ? JSON.parse(JSON.stringify(subState)) : null; }
 
   // Arriving from a "reset your password" email. Supabase signs the person in
   // from the link, and until v135 that was all: they were in, with no way to
@@ -683,6 +773,8 @@
 
   async function pushTombstone(table, recordId) {
     if (!isReady() || deletionsTableMissing) return false;
+    // A subcontractor deletes nothing on the server (migration 048).
+    if (currentRole === 'subcontractor') return false;
     try {
       const { error } = await supabaseClient.from('deletions').upsert({
         table_name: table,
@@ -812,9 +904,32 @@
     if (window.appToast) window.appToast(message);
   }
 
+  // A subcontractor's job goes through sub_save_job (migration 048). It stores
+  // only what is theirs to change (the inspection itself, not the client's
+  // details or the booking, unless they made the job) and answers null when
+  // the job is not theirs: reassigned, or their access has ended.
+  async function pushJobAsSubcontractor(job) {
+    if (!subState || subState.status !== 'active') return;
+    try {
+      const row = localJobToRemote(job);
+      row.org_id = subState.orgId;
+      const { data, error } = await supabaseClient.rpc('sub_save_job', { p: row });
+      if (error) throw error;
+      if (!data) console.warn(`[sync] job ${job.id} was not stored: it is not assigned to this login.`);
+    } catch (e) {
+      console.warn('[sync] push job failed, will retry on next sync:', e.message || e);
+    }
+  }
+
+  // The screens a subcontractor cannot reach still have code that saves
+  // (a client record made from a job, for one). None of it is theirs to
+  // store, and the server would refuse it on every sync for ever.
+  const hostOnly = () => currentRole === 'subcontractor';
+
   let jobFollowUpMissing = false;
   async function pushJob(job) {
     if (!isReady()) return;
+    if (currentRole === 'subcontractor') return pushJobAsSubcontractor(job);
     try {
       let { data, error } = await supabaseClient.from('jobs').upsert(localJobToRemote(job)).select('id');
       if (error && !jobFollowUpMissing && /follow_up/.test(String(error.message || ''))) {
@@ -836,6 +951,13 @@
 
   async function pushReport(report) {
     if (!isReady()) return;
+    if (currentRole === 'subcontractor') {
+      // Signed and submitted: the server takes no further copy from a
+      // subcontractor until the host sends the report back (migration 048),
+      // so there is no point uploading for a save that will be refused.
+      const base = await DB.getSyncBase('reports', report.jobId).catch(() => null);
+      if (base && base.finalizedAt) return;
+    }
     try {
       const { sections, newPaths } = await sectionsForPush(report.jobId, report.sections);
       let { data, error } = await supabaseClient.from('reports').upsert(localReportToRemote(report, sections)).select('job_id');
@@ -974,7 +1096,7 @@
 
   let invoicePaidMethodMissing = false;
   async function pushInvoice(invoice) {
-    if (!isReady()) return;
+    if (!isReady() || hostOnly()) return;
     try {
       let { error } = await supabaseClient.from('invoices').upsert(localInvoiceToRemote(invoice));
       if (error && !invoicePaidMethodMissing && /paid_method/.test(String(error.message || ''))) {
@@ -1071,7 +1193,7 @@
   }
 
   async function pushReferral(referral) {
-    if (!isReady()) return;
+    if (!isReady() || hostOnly()) return;
     try {
       const { data, error } = await supabaseClient
         .from('referrals').upsert(localReferralToRemote(referral)).select('id');
@@ -1145,7 +1267,7 @@
   }
 
   async function pushSop(sop) {
-    if (!isReady()) return;
+    if (!isReady() || hostOnly()) return;
     try {
       const { data, error } = await supabaseClient.from('sops').upsert(localSopToRemote(sop)).select('id');
       if (error) throw error;
@@ -1193,7 +1315,7 @@
   }
 
   async function pushClient(client) {
-    if (!isReady()) return;
+    if (!isReady() || hostOnly()) return;
     try {
       let { data, error } = await supabaseClient
         .from('clients').upsert(localClientToRemote(client)).select('id');
@@ -1275,7 +1397,7 @@
   }
 
   async function pushLead(lead) {
-    if (!isReady()) return;
+    if (!isReady() || hostOnly()) return;
     try {
       const { data, error } = await supabaseClient
         .from('leads').upsert(localLeadToRemote(lead)).select('id');
@@ -1330,7 +1452,7 @@
   }
 
   async function pushSwms(swms) {
-    if (!isReady()) return;
+    if (!isReady() || hostOnly()) return;
     try {
       // Photos go through the same path a report's do, so a hazard photo is
       // backed up exactly like an inspection photo. A SWMS with no job on it
@@ -1474,24 +1596,43 @@
     if (!isReady() || pulling) return { ok: false, reason: 'not-ready' };
     pulling = true;
     setStatus({ state: 'syncing' });
+    // A subcontractor's phone (v166): their jobs come from sub_my_jobs, they
+    // delete nothing on the server, and only jobs, reports and photos sync.
+    const asSub = currentRole === 'subcontractor';
     try {
       // Before anything else: send deletions this device made while
       // offline, then apply deletions made elsewhere. Doing this first
       // means the push-back branches below already know what is gone,
       // instead of dutifully re-uploading it.
-      await flushPendingTombstones();
-      await applyRemoteTombstones();
+      if (!asSub) {
+        await flushPendingTombstones();
+        await applyRemoteTombstones();
+      }
     } catch (e) { console.warn('[sync] tombstone pass failed:', e.message || e); }
     try {
-      const [remoteJobs, localJobs] = await Promise.all([
-        fetchAllRows(supabaseClient, 'jobs'),
+      const [remoteJobs, allLocalJobs] = await Promise.all([
+        fetchAllRows(supabaseClient, 'jobs', asSub ? { rpc: 'sub_my_jobs' } : null),
         DB.getJobs(),
       ]);
       // Anything the server still holds but a tombstone condemns is
       // re-deleted there and skipped here, so a stale device pushing its
       // old copy back cannot spread it to everyone else.
-      const deadJobs = await enforceTombstones('jobs', remoteJobs);
+      const deadJobs = asSub ? new Set() : await enforceTombstones('jobs', remoteJobs);
       syncConflicts = [];
+
+      // A job the host has given to someone else, or every job once their
+      // access has ended, comes off a subcontractor's phone with its report
+      // and photos. Nothing is deleted on the server.
+      let localJobs = allLocalJobs;
+      if (asSub) {
+        const synced = new Set();
+        for (const j of allLocalJobs) {
+          if (await DB.getSyncBase('jobs', j.id).catch(() => null)) synced.add(j.id);
+        }
+        const gone = new Set(jobsNoLongerMine(allLocalJobs, remoteJobs, (id) => synced.has(id)));
+        for (const id of gone) await DB.deleteJobLocalOnly(id).catch(() => {});
+        if (gone.size) localJobs = allLocalJobs.filter((j) => !gone.has(j.id));
+      }
 
       await reconcileTable({
         table: 'jobs', remoteRows: remoteJobs, localRows: localJobs,
@@ -1504,7 +1645,7 @@
         fetchAllRows(supabaseClient, 'reports'),
         DB.getAllReports(),
       ]);
-      const deadReports = await enforceTombstones('reports', remoteReports);
+      const deadReports = asSub ? new Set() : await enforceTombstones('reports', remoteReports);
       const jobNames = new Map((await DB.getJobs()).map((j) => [j.id, j.name || j.address || 'A job']));
 
       await reconcileTable({
@@ -1583,6 +1724,8 @@
       ];
 
       for (const c of collections) {
+        // Invoices, clients, enquiries and the rest are the host's alone.
+        if (asSub && c.table !== 'captures') continue;
         try {
           await syncCollection({ ...c, localAll: await c.localAll() });
         } catch (e) {
@@ -1600,13 +1743,13 @@
 
       // Inspection agreements clients signed since the last look, filed into
       // their reports (client-agreement.js). Never holds up or fails a sync.
-      if (window.ClientAgreement && window.ClientAgreement.applyPending) {
+      if (!asSub && window.ClientAgreement && window.ClientAgreement.applyPending) {
         window.ClientAgreement.applyPending().catch((e) => console.warn('[sync] agreements not filed:', e.message || e));
       }
 
       // Which invoices have been paid in Xero since, and so which referrals
       // that earns (referrals-ui.js). Same rule: never holds up a sync.
-      if (window.ReferralsUI && window.ReferralsUI.afterSync) {
+      if (!asSub && window.ReferralsUI && window.ReferralsUI.afterSync) {
         window.ReferralsUI.afterSync().catch((e) => console.warn('[sync] referrals not checked:', e.message || e));
       }
 
@@ -1705,6 +1848,10 @@
     role,
     isAdmin,
     refreshRole,
+    // Subcontractors (v166, migration 048).
+    isSubcontractor,
+    isActiveSubcontractor,
+    subcontractor,
     // Exposed so the suite can assert on the wording a technician actually
     // reads, rather than on the Postgres codes behind it.
     syncFailureText,

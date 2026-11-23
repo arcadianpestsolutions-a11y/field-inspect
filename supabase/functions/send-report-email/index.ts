@@ -19,6 +19,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
 import { escapeHtml, loadBusiness, orgIdForUser } from '../_shared/business.js';
 // Test mode (v124): when EMAIL_ALLOWED_ADDRESSES is set, only those addresses.
 import { emailAllowed, parseEmailList } from '../_shared/allow-list.js';
+// Signed in is not enough (v166): only a business's own people send a client
+// their report. A subcontractor hands theirs to the host to review and send.
+import { ACCESS_REFUSAL, callerAccess, mayUse } from '../_shared/access.js';
 const EMAIL_ALLOWED = parseEmailList(Deno.env.get('EMAIL_ALLOWED_ADDRESSES'));
 
 // Who the email is signed as comes from the signed-in user's own business
@@ -76,6 +79,9 @@ Deno.serve(async (req) => {
     });
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Not authenticated' }, 401);
+    const access = await callerAccess(supabaseClient);
+    if (!access) return json({ error: ACCESS_REFUSAL.unknown }, 503);
+    if (!mayUse(access, 'business')) return json({ error: ACCESS_REFUSAL.business }, 403);
 
     // Not part of the required-secrets check on purpose: without the service
     // key this degrades to a neutral sign-off rather than refusing to send a

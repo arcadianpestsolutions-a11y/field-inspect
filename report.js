@@ -1778,6 +1778,12 @@
     const when = fmtAuditTime(entry.at);
     if (entry.event === 'created') return `<strong>Report created</strong> — ${when} by ${who}`;
     if (entry.event === 'finalized') return `<strong>Report finalized</strong> — ${when} by ${who}`;
+    // A subcontractor's report (v166): sent back by the business, or checked.
+    if (entry.event === 'returned') {
+      return `<strong>Sent back to the subcontractor</strong> — ${when} by ${who}`
+        + (entry.note ? `<br><span class="audit-reason">Reason: ${escapeHtml(entry.note)}</span>` : '');
+    }
+    if (entry.event === 'reviewed') return `<strong>Reviewed by the business</strong> — ${when} by ${who}`;
     if (entry.event === 'ai-draft-prepared') {
       return `<strong>AI suggestions prepared</strong><br>`
         + `<span class="audit-change">${escapeHtml(entry.to || '')}</span><br>`
@@ -2351,6 +2357,13 @@
     finalizeBtn.dataset.sectionsGreen = allRequiredGreen ? '1' : '0';
     finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt || walkBlocksFinalize();
     finalizeBtn.textContent = currentReport.finalizedAt ? '✓ Report Finalized' : 'Finalize Report';
+    // A subcontractor does not finalise and send: they sign, and it goes to
+    // the business they work for to review and send (v166).
+    if (isSubUser()) {
+      const host = window.Subcontractor.hostName();
+      finalizeBtn.textContent = currentReport.finalizedAt ? `✓ Submitted to ${host}` : `Sign and submit to ${host}`;
+    }
+    renderReviewStrip();
     finalizeHint.classList.toggle('hidden', allRequiredGreen && !walkBlocksFinalize());
     // Send/Save only make sense once the report is actually finalized —
     // stays visible on reopen too, so a technician can come back and send
@@ -2364,8 +2377,106 @@
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
   });
 
+  // ---------- A subcontractor's report: submitted, sent back, reviewed ----------
+  // Whether the person signed in is a subcontractor (subcontractor.js).
+  function isSubUser() {
+    return !!(window.Subcontractor && window.Subcontractor.isSub && window.Subcontractor.isSub());
+  }
+  // Whether this job belongs to one of the business's subcontractors, as seen
+  // by the business.
+  function jobIsSubcontractors(job) {
+    return !!(job && job.assignedTo && window.Org && window.Org.isSubcontractorEmail
+      && window.Org.isSubcontractorEmail(job.assignedTo));
+  }
+
+  // The strip above the finalize button. For the subcontractor it says where
+  // their report is up to. For the business it says whose report this is and
+  // offers the two things a reviewer does: send it back with a reason, or
+  // mark it checked. Sending it to the client also counts as checked.
+  // Built here rather than in index.html, for the reason renderPreflight gives.
+  function renderReviewStrip() {
+    const old = document.getElementById('review-strip');
+    if (old) old.remove();
+    if (!currentReport || !window.Subcontractor || !finalizeBtn || !finalizeBtn.parentNode) return;
+    const asSub = isSubUser();
+    const forHost = !asSub && jobIsSubcontractors(currentJob);
+    if (!asSub && !forHost) return;
+    const rs = window.Subcontractor.reviewState(currentReport);
+    if (rs.state === 'none') return;
+
+    const strip = document.createElement('div');
+    strip.id = 'review-strip';
+    strip.className = `card review-strip review-${rs.state}`;
+    const text = document.createElement('p');
+    text.className = 'review-strip-text';
+    strip.appendChild(text);
+
+    if (asSub) {
+      text.textContent = window.Subcontractor.reviewLine(currentReport);
+    } else {
+      const name = window.technicianDisplayName ? window.technicianDisplayName(currentJob.assignedTo) : currentJob.assignedTo;
+      if (rs.state === 'waiting') {
+        text.textContent = `Signed and submitted by ${name} (subcontractor) on ${fmtDate(rs.at)}. `
+          + 'Check it, then send it to the client. If something needs changing you can correct it yourself, or send it back.';
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.id = 'review-return-btn';
+        back.className = 'btn btn-outline full';
+        back.textContent = `Send back to ${name}`;
+        back.addEventListener('click', () => returnToSubcontractor(name));
+        const ok = document.createElement('button');
+        ok.type = 'button';
+        ok.id = 'review-ok-btn';
+        ok.className = 'btn btn-secondary full';
+        ok.textContent = 'Mark as reviewed';
+        ok.addEventListener('click', async () => {
+          // Names the submission it is for, so it still counts if this
+          // phone's clock is behind the subcontractor's (subcontractor.js).
+          appendAudit(currentReport, { event: 'reviewed', of: currentReport.finalizedAt });
+          await DB.saveReport(currentReport);
+          toast('Marked as reviewed');
+          renderSectionList();
+        });
+        strip.append(back, ok);
+      } else if (rs.state === 'returned') {
+        text.textContent = `Sent back to ${name} on ${fmtDate(rs.at)}${rs.note ? `: ${rs.note}` : '.'} It will come back here when they sign it again.`;
+      } else {
+        text.textContent = `Written by ${name} (subcontractor). Reviewed ${fmtDate(rs.at)}.`;
+      }
+    }
+    finalizeBtn.parentNode.insertBefore(strip, finalizeBtn);
+  }
+
+  // The business hands a submitted report back for changes. That un-finalises
+  // it, which is what lets the subcontractor edit and sign it again: the
+  // server refuses a subcontractor's save to a finalised report (migration 048).
+  async function returnToSubcontractor(name) {
+    const jobId = currentJobId;
+    const note = (await askPrompt(
+      `Tell ${name} what needs changing. They will see this on the job.`,
+      '',
+      { title: `Send back to ${name}`, okLabel: 'Send back', multiline: true, placeholder: 'e.g. Add a photo of the subfloor access hatch' }
+    ) || '').trim();
+    if (!note) { toast('Not sent back: say what needs changing.'); return; }
+    if (!currentReport || currentJobId !== jobId) return;
+    appendAudit(currentReport, { event: 'returned', note: note.slice(0, 500), of: currentReport.finalizedAt });
+    currentReport.finalizedAt = null;
+    await DB.saveReport(currentReport);
+    await DB.updateJob(jobId, { status: 'review' });
+    toast(`Sent back to ${name}`);
+    renderSectionList();
+    if (window.refreshJobViewStatus) await window.refreshJobViewStatus(jobId);
+  }
+
   finalizeBtn.addEventListener('click', async () => {
     if (finalizeBtn.disabled) return;
+    const asSub = isSubUser();
+    const subHost = asSub ? window.Subcontractor.hostName() : '';
+    if (asSub) {
+      // A lapsed licence or insurance stops a report being submitted.
+      const why = window.Subcontractor.blockReason();
+      if (why) { toast(why); return; }
+    }
     // Asked again at the moment of signing, not trusted from the last render.
     const walkLeft = await walkOutstandingFor(currentJobId, currentReport).catch(() => null);
     if (walkLeft && walkLeft.length) {
@@ -2374,8 +2485,12 @@
       return;
     }
     if (!await askConfirm(
-      'You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.',
-      { title: 'Finalize this report?', okLabel: 'Finalize' })) return;
+      asSub
+        ? `This signs the report as yours and gives it to ${subHost} to review and send to the client. You will not be able to change it after this unless they send it back to you.`
+        : 'You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.',
+      asSub
+        ? { title: `Sign and submit to ${subHost}?`, okLabel: 'Sign and submit' }
+        : { title: 'Finalize this report?', okLabel: 'Finalize' })) return;
     // Recorded before finalizedAt is set, so the event itself is correctly
     // stamped afterFinalize: false — this is the moment of sign-off, not an
     // amendment to an already-signed document.
@@ -2401,7 +2516,7 @@
     // there — that works, and raising a second job now would show the same
     // property twice. The plan recorded above only matters for the case that
     // flow cannot cover: a visit that completes with no report at all.
-    toast('Report finalized');
+    toast(asSub ? `Submitted to ${subHost}` : 'Report finalized');
     // A business trialling Scope is asked what it thought of this report
     // (tester.js). Not awaited: nothing about the report waits on it.
     if (window.Tester && window.Tester.active()) {
@@ -2422,7 +2537,7 @@
     uploadReportPdf(finalisedJobId)
       // Then the copy into the client's SharePoint folder, which reads that
       // PDF from storage (sharepoint.js; silent until SharePoint is set up).
-      .then((path) => { if (path && window.SharePoint) window.SharePoint.copyJobQuietly(finalisedJobId); })
+      .then((path) => { if (path && window.SharePoint && !asSub) window.SharePoint.copyJobQuietly(finalisedJobId); })
       .catch((err) => console.warn('[report] could not back up the report PDF:', err.message || err));
     renderSectionList();
     if (window.refreshJobViewStatus) await window.refreshJobViewStatus(currentJobId);
@@ -2529,6 +2644,11 @@
         currentReport.emailProviderId = sendResult.id;
         currentReport.emailedAt = Date.now();
         currentReport.emailStatus = 'sent';
+        // Sending a subcontractor's report to the client is the business
+        // having reviewed it (v166).
+        if (jobIsSubcontractors(job) && currentReport.finalizedAt) {
+          appendAudit(currentReport, { event: 'reviewed', of: currentReport.finalizedAt, via: 'sent to the client' });
+        }
         await DB.saveReport(currentReport);
         renderSectionList();
       }
@@ -3791,6 +3911,13 @@
   sectionSaveBtn.addEventListener('click', async () => {
     const section = findSection(currentSectionId);
     const changes = diffSection(section, currentReport.sections[currentSectionId], pendingSectionValues);
+
+    // Signed and submitted: it is with the business now (v166). The server
+    // would refuse the save, so say so here rather than let it look saved.
+    if (currentReport.finalizedAt && changes.length && isSubUser()) {
+      toast(`This report has been submitted. Ask ${window.Subcontractor.hostName()} to send it back if it needs a change.`);
+      return;
+    }
 
     // Amending a finalized report is allowed — corrections are a normal part
     // of the job — but it must be deliberate and explained. This mirrors ODK's

@@ -273,6 +273,13 @@
     return !!me && assigned.toLowerCase() === (me.email || '').toLowerCase();
   }
 
+  // A subcontractor of the business signed in (subcontractor.js, v166). Like
+  // isAdminUser this is a courtesy: migration 048 is what actually limits them
+  // to the jobs they were given.
+  function isSubUser() {
+    return !!(window.Subcontractor && window.Subcontractor.isSub && window.Subcontractor.isSub());
+  }
+
   const { askConfirm, askPrompt } = window.Common;
 
   function fmtDate(ts) {
@@ -571,17 +578,32 @@
     jobSubtitleEl.textContent = addressAndWhen(job);
     await renderAssignedToButton(job);
     renderJobPermissions(job);
-    renderCommsRow(job);
-    renderBookingNotice(job);
-    renderPlanRow(job);
+    // Messages to the client, the booking and the repeat plan are the
+    // business's to manage, not a subcontractor's (v166).
+    const asSub = isSubUser();
+    if (!asSub) {
+      renderCommsRow(job);
+      renderBookingNotice(job);
+      renderPlanRow(job);
+    } else {
+      // Drawn for an earlier job on this screen, perhaps. Not theirs.
+      for (const id of ['job-comms-row', 'booking-notice-row', 'job-booking-card']) {
+        const stale = document.getElementById(id);
+        if (stale) stale.remove();
+      }
+    }
     // Booked when, and Change time, without dragging (v163, booking-edit.js).
     // Drawn before the details card so it sits above it.
-    if (window.BookingEdit && canEditJob(job)) {
+    if (!asSub && window.BookingEdit && canEditJob(job)) {
       window.BookingEdit.render(job, { onSaved: async (saved) => { if (currentJobId === saved.id) await showJobView(saved.id); } });
     }
+    if (window.Subcontractor && window.Subcontractor.renderJobNote) window.Subcontractor.renderJobNote(job);
     if (window.JobDetails) {
       window.JobDetails.render(job, {
-        canEdit: canEditJob(job),
+        // A subcontractor reads the client's name, address and phone. The
+        // email is not given to them, and the details are the business's.
+        hideEmail: asSub,
+        canEdit: !asSub && canEditJob(job),
         onSaved: (saved) => {
           jobTitleEl.textContent = saved.name;
           jobSubtitleEl.textContent = addressAndWhen(saved);
@@ -765,12 +787,29 @@
     });
   }
 
+  // Everyone a job can be given to: whoever already has a job, and the
+  // business's approved subcontractors (v166), who may not have one yet.
+  function assignablePeople(allJobs) {
+    const people = Array.from(new Set(allJobs.map((j) => j.assignedTo).filter(Boolean))).sort();
+    const subs = (window.Org && window.Org.subcontractors) ? window.Org.subcontractors() : [];
+    for (const s of subs) {
+      if (s.email && !people.some((p) => String(p).toLowerCase() === s.email)) people.push(s.email);
+    }
+    return people;
+  }
+  function personLabel(email) {
+    const name = window.technicianDisplayName ? window.technicianDisplayName(email) : email;
+    const isSub = window.Org && window.Org.isSubcontractorEmail && window.Org.isSubcontractorEmail(email);
+    return isSub ? `${name} (subcontractor)` : name;
+  }
+
   async function renderAssignedToButton(job) {
     if (!assignedToBtn) return;
+    if (isSubUser()) { hide(assignedToBtn); return; }
     const allJobs = await DB.getJobs();
-    const technicians = Array.from(new Set(allJobs.map((j) => j.assignedTo).filter(Boolean))).sort();
+    const technicians = assignablePeople(allJobs);
     if (technicians.length < 2) { hide(assignedToBtn); return; }
-    const name = job.assignedTo ? (window.technicianDisplayName ? window.technicianDisplayName(job.assignedTo) : job.assignedTo) : 'Unassigned';
+    const name = job.assignedTo ? personLabel(job.assignedTo) : 'Unassigned';
     assignedToBtn.textContent = `👤 ${name}`;
     show(assignedToBtn);
   }
@@ -782,8 +821,8 @@
     const job = await DB.getJob(jobId);
     if (!job) return;
     const allJobs = await DB.getJobs();
-    const technicians = Array.from(new Set(allJobs.map((j) => j.assignedTo).filter(Boolean))).sort();
-    const list = technicians.map((email, i) => `${i + 1}. ${window.technicianDisplayName ? window.technicianDisplayName(email) : email}`).join('\n');
+    const technicians = assignablePeople(allJobs);
+    const list = technicians.map((email, i) => `${i + 1}. ${personLabel(email)}`).join('\n');
     // A prompt rather than a custom picker UI — reassigning a job is rare
     // enough that a dedicated picker would be more code than the
     // interaction is worth; typing a number (or a new email nobody's used
@@ -799,7 +838,7 @@
       ? technicians[index - 1]
       : answer;
     await DB.updateJob(jobId, { assignedTo: email });
-    toast(`Assigned to ${window.technicianDisplayName ? window.technicianDisplayName(email) : email}`);
+    toast(`Assigned to ${personLabel(email)}`);
     if (currentJobId === jobId) await renderAssignedToButton(await DB.getJob(jobId));
   });
 
@@ -1211,6 +1250,9 @@
         badge.textContent = due.label;
         li.querySelector('.job-item-top').appendChild(badge);
       }
+      // Where a subcontractor's report is up to: submitted, sent back or
+      // reviewed. Not awaited; it adds a line when it has something to say.
+      if (window.Subcontractor && window.Subcontractor.decorateJobItem) window.Subcontractor.decorateJobItem(li, job);
       li.addEventListener('click', () => showJobView(job.id));
       jobListEl.appendChild(li);
     }
@@ -1340,8 +1382,13 @@
       const clear = await window.Scheduler.confirmNoOverlap(null, newScheduledAt, newLength);
       if (!clear) return;
     }
+    // A subcontractor starting a job for the business (v166): no client email
+    // (the box is hidden, and the server would not keep one), no client
+    // record, and nothing is sent to the client. The business sees the job
+    // straight away and does all three.
+    const asSub = isSubUser();
     const phone = jobPhoneInput.value.trim();
-    const email = jobEmailInput.value.trim();
+    const email = asSub ? '' : jobEmailInput.value.trim();
 
     // Find or create the client, so grouping happens without anybody having
     // to think about it. The returning-client panel on this form has already
@@ -1353,7 +1400,7 @@
     // not.
     let clientId = null;
     try {
-      if (phone || email) {
+      if (!asSub && (phone || email)) {
         const existing = window.Clients
           ? window.Clients.matchClient(await DB.getClients(), { phone, email })
           : null;
@@ -1372,7 +1419,7 @@
 
     // Read before the form is hidden and reset.
     const agreeInput = document.getElementById('job-agreement');
-    const wantsAgreement = selectedDocType === 'timber_pest_inspection' && !!(agreeInput && agreeInput.checked);
+    const wantsAgreement = !asSub && selectedDocType === 'timber_pest_inspection' && !!(agreeInput && agreeInput.checked);
 
     const job = await DB.addJob({
       name,
@@ -1393,7 +1440,7 @@
     await renderJobList();
     await showJobView(job.id);
     // Asked, never sent on its own (v149): part of the job may be wrong.
-    if (job.scheduledAt && window.BookingNotice) {
+    if (!asSub && job.scheduledAt && window.BookingNotice) {
       window.BookingNotice.offer(job, { agreement: wantsAgreement })
         .then(async () => {
           const fresh = await DB.getJob(job.id);
@@ -1998,6 +2045,11 @@
     };
     if (!startJobId) { resetButton(); return; }
 
+    // A subcontractor whose licence or insurance has lapsed cannot start a
+    // report for the business until the date on record is up to date (v166).
+    const blocked = window.Subcontractor && window.Subcontractor.blockReason ? window.Subcontractor.blockReason() : '';
+    if (blocked) { toast(blocked); resetButton(); return; }
+
     // An inspection is a series of deliberate photographs, not a recording.
     // Each one is taken with the phone's OWN camera app (v129): Take photo
     // opens it, the technician shoots with proper focus, flash and zoom, taps
@@ -2448,6 +2500,9 @@
   ];
 
   async function openBusinessDetails() {
+    // A subcontractor has no business details to edit here: the business is
+    // their host's. The same button opens their own details instead (v166).
+    if (isSubUser()) { window.Subcontractor.openMyDetails(); return; }
     if (!window.Org) {
       toast(window.IS_DEMO
         ? 'Business details, the team and message settings are set up in the real app once you sign in. The demo has none.'
@@ -2494,6 +2549,59 @@
       inputs[f.key] = input;
       wrap.appendChild(input);
       card.appendChild(wrap);
+    }
+
+    // The logo that heads every report (v166, migration 048). Only offered
+    // once the server has somewhere to keep it.
+    let logoValue = current.logoDataUrl || '';
+    if (current.logoSupported) {
+      const head = document.createElement('h3');
+      head.className = 'business-subhead';
+      head.textContent = 'Logo';
+      const about = document.createElement('p');
+      about.className = 'business-hint';
+      about.textContent = 'Printed at the top of every report. Choose a PNG or JPG picture; it is made smaller for you.';
+      const preview = document.createElement('img');
+      preview.id = 'business-logo-preview';
+      preview.className = 'business-logo-preview';
+      preview.alt = 'Your logo';
+      const file = document.createElement('input');
+      file.type = 'file';
+      file.accept = 'image/png,image/jpeg,image/webp';
+      file.className = 'hidden';
+      file.id = 'business-logo-file';
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'btn btn-outline full';
+      pick.id = 'business-logo-pick';
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'link-btn';
+      remove.id = 'business-logo-remove';
+      remove.textContent = 'Remove the logo';
+      const drawLogo = () => {
+        const safe = window.HtmlSafe ? window.HtmlSafe.imageSrc(logoValue) : '';
+        if (safe) preview.src = safe; else preview.removeAttribute('src');
+        preview.classList.toggle('hidden', !safe);
+        remove.classList.toggle('hidden', !safe);
+        pick.textContent = safe ? 'Choose a different logo' : 'Choose a logo';
+      };
+      pick.addEventListener('click', () => file.click());
+      file.addEventListener('change', async () => {
+        const chosen = file.files && file.files[0];
+        file.value = '';
+        if (!chosen) return;
+        try {
+          logoValue = await window.Org.prepareLogo(chosen);
+          drawLogo();
+          toast('Logo ready. Tap Save to keep it.');
+        } catch (e) {
+          toast(e.message || 'That picture could not be used.');
+        }
+      });
+      remove.addEventListener('click', () => { logoValue = ''; drawLogo(); toast('Logo removed. Tap Save to keep the change.'); });
+      card.append(head, about, preview, file, pick, remove);
+      drawLogo();
     }
 
     // The client page assistant (migration 037, portal-chat). Only offered
@@ -2598,6 +2706,7 @@
         changes.assistantEnabled = assistantToggle.checked;
         changes.assistantNotes = assistantNotes.value.trim();
       }
+      if (current.logoSupported) changes.logoDataUrl = logoValue;
       if (!changes.name) { toast('A registered business name is required.'); save.disabled = false; return; }
       try {
         await window.Org.save(changes);
@@ -2946,13 +3055,18 @@
         if (window.Org) window.Org.refresh().then(() => {
           // A business on trial gets its feedback button and first-day note.
           if (window.Tester) window.Tester.check();
+          // The business's own notices: applications and reports waiting (v166).
+          if (window.SubcontractorsUI) window.SubcontractorsUI.refreshNotice();
           renderJobList();
         });
-        Sync.pullAll().then(() => renderJobList());
+        Sync.pullAll().then(() => {
+          renderJobList();
+          if (window.SubcontractorsUI) window.SubcontractorsUI.refreshNotice();
+        });
         // Xero sends the technician back here with ?code= after they grant
         // access. It can only be redeemed while signed in, since the exchange
         // goes through an auth-gated Edge Function.
-        if (window.Xero) {
+        if (window.Xero && !isSubUser()) {
           window.Xero.captureAuthCodeFromUrl().then((result) => {
             if (!result) return;
             toast(result.ok
@@ -2973,7 +3087,17 @@
     if (session) {
       showLoggedInUI(session);
       showJobListView();
-      Sync.pullAll().then(() => renderJobList());
+      // A restored session does not go through onAuthChange, so the
+      // subcontractor screens are set from here (v166).
+      if (window.Subcontractor) window.Subcontractor.apply();
+      if (window.Org) window.Org.refresh().then(() => {
+        if (window.Subcontractor) window.Subcontractor.apply();
+        if (window.SubcontractorsUI) window.SubcontractorsUI.refreshNotice();
+      });
+      Sync.pullAll().then(() => {
+        renderJobList();
+        if (window.SubcontractorsUI) window.SubcontractorsUI.refreshNotice();
+      });
     } else {
       showLoginView();
       const why = Sync.takeBlockedNotice ? Sync.takeBlockedNotice() : '';

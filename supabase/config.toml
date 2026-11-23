@@ -468,3 +468,13 @@ verify_jwt = false
 # person asking has no account.
 [functions.portal-chat]
 verify_jwt = false
+
+# subcontractor-join is how a subcontractor becomes a login: they open the
+# link a host business gave them, fill in their details and accept the host's
+# agreement. They have no account yet, so the token in the link is the
+# credential, checked for shape, for being switched on, and for belonging to a
+# business that has written its agreement. What it creates is a PENDING
+# application that opens nothing until the host's admin approves it.
+# Verification off for the same reason as client-portal.
+[functions.subcontractor-join]
+verify_jwt = false

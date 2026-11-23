@@ -13756,6 +13756,448 @@
   });
 
 
+  // ---------- Subcontractors (v166, migration 048) ----------
+  // A business hands out one sign-up link. A subcontractor applies through it,
+  // accepts the business's own agreement, is approved, and then sees only the
+  // jobs assigned to them. The database is the lock (migration 048, checked
+  // against the live database in a rolled-back transaction when it was
+  // written). These cover the rules shared by the page and the server, and
+  // the app's side: what it shows a subcontractor and what it shows the
+  // business.
+  let __subShared = null;
+  const subShared = async () => (__subShared || (__subShared = await import('../supabase/functions/_shared/subcontractor.js')));
+
+  // "Signed in as a subcontractor" for the length of one test. Sync does not
+  // exist in test mode, so this is a stand-in with the shape the app reads.
+  async function asSubcontractor(win, opts, fn) {
+    const o = Object.assign({ status: 'active', me: {} }, opts || {});
+    const original = win.Sync;
+    win.Sync = {
+      isAdmin: () => false,
+      role: () => 'subcontractor',
+      isSubcontractor: () => true,
+      isActiveSubcontractor: () => o.status === 'active',
+      subcontractor: () => ({
+        subId: 's1', orgId: 'o1', status: o.status,
+        business: { name: 'Host Pest Pty Ltd', tradingName: 'Host Pest' },
+        me: Object.assign({ email: 'sub@example.com', fullName: 'Sam Subbie', licenceNumber: 'L-1' }, o.me),
+      }),
+      currentUser: () => ({ id: 'u-sub', email: 'sub@example.com' }),
+      currentUserId: () => 'u-sub',
+      getStatus: () => ({ state: 'idle' }),
+      onStatusChange: () => {}, onAuthChange: () => {},
+      pushJob: () => {}, pushReport: () => {}, pushCapture: () => {}, pushClient: () => {},
+      deleteJobRemote: () => {}, deleteCaptureRemote: () => {},
+      pullAll: async () => ({ ok: true }), refreshRole: async () => 'subcontractor', signOut: async () => {},
+    };
+    try {
+      win.Subcontractor.apply();
+      await fn();
+    } finally {
+      win.Sync = original;
+      win.Subcontractor.apply();
+    }
+  }
+
+  const goodApplication = (extra) => Object.assign({
+    fullName: '  Jordan   Lee ', businessName: 'Lee Pest Services', abn: '', phone: '0400 000 001',
+    email: ' Jordan@LeePest.example ', password: ' has spaces 1 ', licenceNumber: 'L-123', licenceExpiry: '2099-01-01',
+    insurer: 'Example Mutual', insurancePolicy: 'EX-1', insuranceExpiry: '2099-06-30',
+    acceptedName: 'Jordan Lee', agreed: true, agreementVersion: 3,
+  }, extra);
+  const subSettings = { agreementVersion: 3, requireInsurance: true, requireLicenceExpiry: true };
+
+  test('Subcontractors: a complete application passes, tidied, with the password left exactly as typed', async () => {
+    const M = await subShared();
+    const r = M.checkApplication(goodApplication(), subSettings, Date.UTC(2026, 10, 23));
+    assertEqual(Object.keys(r.errors).join(','), '', 'nothing to fix');
+    assert(r.ok, 'and it is accepted');
+    assertEqual(r.value.fullName, 'Jordan Lee', 'stray spaces in a name are tidied');
+    assertEqual(r.value.email, 'jordan@leepest.example', 'the email is lower case, as it is compared');
+    assertEqual(r.value.password, ' has spaces 1 ', 'the password is not touched');
+    assert(M.validToken('a'.repeat(64)) && !M.validToken('a'.repeat(63)) && !M.validToken('A'.repeat(64)) && !M.validToken("a'; drop".padEnd(64, 'a')),
+      'a link token is 64 lower-case hex characters and nothing else');
+  });
+
+  test('Subcontractors: an incomplete application says what is missing, in words', async () => {
+    const M = await subShared();
+    const now = Date.UTC(2026, 10, 23);
+    const empty = M.checkApplication({}, subSettings, now);
+    assert(!empty.ok, 'an empty form is refused');
+    for (const f of ['fullName', 'businessName', 'phone', 'email', 'password', 'licenceNumber', 'licenceExpiry', 'insurer', 'insurancePolicy', 'insuranceExpiry', 'agreed', 'acceptedName']) {
+      assert(empty.errors[f] && /[.]$/.test(empty.errors[f]), `${f} has a sentence: ${empty.errors[f]}`);
+    }
+    assert(!empty.errors.abn, 'the ABN is optional');
+
+    const e = (extra) => M.checkApplication(goodApplication(extra), subSettings, now).errors;
+    assert(e({ abn: '12 345' }).abn, 'a short ABN is questioned');
+    assert(!e({ abn: '11 222 333 444' }).abn, 'an 11 digit ABN passes');
+    assert(/expired/.test(e({ licenceExpiry: '2020-01-01' }).licenceExpiry), 'an expired licence is refused');
+    assert(/expired/.test(e({ insuranceExpiry: '2026-11-22' }).insuranceExpiry), 'insurance that ran out yesterday is refused');
+    assert(!e({ insuranceExpiry: '2026-11-23' }).insuranceExpiry, 'insurance that runs out today is still good today');
+    assert(/not a real date/.test(e({ licenceExpiry: '2027-02-30' }).licenceExpiry), '30 February is not a date');
+    assert(e({ password: 'short' }).password, 'a short password is refused');
+    assert(e({ agreed: false }).agreed, 'the box must be ticked');
+    assert(e({ agreed: 'true' }).agreed, 'and ticked for real, not a string that looks like yes');
+    assert(/updated/.test(e({ agreementVersion: 2 }).agreementVersion), 'accepting wording that has since changed is refused');
+
+    const relaxed = M.checkApplication(goodApplication({ insurer: '', insurancePolicy: '', insuranceExpiry: '', licenceExpiry: '' }),
+      { agreementVersion: 3, requireInsurance: false, requireLicenceExpiry: false }, now);
+    assert(relaxed.ok, 'a business that does not require insurance or an expiry date does not get them demanded');
+  });
+
+  test('Subcontractors: licence and insurance dates are judged the same way by the server file and the app', async () => {
+    const M = await subShared();
+    const S = frame.contentWindow.Subcontractor;
+    const now = Date.UTC(2026, 10, 23, 2);
+    for (const d of ['', 'nonsense', '2026-11-22', '2026-11-23', '2026-12-01', '2026-12-23', '2026-12-24', '2027-06-30', '2027-02-30']) {
+      assertEqual(S.expiryState(d, now), M.expiryState(d, now), `same answer for "${d}"`);
+    }
+    assertEqual(S.expiryState('2026-11-22', now), 'lapsed', 'yesterday has lapsed');
+    assertEqual(S.expiryState('2026-12-10', now), 'soon', 'within 30 days is soon');
+    assertEqual(S.expiryState('2027-06-30', now), 'ok', 'later is fine');
+    assertEqual(S.expiryState('', now), 'none', 'no date is not a lapse');
+    const me = { licenceExpiry: '2026-11-01', insuranceExpiry: '2026-12-05' };
+    assertEqual(JSON.stringify(S.paperworkState(me, now)), JSON.stringify(M.paperworkState(me, now)), 'and the same sentences');
+    const p = S.paperworkState(me, now);
+    assert(p.blocked && /licence on record expired on 1 Nov 2026/.test(p.lapsed[0]), 'a lapsed licence blocks, and says the date');
+    assert(/insurance on record expires on 5 Dec 2026/.test(p.soon[0]), 'insurance about to lapse is a warning');
+    assert(!S.paperworkState({}, now).blocked, 'no dates on record blocks nothing');
+    assertEqual(M.inviteUrl('https://x.example/field-inspect/index.html', 'b'.repeat(64)), `https://x.example/field-inspect/join.html?t=${'b'.repeat(64)}`, 'the link points at the sign-up page beside the app');
+  });
+
+  test('Subcontractors: where a report is up to is read from its own audit trail', () => {
+    const S = frame.contentWindow.Subcontractor;
+    const rs = (r) => S.reviewState(r).state;
+    assertEqual(rs({ auditLog: [] }), 'none', 'a report nobody has submitted');
+    const submitted = { finalizedAt: 100, auditLog: [{ event: 'finalized', at: 100, userEmail: 'sub@example.com' }] };
+    assertEqual(rs(submitted), 'waiting', 'signed and submitted: waiting for the business');
+    assertEqual(S.reviewState(submitted).by, 'sub@example.com', 'and says who signed it');
+    assertEqual(rs({ finalizedAt: 100, emailedAt: 150, auditLog: submitted.auditLog }), 'reviewed', 'sending it to the client counts as reviewed');
+    assertEqual(rs({ finalizedAt: 100, auditLog: [...submitted.auditLog, { event: 'reviewed', at: 120 }] }), 'reviewed', 'marked as reviewed');
+    const back = { finalizedAt: null, auditLog: [...submitted.auditLog, { event: 'returned', at: 130, note: 'Add the hatch photo' }] };
+    assertEqual(rs(back), 'returned', 'sent back');
+    assertEqual(S.reviewState(back).note, 'Add the hatch photo', 'with the reason');
+    const again = { finalizedAt: 200, auditLog: [...back.auditLog, { event: 'finalized', at: 200 }] };
+    assertEqual(rs(again), 'waiting', 'signed again after being sent back: waiting again');
+    assertEqual(rs({ finalizedAt: 200, emailedAt: 150, auditLog: again.auditLog }), 'waiting', 'an email sent before the latest signature does not count');
+    // The business's phone is slow: its review is stamped earlier than the
+    // signature it reviewed. It names that signature, so it still counts.
+    assertEqual(rs({ finalizedAt: 200, auditLog: [...again.auditLog, { event: 'reviewed', at: 90, of: 200 }] }), 'reviewed', 'a review counts by the submission it names, not by the clocks');
+    assertEqual(rs({ finalizedAt: 200, auditLog: [...again.auditLog, { event: 'reviewed', at: 999, of: 100 }] }), 'waiting', 'and a review of an earlier submission does not carry over');
+    assertEqual(rs({ finalizedAt: null, auditLog: [{ event: 'finalized', at: 500 }, { event: 'returned', at: 90, note: 'x', of: 500 }] }), 'returned', 'a return counts even when stamped earlier than the signature');
+    assert(/With Host Pest to review and send/.test(S.reviewLine(submitted, 'Host Pest')), 'the subcontractor reads who has it');
+    assert(/Sent back by Host Pest: Add the hatch photo/.test(S.reviewLine(back, 'Host Pest')), 'and why it came back');
+    assert(/waiting for you to review/.test(S.hostReviewLine(submitted, 'Sam')), 'the business reads that it is waiting');
+    assertEqual(S.reviewLine({ auditLog: [] }, 'Host Pest'), '', 'nothing to say about an unsubmitted report');
+  });
+
+  test('Subcontractors: Edge Functions ask what the caller is, not only whether they are signed in', async () => {
+    const A = await import('../supabase/functions/_shared/access.js');
+    const member = A.accessFrom({ orgId: 'o1', role: 'admin', activeSubcontractor: false });
+    const sub = A.accessFrom({ orgId: null, role: null, activeSubcontractor: true });
+    const nobody = A.accessFrom({ orgId: null, role: null, activeSubcontractor: false });
+    assert(A.mayUse(member, 'business') && A.mayUse(member, 'forms'), 'a business login may use both');
+    assert(!A.mayUse(sub, 'business'), 'an approved subcontractor cannot send a client email or use the booking assistant');
+    assert(A.mayUse(sub, 'forms'), 'but can use AI drafting on a report');
+    assert(!A.mayUse(nobody, 'business') && !A.mayUse(nobody, 'forms'), 'a login that only applied, or was removed, can use neither');
+    assert(!A.mayUse(A.accessFrom(null), 'forms') && !A.mayUse(null, 'business'), 'no answer is a refusal');
+    assertEqual(A.accessFrom({ orgId: 'o1', role: 'weird' }).role, 'technician', 'an unknown role is the restricted one');
+
+    for (const [fn, kind] of [['send-report-email', 'business'], ['schedule-agent', 'business'], ['check-email-status', 'business'], ['analyze-inspection', 'forms']]) {
+      const src = await (await fetch(`../supabase/functions/${fn}/index.ts`, { cache: 'reload' })).text();
+      assert(src.includes("from '../_shared/access.js'"), `${fn} uses the shared check`);
+      assert(src.includes(`mayUse(access, '${kind}')`), `${fn} requires "${kind}"`);
+      assert(src.indexOf('callerAccess(') < src.indexOf('await req.json()'), `${fn} checks before it reads the request`);
+    }
+  });
+
+  test('Subcontractors: the sign-up function makes a pending application and never keeps the password', async () => {
+    const src = await (await fetch('../supabase/functions/subcontractor-join/index.ts', { cache: 'reload' })).text();
+    assert(src.includes("status: 'pending'"), 'an application is filed as pending');
+    assert(!src.includes("status: 'active'"), 'and never as approved');
+    assert(src.includes('validToken(token)') && src.indexOf('validToken(token)') < src.indexOf(".from('subcontractor_settings')"), 'the token is checked for shape before any query');
+    assert(src.includes('agreement_text: String(settings.agreement_text)'), 'the agreement kept is the wording on the server, not what the page sent');
+    assert(src.includes('admin.auth.admin.deleteUser(userId)'), 'a login whose application could not be filed is taken back out');
+    const logs = src.split('\n').filter((l) => l.includes('console.'));
+    assert(logs.length > 0 && logs.every((l) => !/password|application|body\b/.test(l)), 'nothing logged can contain the password or the form');
+    const toml = await (await fetch('../supabase/config.toml', { cache: 'reload' })).text();
+    assert(toml.includes('[functions.subcontractor-join]\nverify_jwt = false') || toml.includes('[functions.subcontractor-join]\r\nverify_jwt = false'), 'it is recorded as a no-login function so a redeploy cannot switch that back');
+    const page = await (await fetch('../join.html', { cache: 'reload' })).text();
+    assert(page.includes("from './supabase/functions/_shared/subcontractor.js'"), 'the page checks the form with the same file the server uses');
+    assert(page.includes('name="robots" content="noindex, nofollow"') && page.includes('name="referrer" content="no-referrer"'), 'the link is kept out of search engines and referrers');
+    assert(page.includes('autocomplete="new-password"'), 'a phone offers to save the new password');
+  });
+
+  test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {
+    const sql = await (await fetch('../supabase-migration-048-subcontractors.sql', { cache: 'reload' })).text();
+    const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+    // Every policy it creates is a new one for subcontractors, or on its own two tables.
+    const made = [...code.matchAll(/create policy "([^"]+)"/g)].map((m) => m[1]);
+    assert(made.length >= 11, `it creates its policies (${made.length})`);
+    assert(made.every((n) => n.startsWith('subcontractor can ') || n === 'org admin can read subcontractor settings' || n === 'host admin or self can read subcontractors'),
+      `no existing policy is replaced: ${made.join(' | ')}`);
+    const dropped = [...code.matchAll(/drop policy if exists "([^"]+)"/g)].map((m) => m[1]);
+    assert(dropped.every((n) => made.includes(n)), 'and it only ever drops its own, to be re-runnable');
+    assert(!/create or replace function public\.(my_org_id|is_admin|owns_job|media_in_my_org)\(/.test(code), 'the functions every existing policy rests on are untouched');
+    assert(!code.includes('insert into public.user_roles') && !code.includes('update public.user_roles'), 'a subcontractor is never given a row in user_roles');
+    // Nothing callable without signing in.
+    const fns = [...code.matchAll(/create or replace function public\.(\w+)\(/g)].map((m) => m[1]);
+    for (const f of fns) assert(code.includes(`revoke execute on function public.${f}(`), `${f} is not left open to the public`);
+    assert(code.includes('finalized_at is null'), 'a subcontractor can write a report only while it is not finalised');
+    assert(code.includes("'client_email', ''") && code.includes("'follow_up', null") && code.includes("'client_id', null"), 'the client email, client record and follow-up notes are blanked on the way out');
+    assert(!/\bclient_email = /.test(code.slice(code.indexOf('create or replace function public.sub_save_job'))), 'and a subcontractor cannot write the client email');
+    assert(code.includes('lower(j.assigned_to) = lower(s.email)') && code.includes("lower(s.email) = lower(coalesce(auth.jwt() ->> 'email', ''))"),
+      'a job is theirs only by the email the business approved, while they are still signed in under it');
+    assert(!/grant [^;]*(insert|update|delete)[^;]* on public\.subcontractors to authenticated/i.test(code), 'nobody changes the subcontractor list through the API');
+  });
+
+  test('Subcontractors: sync picks the right host, and takes away jobs that are no longer theirs', async () => {
+    const win = frame.contentWindow;
+    const P = win.SyncSub;
+    assertEqual(P.pickHost([]), null, 'no memberships: not a subcontractor');
+    assertEqual(P.pickHost(null), null, 'nor for nonsense');
+    const hosts = [
+      { subId: 'a', orgId: 'o1', status: 'removed', business: { name: 'Old' } },
+      { subId: 'b', orgId: 'o2', status: 'pending', business: { name: 'Waiting' } },
+      { subId: 'c', orgId: 'o3', status: 'active', business: { name: 'Current' }, me: { fullName: 'S' } },
+    ];
+    assertEqual(P.pickHost(hosts).orgId, 'o3', 'an approved host comes first');
+    assertEqual(P.pickHost(hosts.slice(0, 2)).status, 'pending', 'then one still deciding');
+    assertEqual(P.pickHost(hosts.slice(0, 1)).status, 'removed', 'then whatever is left, so the app can say access ended');
+
+    const local = [{ id: 'j1' }, { id: 'j2' }, { id: 'j3' }];
+    const gone = P.jobsNoLongerMine(local, [{ id: 'j1' }], (id) => id !== 'j3');
+    assertEqual(gone.join(','), 'j2', 'a synced job the server no longer lists comes off the phone; one never uploaded stays');
+    assertEqual(P.jobsNoLongerMine(local, [], () => true).join(','), 'j1,j2,j3', 'when access has ended, every synced job goes');
+
+    // Their jobs are read through the function, paged like a table.
+    const calls = [];
+    const fake = {
+      from: (t) => { calls.push(`from:${t}`); return fake; },
+      rpc: (n) => { calls.push(`rpc:${n}`); return fake; },
+      select: () => fake, order: () => fake,
+      range: async () => ({ data: [{ id: 'j1' }], error: null }),
+    };
+    const rows = await win.SyncPaging.fetchAllRows(fake, 'jobs', { rpc: 'sub_my_jobs' });
+    assertEqual(calls.join(','), 'rpc:sub_my_jobs', 'through sub_my_jobs, never the table');
+    assertEqual(rows.length, 1, 'and the rows come back');
+    calls.length = 0;
+    await win.SyncPaging.fetchAllRows(fake, 'jobs');
+    assertEqual(calls.join(','), 'from:jobs', 'everyone else reads the table as before');
+
+    const src = await (await fetch('../sync.js', { cache: 'reload' })).text();
+    assert(src.includes("supabaseClient.rpc('sub_save_job', { p: row })"), 'their job saves go through sub_save_job');
+    assert(src.includes("if (asSub && c.table !== 'captures') continue;"), 'invoices, clients and enquiries are never synced for them');
+    for (const f of ['pushInvoice', 'pushReferral', 'pushSop', 'pushClient', 'pushLead', 'pushSwms']) {
+      const at = src.indexOf(`async function ${f}(`);
+      assert(at > -1 && src.slice(at, at + 120).includes('hostOnly()'), `${f} does nothing for a subcontractor`);
+    }
+    assert(src.includes("'scope.sub.v1'") && src.includes('cachedSubFor(uid)'), 'what they are is remembered for a start with no signal');
+  });
+
+  test('Subcontractors: the waiting and ended screens say what is happening, and who decides', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const S = win.Subcontractor;
+    assert(/Waiting for Host Pest to approve you/.test(S.gateText('pending', 'Host Pest').title), 'waiting names the business');
+    assert(/nothing more you need to do/.test(S.gateText('pending', 'Host Pest').body), 'and says nothing more is needed');
+    assert(/did not approve/.test(S.gateText('declined', 'Host Pest').title), 'declined says so');
+    assert(/has ended/.test(S.gateText('removed', 'Host Pest').title) && /taken off this phone/.test(S.gateText('removed', 'Host Pest').body), 'removed says the jobs are gone from the phone');
+
+    assert(!S.isSub() && !doc.body.classList.contains('is-sub'), 'nobody is a subcontractor by default');
+    await asSubcontractor(win, { status: 'pending' }, async () => {
+      assert(doc.body.classList.contains('is-sub'), 'the app knows');
+      const gate = doc.getElementById('sub-gate');
+      assert(gate && /Waiting for Host Pest/.test(gate.textContent), 'the waiting screen covers the app');
+      assert(doc.getElementById('sub-gate-retry') && doc.getElementById('sub-gate-logout'), 'with Check again and Log out');
+      assert(/cannot work on jobs/.test(S.blockReason()), 'and nothing can be started');
+    });
+    assert(!doc.getElementById('sub-gate') && !doc.body.classList.contains('is-sub'), 'gone again for everyone else');
+
+    await asSubcontractor(win, { status: 'active', me: { licenceExpiry: '2020-01-01' } }, async () => {
+      assert(!doc.getElementById('sub-gate'), 'an approved subcontractor gets the app');
+      await win.showJobListView();
+      win.Subcontractor.apply();
+      const banner = doc.getElementById('sub-banner');
+      assert(banner && banner.classList.contains('sub-banner-blocked') && /licence on record expired/.test(banner.textContent), 'a lapsed licence is said at the top of the job list');
+      assert(/Update it under My details/.test(S.blockReason()), 'and stops a report being started or submitted');
+      assertEqual(doc.getElementById('business-details-btn').textContent, 'My details', 'Settings is their own details');
+      doc.getElementById('business-details-btn').click();
+      await waitFor(() => doc.getElementById('sub-details-panel'), 'My details opens');
+      assert(doc.getElementById('sub-my-licenceExpiry') && doc.getElementById('sub-my-insuranceExpiry'), 'with the two dates they keep current');
+      assert(!doc.getElementById('business-panel'), 'and not the business details');
+      doc.getElementById('sub-my-cancel').click();
+    });
+    await asSubcontractor(win, { status: 'active', me: { licenceExpiry: '2099-01-01' } }, async () => {
+      assertEqual(S.blockReason(), '', 'current paperwork blocks nothing');
+    });
+  });
+
+  test('Subcontractors: their job screen has the phone and address, and none of the business’s controls', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
+    const hideList = css.slice(css.indexOf('/* ---------- Subcontractors (v166) ---------- */'));
+    for (const id of ['#open-scheduler-btn', '#open-leads-btn', '#open-more-btn', '#tab-diary', '#tab-leads', '#tab-more', '#job-email',
+      '#view-invoice-btn', '#client-link-btn', '#delete-job-btn', '#assigned-to-btn', '#finalize-post-actions', '#export-data-btn', '#followups-banner']) {
+      assert(hideList.includes(`body.is-sub ${id}`), `${id} is not offered to a subcontractor`);
+    }
+
+    await asSubcontractor(win, {}, async () => {
+      const job = await win.DB.addJob({ name: 'Sub Screen Job', address: '9 Wall St', clientPhone: '0400 111 222', clientEmail: 'client@example.com' });
+      await win.showJobViewById(job.id);
+      await waitFor(() => doc.getElementById('job-details-card'), 'the details card draws');
+      const card = doc.getElementById('job-details-card').textContent;
+      assert(/0400 111 222/.test(card) && /9 Wall St/.test(card), 'phone and address are there');
+      assert(!/client@example\.com/.test(card) && !/Email/.test(card), 'the email is not, not even as a blank row');
+      assert(!doc.getElementById('job-details-edit-btn'), 'the client details are not theirs to edit');
+      assert(!doc.getElementById('job-comms-row') && !doc.getElementById('job-booking-card'), 'no client messages or booking controls');
+      assertEqual(win.getComputedStyle(doc.getElementById('view-invoice-btn')).display, 'none', 'no invoice');
+      assertEqual(win.getComputedStyle(doc.getElementById('delete-job-btn')).display, 'none', 'no delete');
+
+      // A job they start themselves: no client email, no client record, nothing sent.
+      const clientsBefore = (await win.DB.getClients()).length;
+      await win.showJobListView();
+      doc.getElementById('new-job-btn').click();
+      await wait(200);
+      assertEqual(win.getComputedStyle(doc.getElementById('job-email')).display, 'none', 'the new job form has no email box');
+      doc.getElementById('job-name').value = 'Started By Sub';
+      doc.getElementById('job-phone').value = '0400 333 444';
+      doc.getElementById('job-email').value = 'typed.anyway@example.com';
+      doc.getElementById('job-form-save').click();
+      await waitFor(async () => (await win.DB.getJobs()).some((j) => j.name === 'Started By Sub'), 'the job is created');
+      const made = (await win.DB.getJobs()).find((j) => j.name === 'Started By Sub');
+      assertEqual(made.clientEmail, '', 'with no client email, whatever was in the hidden box');
+      assertEqual(made.assignedTo, 'sub@example.com', 'assigned to them');
+      assertEqual(made.clientId, null, 'and no client record is made');
+      assertEqual((await win.DB.getClients()).length, clientsBefore, 'the client list is the business’s');
+      await win.DB.deleteJob(made.id);
+      await win.DB.deleteJob(job.id);
+    });
+  });
+
+  test('Subcontractors: they sign and submit, then the report is closed to them; the business sends it back or marks it reviewed', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const originalConfirm = win.confirm;
+    const originalPrompt = win.prompt;
+    const job = await win.DB.addJob({ name: 'Review Flow Job', jobType: 'termite', address: '4 Flow St' });
+    await win.DB.updateJob(job.id, { assignedTo: 'sub@example.com' });
+    await win.DB.saveReport({ jobId: job.id, documentType: 'timber_pest_inspection', finalizedAt: null, sections: {}, auditLog: [] });
+
+    await asSubcontractor(win, {}, async () => {
+      await win.ReportUI.openReview(job.id);
+      await wait(300);
+      const btn = doc.getElementById('finalize-report-btn');
+      assertEqual(btn.textContent, 'Sign and submit to Host Pest', 'the button says what it does and who it goes to');
+      assertEqual(win.getComputedStyle(doc.getElementById('finalize-post-actions')).display, 'none', 'there is no Send to client for them');
+    });
+
+    // As submitted by them.
+    const rep = await win.DB.getReport(job.id);
+    // The app's own clock (the test clock), the one its audit entries use.
+    rep.auditLog = [...(rep.auditLog || []), { event: 'finalized', at: win.Date.now(), userEmail: 'sub@example.com', afterFinalize: false }];
+    rep.finalizedAt = win.Date.now();
+    await win.DB.saveReport(rep);
+
+    await asSubcontractor(win, {}, async () => {
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => doc.getElementById('review-strip'), 'the strip says where it is up to');
+      assert(/Submitted\. With Host Pest to review and send/.test(doc.getElementById('review-strip').textContent), 'submitted, with the business');
+      assert(/Submitted to Host Pest/.test(doc.getElementById('finalize-report-btn').textContent), 'and the button agrees');
+      assert(!doc.getElementById('review-return-btn'), 'they are not offered the reviewer’s buttons');
+      await win.showJobListView();
+      await waitFor(() => Array.from(doc.querySelectorAll('.job-item-review')).some((n) => /With Host Pest/.test(n.textContent)), 'the job list says so too');
+    });
+    const src = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assert(src.includes('if (currentReport.finalizedAt && changes.length && isSubUser())'), 'a change to a submitted report is refused in the app, as it is on the server');
+
+    // The business: the job belongs to one of its subcontractors.
+    const realOrg = win.Org;
+    win.Org = Object.assign({}, realOrg, {
+      isSubcontractorEmail: (e) => String(e).toLowerCase() === 'sub@example.com',
+      subcontractors: () => [{ email: 'sub@example.com', name: 'Sam Subbie', businessName: '' }],
+      nameFor: (e) => (String(e).toLowerCase() === 'sub@example.com' ? 'Sam Subbie' : e),
+    });
+    try {
+      const waiting = win.SubcontractorsUI.waitingReports([{ job: await win.DB.getJob(job.id), report: await win.DB.getReport(job.id) }], win.Org.isSubcontractorEmail);
+      assertEqual(waiting.length, 1, 'it counts as a report waiting for review');
+      const lines = win.SubcontractorsUI.noticeLines([{ status: 'pending', full_name: 'Casey' }, { status: 'active', full_name: 'Sam Subbie', insurance_expiry: '2020-01-01' }], 1);
+      assert(lines.some((l) => /Casey has applied/.test(l.text)), 'the notice names a new applicant');
+      assert(lines.some((l) => l.kind === 'reports' && /1 report from a subcontractor is waiting/.test(l.text)), 'and counts reports waiting');
+      assert(lines.some((l) => /Sam Subbie: The insurance on record expired/.test(l.text)), 'and says whose insurance has lapsed');
+
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => doc.getElementById('review-return-btn'), 'the business is offered Send back');
+      assert(/Signed and submitted by Sam Subbie \(subcontractor\)/.test(doc.getElementById('review-strip').textContent), 'and told whose report it is');
+      assert(!doc.getElementById('finalize-post-actions').classList.contains('hidden'), 'Send to client is there for the business');
+
+      win.prompt = () => 'Add a photo of the hatch';
+      doc.getElementById('review-return-btn').click();
+      await waitFor(async () => { const r = await win.DB.getReport(job.id); return r && !r.finalizedAt; }, 'sending back un-finalises it');
+      const back = await win.DB.getReport(job.id);
+      const ev = back.auditLog.find((e) => e.event === 'returned');
+      assert(ev && ev.note === 'Add a photo of the hatch' && ev.afterFinalize === true, 'with the reason on the audit trail');
+      assertEqual((await win.DB.getJob(job.id)).status, 'review', 'and the job goes back to needing work');
+      await waitFor(() => /Sent back to Sam Subbie/.test((doc.getElementById('review-strip') || {}).textContent || ''), 'the strip says it was sent back');
+
+      // Signed again, then marked reviewed.
+      const again = await win.DB.getReport(job.id);
+      // Signed on a phone whose clock is an hour ahead of the business's.
+      again.auditLog.push({ event: 'finalized', at: win.Date.now() + 3600000, userEmail: 'sub@example.com' });
+      again.finalizedAt = win.Date.now() + 3600000;
+      await win.DB.saveReport(again);
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => doc.getElementById('review-ok-btn'), 'it is waiting again');
+      doc.getElementById('review-ok-btn').click();
+      await waitFor(async () => ((await win.DB.getReport(job.id)).auditLog || []).some((e) => e.event === 'reviewed'), 'marked as reviewed');
+      await waitFor(() => /Reviewed/.test((doc.getElementById('review-strip') || {}).textContent || ''), 'and the strip says so');
+      assert(/Reviewed by the business/.test(src) && /Sent back to the subcontractor/.test(src), 'both show in the audit trail in words');
+    } finally {
+      win.Org = realOrg;
+      win.confirm = originalConfirm;
+      win.prompt = originalPrompt;
+      await win.DB.deleteJob(job.id);
+      await win.showJobListView();
+    }
+  });
+
+  test('Subcontractors: the business assigns to them, and its logo heads the report', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    assert(app.includes('function assignablePeople(allJobs)') && app.includes('`${name} (subcontractor)`'), 'approved subcontractors are on the assign list, and labelled');
+    assert(win.SubcontractorsUI.linkFor('c'.repeat(64), 'https://x.example/field-inspect/?demo=0') === `https://x.example/field-inspect/join.html?t=${'c'.repeat(64)}`, 'the link is built from wherever the app is served');
+    assertEqual(win.SubcontractorsUI.linkFor('not a token', 'https://x.example/'), '', 'and never from a malformed token');
+    assert(/Scope does not supply one/.test(win.SubcontractorsUI.AGREEMENT_HINT), 'the agreement is the business’s own wording');
+    const more = doc.getElementById('open-subcontractors-btn');
+    assert(more && more.classList.contains('hidden'), 'the Subcontractors screen is not offered until an admin is signed in');
+
+    // The logo on the printed report.
+    const realOrg = win.Org;
+    const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const job = await win.DB.addJob({ name: 'Logo Job', jobType: 'termite' });
+    await win.DB.saveReport({ jobId: job.id, documentType: 'timber_pest_inspection', finalizedAt: null, sections: {}, auditLog: [] });
+    const report = await win.DB.getReport(job.id);
+    try {
+      win.Org = Object.assign({}, realOrg, { logo: () => pixel, businessName: () => 'Host Pest' });
+      const withLogo = win.ReportPrint.buildBodyHtml(job, report, []);
+      assert(withLogo.includes(`<img class="brand-logo" src="${pixel}"`), 'the logo is printed above the business name');
+      win.Org = Object.assign({}, realOrg, { logo: () => 'javascript:alert(1)', businessName: () => 'Host Pest' });
+      assert(!win.ReportPrint.buildBodyHtml(job, report, []).includes('brand-logo'), 'anything that is not a plain picture is left out');
+      win.Org = Object.assign({}, realOrg, { logo: () => '', businessName: () => 'Host Pest' });
+      assert(!win.ReportPrint.buildBodyHtml(job, report, []).includes('brand-logo'), 'and a business with no logo prints as before');
+    } finally {
+      win.Org = realOrg;
+      await win.DB.deleteJob(job.id);
+      await win.showJobListView();
+    }
+    assert(typeof win.Org.prepareLogo === 'function' && typeof win.Org.logo === 'function', 'the business profile holds the logo');
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(sw.includes("'./subcontractor.js'") && sw.includes("'./subcontractors-ui.js'"), 'both new files are cached for a start with no signal');
+  });
+
   async function runAll() {
     // Two concurrent runs share `results` and the test database, so they
     // interleave into nonsense: counts drift mid-run and every scheduler
@@ -13774,7 +14216,14 @@
       await clearServiceWorkerState();
       await resetTestDb();
 
-      for (const t of tests) {
+      // ?only=<text> runs just the tests whose name contains it: for checking
+      // one area quickly while working on it. CI never passes it, so CI and
+      // the Run All button on a plain link always run every test.
+      const only = (new URLSearchParams(location.search).get('only') || '').toLowerCase();
+      const chosen = only ? tests.filter((t) => t.name.toLowerCase().includes(only)) : tests;
+      // The first test of a full run is what loads the app; a part run has to.
+      if (only) await reloadFrame();
+      for (const t of chosen) {
         try {
           await t.fn();
           results.push({ name: t.name, pass: true });

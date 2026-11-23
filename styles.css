@@ -3612,3 +3612,175 @@ button.stat-tile.stat-tap[aria-expanded="true"] { outline: 2px solid var(--accen
 
 /* v165: a finished job points to its next visit. */
 .job-next-visit { display: block; width: 100%; text-align: left; font: inherit; color: var(--accent); cursor: pointer; }
+
+/* ---------- Subcontractors (v166) ---------- */
+/* What a subcontractor is not offered. The database is what stops them
+   (migration 048); this only keeps the app from showing a button that would
+   fail. One list, so it is plain what is hidden. */
+body.is-sub #open-scheduler-btn,
+body.is-sub #open-leads-btn,
+body.is-sub #open-more-btn,
+body.is-sub #tab-diary,
+body.is-sub #tab-leads,
+body.is-sub #tab-more,
+body.is-sub #job-email,
+body.is-sub #job-agreement-row,
+body.is-sub #returning-client-panel,
+body.is-sub #job-technician-filters,
+body.is-sub .status-filter-chip[data-status="due"],
+body.is-sub #assigned-to-btn,
+body.is-sub #delete-job-btn,
+body.is-sub #due-callout,
+body.is-sub #plan-row,
+body.is-sub #job-comms-row,
+body.is-sub #booking-notice-row,
+body.is-sub #job-booking-card,
+body.is-sub #job-next-visit,
+body.is-sub #view-invoice-btn,
+body.is-sub #client-link-btn,
+body.is-sub #client-link-panel,
+body.is-sub #selection-delete-btn,
+body.is-sub #detail-delete,
+body.is-sub #finalize-post-actions,
+body.is-sub #export-data-btn,
+body.is-sub #followups-banner,
+body.is-sub #open-followups-btn,
+body.is-sub .reminder-nudge,
+body.is-sub #today-open-scheduler,
+body.is-sub #today-tomorrow-diary,
+body.is-sub #today-unbooked,
+body.is-sub #subs-notice { display: none !important; }
+
+/* Shown instead of the app while an application is waiting, or after access
+   has ended. Above every screen, below the in-app dialogs. */
+.sub-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--bg);
+}
+.sub-gate-card {
+  width: min(460px, 100%);
+  padding: 24px 20px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sub-gate-card h2 { margin: 0; font-size: 1.15rem; line-height: 1.3; }
+.sub-gate-body { margin: 0 0 6px; color: var(--text-dim); line-height: 1.5; }
+
+/* Licence or insurance about to lapse (amber) or lapsed (red). */
+.sub-banner,
+.subs-notice {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--warning);
+  border-radius: 12px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.sub-banner { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.sub-banner-blocked { border-left-color: var(--danger); }
+.subs-notice-line { margin: 0; display: flex; gap: 10px; align-items: baseline; justify-content: space-between; }
+.subs-notice-line + .subs-notice-line { margin-top: 8px; }
+.subs-notice-line .link-btn { flex: none; }
+
+/* Where a subcontractor report is up to: on the job list, the job, the report. */
+.job-item-review {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+.job-item-review-waiting,
+.job-item-review-returned { color: var(--warning); }
+.sub-job-note {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--warning);
+  border-radius: 10px;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+.sub-job-note-reviewed { border-left-color: var(--accent); }
+.review-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 4px solid var(--warning);
+  margin-bottom: 14px;
+}
+.review-strip.review-reviewed { border-left-color: var(--accent); }
+.review-strip-text { margin: 0; font-size: 0.9rem; line-height: 1.45; }
+
+/* The Subcontractors screen (business side). */
+.subs-card textarea {
+  width: 100%;
+  padding: 11px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+.subs-card .btn { margin-bottom: 10px; }
+.subs-person {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  margin: 0 0 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+.subs-person-lapsed { border-left: 4px solid var(--danger); }
+.subs-person-name { font-size: 0.98rem; }
+.subs-person-line { color: var(--text-dim); overflow-wrap: anywhere; }
+.subs-person .link-btn { align-self: flex-start; padding-left: 0; }
+.subs-person-actions { margin-top: 8px; }
+.subs-person-actions .btn { margin-bottom: 0; }
+.subs-agreement-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0 0 14px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+.subs-waiting-row { margin-bottom: 8px; text-align: left; }
+
+/* The logo in Business details. On white, because that is what it prints on. */
+.business-logo-preview {
+  display: block;
+  max-width: 240px;
+  max-height: 90px;
+  margin: 0 0 12px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
