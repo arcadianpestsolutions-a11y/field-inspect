@@ -31,10 +31,14 @@
   // What an Issue on timber can be. `found`/`areas`/`photos` are fields of
   // `section`; a test keeps them real.
   const KINDS = [
-    { id: 'workings', label: 'Termite damage or workings', section: 'findings', found: 'workingsFound', areas: 'workingsAreas', photos: 'damagePhotos' },
-    { id: 'live', label: 'Live termites', section: 'findings', found: 'liveTermitesFound', areas: 'liveTermitesAreas', photos: 'liveTermitesPhotos' },
+    // `details` (v177): the box that says what was found. AS 3660.2 cl 3.4.1
+    // makes "what the evidence is" required, and the technician has already
+    // said it once, in the note on the Issue. It is written there for them,
+    // spot by spot, in their words; never over something typed in the report.
+    { id: 'workings', label: 'Termite damage or workings', section: 'findings', found: 'workingsFound', areas: 'workingsAreas', photos: 'damagePhotos', details: 'evidenceDetails' },
+    { id: 'live', label: 'Live termites', section: 'findings', found: 'liveTermitesFound', areas: 'liveTermitesAreas', photos: 'liveTermitesPhotos', details: 'liveTermitesLocation' },
     { id: 'borers', label: 'Borers', section: 'findings', found: 'borersFound', areas: 'borerAreas', photos: 'borerPhotos' },
-    { id: 'decay', label: 'Fungal decay', section: 'conducive', found: 'fungalDecayFound', areas: null, photos: 'fungalDecayPhotos' },
+    { id: 'decay', label: 'Fungal decay', section: 'conducive', found: 'fungalDecayFound', areas: null, photos: 'fungalDecayPhotos', details: 'fungalDecayLocation' },
   ];
 
   // The walk's areas, in the words the report's area lists use.
@@ -134,7 +138,11 @@
       const [s, f] = rollup.set;
       const verdicts = spots.map((i) => [i, verdict(i)]).filter(([, v]) => v !== null);
       const issues = verdicts.filter(([, v]) => v === 'issue').map(([i]) => i);
-      const anyOk = verdicts.some(([, v]) => v === 'ok');
+      // `notHereIsOk` (v177): where the question is whether something is
+      // there at all (garden beds against the walls), Not here answers it the
+      // same way OK does. For the rest, Not here leaves the question open:
+      // a house with no weep holes has not been found to have clear ones.
+      const anyOk = verdicts.some(([, v]) => v === 'ok' || (rollup.notHereIsOk && v === 'nothere'));
       const anyOpen = verdicts.some(([, v]) => v === 'open');
       if (issues.length) write(s, f, rollup.issue);
       else if (anyOk && !anyOpen) write(s, f, rollup.ok);
@@ -173,6 +181,10 @@
       if (hits.length) write(kind.section, kind.found, 'Yes');
       else release(kind.section, kind.found);
       if (kind.areas) writeList(kind.section, kind.areas, Array.from(new Set(hits.map((i) => AREA_NAMES[i.area]).filter(Boolean))));
+      if (kind.details) {
+        const said = hits.map(noteLine).filter(Boolean).join('\n');
+        if (said) write(kind.section, kind.details, said); else release(kind.section, kind.details);
+      }
     }
 
     return { changes, wrote: nextWrote };

@@ -625,7 +625,16 @@
   // The technician's own answers, not suggestions, so they are written
   // straight into the report and logged like any edit. `to: undefined` takes
   // a field back to its schema default.
+  // v177: each line now ends with how to get access. AS 3660.2 cl 3.3.2.2
+  // says that where an area could not be reached safely the report must
+  // recommend how to gain access, and these said only that it was not reached.
   const WALK_RESTRICTED_LINES = {
+    subfloor: 'Subfloor: could not be accessed at the time of inspection. Provide safe access (an access hatch, or clear what blocks the way in) so it can be inspected.',
+    roof: 'Roof void: could not be accessed at the time of inspection. Provide safe access (a manhole, or clear what blocks the way in) so it can be inspected.',
+  };
+  // The wording until v176. Still the walk's own line wherever it is found,
+  // so changing the answer takes it back out like the new one.
+  const WALK_RESTRICTED_LINES_OLD = {
     subfloor: 'Subfloor: could not be accessed at the time of inspection.',
     roof: 'Roof void: could not be accessed at the time of inspection.',
   };
@@ -1665,7 +1674,8 @@
         }
       }
       const line = WALK_RESTRICTED_LINES[area];
-      const lines = String(access.restrictedAccessDetails || '').split('\n').filter((l) => l.trim() && l.trim() !== line);
+      const walkLines = [line, WALK_RESTRICTED_LINES_OLD[area]];
+      const lines = String(access.restrictedAccessDetails || '').split('\n').filter((l) => l.trim() && !walkLines.includes(l.trim()));
       if (answer === 'blocked') lines.push(line);
       const details = lines.join('\n');
       if (details !== String(access.restrictedAccessDetails || '')) {
@@ -1674,7 +1684,7 @@
       if (answer === 'blocked') {
         changes.push({ sectionId: 'access', fieldId: 'restrictedAccess', to: 'Yes' });
       } else if (!details && access.restrictedAccess === 'Yes'
-        && String(access.restrictedAccessDetails || '').split('\n').some((l) => l.trim() === line)) {
+        && String(access.restrictedAccessDetails || '').split('\n').some((l) => walkLines.includes(l.trim()))) {
         // The only restriction recorded was the one this walk wrote.
         changes.push({ sectionId: 'access', fieldId: 'restrictedAccess', to: undefined });
       }

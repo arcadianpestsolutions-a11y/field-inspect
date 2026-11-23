@@ -85,6 +85,23 @@
         {
           id: 'termiteSpecies', label: 'Termite species (genus/species, or "not determinable")',
           type: 'text', required: true, aiFillable: true,
+          quickPicks: ['Coptotermes', 'Schedorhinotermes', 'Nasutitermes', 'Heterotermes', 'Not determinable'],
+          showIf: { field: 'termiteActivity', equals: 'Yes' },
+        },
+        // v9, AS 3660.2 cl 5.2.1 and 5.5.1: where termites are active, killing
+        // the colony comes FIRST, before a treated zone or any other risk
+        // reduction. A plan that goes straight to a barrier while termites are
+        // working inside the building has the order wrong.
+        {
+          id: 'colonyControl', since: 10, label: 'Colony control — first step while termites are active (AS 3660.2 cl 5.5.1)',
+          type: 'select', required: true, aiFillable: true,
+          options: ['Termiticidal dust into active workings', 'Liquid / foamed termiticide into galleries',
+            'Baiting to colony elimination', 'Physical removal / destruction of the nest', 'Combination — see notes'],
+          showIf: { field: 'termiteActivity', equals: 'Yes' },
+        },
+        {
+          id: 'colonyControlNotes', since: 10, label: 'Colony control: where, how, and the follow-up check (dust/foam: leave undisturbed for the label period, then re-check)',
+          type: 'textarea', aiFillable: true,
           showIf: { field: 'termiteActivity', equals: 'Yes' },
         },
         {
@@ -99,8 +116,37 @@
         },
       ],
     },
+    // v9, AS 3660.2 cl 4.3.4. A required heading of the plan, and the one
+    // that was missing entirely: what this termite can do, what happens if
+    // nothing is done, and every risk the works themselves carry — including
+    // the chemical and anything else it could reach.
     {
-      id: 'proposedWorks', number: 3, title: 'Proposed Management',
+      id: 'riskAssessment', since: 10, number: 3, title: 'Risk Assessment',
+      subtitle: 'What this termite can do, what happens if nothing is done, and the risks of the works themselves.',
+      icon: '⚖️', color: '#9a3412',
+      fields: [
+        {
+          id: 'termiteCapability', label: 'Known capabilities of this termite (how it attacks, how fast, how hard it is to control)',
+          type: 'textarea', required: true, aiFillable: true,
+        },
+        {
+          id: 'consequencesOfInaction', label: 'Likely consequences of doing nothing',
+          type: 'textarea', required: true, aiFillable: true,
+        },
+        {
+          id: 'treatmentRisks', label: 'Risks of the proposed works (chemical, occupants, pets, drains and waterways, slab or membrane damage from drilling)',
+          type: 'textarea', required: true, aiFillable: true,
+        },
+        // Cl 5.4.4: management actions shall not remove predatory native ants,
+        // birds and lizards. Cl 5.5.2.2: no chemical where it could reach a drain.
+        {
+          id: 'offTargetRisk', label: 'Risk to off-target organisms (predatory ants, birds, lizards, fish, bees) and how it is managed',
+          type: 'textarea', required: true, aiFillable: true,
+        },
+      ],
+    },
+    {
+      id: 'proposedWorks', number: 4, title: 'Proposed Management',
       subtitle: 'The method, its extent, and anything that cannot be treated.',
       icon: '🛠️', color: '#0369a1',
       fields: [
@@ -135,7 +181,16 @@
           required: true,
         },
         { id: 'productsProposed', label: 'Products proposed', type: 'productList', required: true },
-        { id: 'estimatedDuration', label: 'Estimated time on site', type: 'text' },
+        { id: 'estimatedDuration', label: 'Estimated time on site', type: 'text', required: true, quickPicks: ['Half a day', '1 day', '2 days'] },
+        // v9, AS 3660.2 cl 4.3.5: the plan SHALL give the expected time on
+        // site, the number of visits, and any works or changes required
+        // before termite management can begin (commonly clearing debris and
+        // obstructions). Time on site was optional; the other two were absent.
+        { id: 'numberOfVisits', since: 10, label: 'Number of visits expected', type: 'text', required: true, quickPicks: ['1', '2', '3'] },
+        {
+          id: 'preWorksRequired', since: 10, label: 'Works or changes needed before termite management can begin (clear debris, remove obstructions, fix leaks)',
+          type: 'textarea', required: true, aiFillable: true,
+        },
         // AS 3660 expects the client to be told what else was possible, not
         // just what is being sold to them. It is also the technician's best
         // protection when someone asks later why baiting was not used.
@@ -182,8 +237,31 @@
         },
       ],
     },
+    // v9, AS 3660.2 cl 4.3.6: the plan SHALL conclude with the expected
+    // outcome, the ongoing risk-management requirements, the expected
+    // duration of works, and how success or failure will be judged.
     {
-      id: 'warranty', number: 4, title: 'Warranty & Ongoing Requirements',
+      id: 'outcome', since: 10, number: 5, title: 'Anticipated Outcome',
+      subtitle: 'What the client should expect, for how long, and how you will both know it worked.',
+      icon: '🎯', color: '#0f766e',
+      fields: [
+        { id: 'expectedOutcome', label: 'Expected outcome', type: 'textarea', required: true, aiFillable: true },
+        {
+          id: 'programDuration', label: 'Expected duration of the works program (e.g. baiting typically several months)',
+          type: 'text', required: true, quickPicks: ['1 day', '1 week', '1 to 3 months', '3 to 6 months'],
+        },
+        {
+          id: 'successCriteria', label: 'How success or failure will be measured (e.g. no activity at the follow-up inspection; colony collapse observed in stations)',
+          type: 'textarea', required: true,
+        },
+        {
+          id: 'ongoingRiskManagement', label: 'Ongoing risk-management requirements after the works',
+          type: 'textarea', required: true, aiFillable: true,
+        },
+      ],
+    },
+    {
+      id: 'warranty', number: 6, title: 'Warranty & Ongoing Requirements',
       // "What we guarantee" is a commercial promise and is not the same as
       // how long the chemical is expected to last, which is recorded up in
       // Proposed Management. A client reading a 12-month warranty against an
@@ -217,12 +295,12 @@
       ],
     },
     {
-      id: 'terms', number: 5, title: 'Terms & Conditions',
+      id: 'terms', number: 7, title: 'Terms & Conditions',
       subtitle: 'Terms applying to the proposed works.', icon: '📖', color: '#475569', fixed: true, fields: [],
     },
-    inspectorSection(6),
+    inspectorSection(8),
     {
-      id: 'acknowledgement', number: 7, title: 'Client Acceptance',
+      id: 'acknowledgement', number: 9, title: 'Client Acceptance',
       subtitle: 'The client accepts the proposed management plan and its cost.',
       icon: '✅', color: '#166534',
       fields: [
@@ -259,7 +337,54 @@
           options: ['External perimeter', 'Internal perimeter', 'Subfloor', 'Slab penetrations',
             'Garage', 'Patio / paving', 'Construction joints', 'Full under-slab'],
         },
+        // v9, AS 3660.2 cl 5.9 (c): whether one system or an integrated
+        // combination was applied.
+        {
+          id: 'singleOrIntegrated', since: 10, label: 'Single system or integrated system?', type: 'select', required: true,
+          options: ['Single system', 'Integrated system (more than one component)'],
+        },
         { id: 'productsUsed', label: 'Products installed', type: 'productList', required: true },
+        // v9, cl 5.9 (a)(i) and 5.10 (c): the service life on the product
+        // label, the area treated in m² and the perimeter / linear runs in m.
+        // The product rows record dilution and total volume; these are the
+        // quantities the certificate must show about the zone as a whole.
+        {
+          id: 'labelServiceLife', since: 10, label: 'Service life stated on the product label (e.g. "up to 8 years")',
+          type: 'text', required: true, quickPicks: ['Up to 3 years', 'Up to 5 years', 'Up to 8 years', 'Up to 10 years'],
+        },
+        { id: 'areaTreatedM2', since: 10, label: 'Area of chemical application (m²) and where', type: 'text' },
+        {
+          id: 'linearMetresTreated', since: 10, label: 'Perimeter / linear treatment (m) — internal and external, and where',
+          type: 'text', required: true,
+        },
+        // Cl 5.9 (a)(i): for reticulation, the maximum replenishing pressure
+        // SHALL be shown prominently, with the termiticide volume per fill point.
+        {
+          id: 'reticMaxPressure', since: 10, label: 'Reticulation: maximum pressure for replenishing (per the manufacturer)',
+          type: 'text', required: true, showIf: { field: 'systemType', includes: 'Reticulation system' },
+        },
+        {
+          id: 'reticFillPoints', since: 10, label: 'Reticulation: volume of termiticide required at each fill point',
+          type: 'textarea', required: true, showIf: { field: 'systemType', includes: 'Reticulation system' },
+        },
+        // Cl 5.9 (a)(ii): for a physical system, its name and how it was installed.
+        {
+          id: 'physicalSystemName', since: 10, label: 'Physical system: name and method of installation (physical barriers only)',
+          type: 'textarea',
+        },
+        // Cl 5.5.2.2 (b)(iii): drilling to treat under the entire slab only
+        // with a builder's or engineer's approval, and that advice goes in the
+        // documentation given to the client.
+        {
+          id: 'underSlabApproval', since: 10, label: 'Builder / engineer harm-minimisation advice for under-slab drilling (who, date, what they approved)',
+          type: 'textarea', required: true, showIf: { field: 'areasTreated', includes: 'Full under-slab' },
+        },
+        // Cl 5.5.2.2: no chemical where there is a risk of it entering a drain,
+        // or before weather that could wash it in.
+        {
+          id: 'drainRiskChecked', since: 10, label: 'Chemical kept clear of drains (rubble / agricultural drains) and no rain expected to wash it in',
+          type: 'yesno', required: true,
+        },
         {
           id: 'installationPhotos', label: 'Photos of the installed system', type: 'photos',
           required: true, triggersAiFill: true,
@@ -272,10 +397,77 @@
           id: 'partialDetail', label: 'Which parts, and why', type: 'textarea', required: true,
           showIf: { field: 'partialInstallation', equals: 'Yes' },
         },
+        // v9, cl 5.9 (f) and 5.2.2.2: limitations caused by the building's
+        // design or construction, or by what the client asked for, and the
+        // increased inspection frequency recommended because of them.
+        {
+          id: 'installationLimitations', since: 10,
+          label: 'Limitations of the installation or of inspecting / maintaining it (building design, construction, client requirements) — or "None"',
+          type: 'textarea', required: true,
+        },
+      ],
+    },
+    // v9, cl 5.9 (d): a diagram showing where the system components are.
+    // Required — it is how anyone finds the treated zone years later.
+    {
+      id: 'systemDiagram', since: 10, number: 3, title: 'System Diagram',
+      subtitle: 'Mark where the system components are — treated zone, drill lines, stations, reticulation fill points.',
+      icon: '🗺️', color: '#0d9488',
+      fields: [
+        { id: 'systemSketch', label: 'Diagram of the system components', type: 'sketch', required: true },
+        { id: 'sketchData', label: 'Diagram marker data', type: 'sketchData' },
+      ],
+    },
+    // v9, cl 5.9 (i)–(l): slab and suspended-floor details. Only the parts
+    // that apply are asked.
+    {
+      id: 'construction', since: 10, number: 4, title: 'Slab & Subfloor Details',
+      subtitle: 'The floor construction the system works with, and what was done to it.',
+      icon: '🏗️', color: '#57534e',
+      fields: [
+        {
+          id: 'floorConstruction', label: 'Floor construction', type: 'multiselect', required: true,
+          options: ['Concrete slab', 'Suspended floor'],
+        },
+        {
+          id: 'slabType', label: 'Slab type', type: 'select', required: true,
+          options: ['Raft', 'Infill', 'Formed-void (waffle)', 'Tied', 'Not determinable'],
+          showIf: { field: 'floorConstruction', includes: 'Concrete slab' },
+        },
+        {
+          id: 'slabConformance', label: 'Slab conforms to AS 2870 or AS 3600?', type: 'select', required: true,
+          options: ['Yes', 'No — noted', 'Not determinable'],
+          showIf: { field: 'floorConstruction', includes: 'Concrete slab' },
+        },
+        {
+          id: 'slabInclusions', label: 'Slab inclusions (heater wires, pipes, sub-slab water storage in m) — or "None known"',
+          type: 'text', showIf: { field: 'floorConstruction', includes: 'Concrete slab' },
+        },
+        {
+          id: 'slabWorks', label: 'Slab works: number of penetrations treated; number and total length (m) of joints treated; works to slab edges or discontinuities',
+          type: 'textarea', showIf: { field: 'floorConstruction', includes: 'Concrete slab' },
+        },
+        {
+          id: 'subfloorClearance', label: 'Minimum clearance under the floor (mm), and under fixtures (mm)',
+          type: 'text', required: true, showIf: { field: 'floorConstruction', includes: 'Suspended floor' },
+        },
+        {
+          id: 'subfloorDrainage', label: 'Grading and drainage to prevent ponding', type: 'textarea',
+          showIf: { field: 'floorConstruction', includes: 'Suspended floor' },
+        },
+        {
+          id: 'subfloorVentilation', label: 'Subfloor ventilation to the NCC present?', type: 'select',
+          options: ['Yes', 'No — see limitations', 'Not determinable'],
+          showIf: { field: 'floorConstruction', includes: 'Suspended floor' },
+        },
+        {
+          id: 'pierTreatment', label: 'Treatment applied to piers / stumps / pillars', type: 'textarea',
+          showIf: { field: 'floorConstruction', includes: 'Suspended floor' },
+        },
       ],
     },
     {
-      id: 'durableNotice', number: 3, title: 'Durable Notice',
+      id: 'durableNotice', number: 5, title: 'Durable Notice',
       subtitle: 'AS 3660 requires a durable notice fixed in a visible position recording the system installed.',
       icon: '🏷️', color: '#b45309',
       fields: [
@@ -294,10 +486,26 @@
           id: 'noticeOmittedReason', label: 'Why no notice was fixed', type: 'textarea',
           required: true, showIf: { field: 'noticeInstalled', equals: 'No' },
         },
+        // v9, cl 5.10 (e)–(g): the notice states whether chemical will need to
+        // be reapplied, the product recommended for it, and the volume and
+        // method at each location (including reticulation volume and pressure).
+        // Recorded here so the certificate and the notice say the same thing.
+        {
+          id: 'reapplicationExpected', since: 10, label: 'Is reapplication of chemical expected (spray, injection or reticulation)?',
+          type: 'yesno', required: true,
+        },
+        {
+          id: 'reapplicationProduct', label: 'Product recommended for reapplication', type: 'text', required: true,
+          showIf: { field: 'reapplicationExpected', equals: 'Yes' },
+        },
+        {
+          id: 'reapplicationVolumes', label: 'Volume of diluted product and method at each location (and pressure at any reticulation point)',
+          type: 'textarea', required: true, showIf: { field: 'reapplicationExpected', equals: 'Yes' },
+        },
       ],
     },
     {
-      id: 'warranty', number: 4, title: 'Warranty & Next Inspection',
+      id: 'warranty', number: 6, title: 'Warranty & Next Inspection',
       subtitle: 'What is covered and when the property must next be inspected.',
       icon: '📜', color: '#166534',
       fields: [
@@ -309,16 +517,27 @@
           type: 'select', required: true, options: ['3 months', '6 months', '12 months'], default: '12 months',
         },
         { id: 'nextInspectionDue', label: 'Next inspection due', type: 'date', required: true },
+        // v9, cl 5.9 (e) and (g): the scope of future inspections (not only
+        // how often), and advice for maintaining the system.
+        {
+          id: 'futureInspectionScope', since: 10, label: 'Scope of future inspections (what each inspection must cover)',
+          type: 'textarea', required: true,
+          default: 'A full inspection to AS 3660.2 of the building, the treated zone and the inspection zones, at not more than the interval above.',
+        },
+        {
+          id: 'maintenanceAdvice', since: 10, label: 'Advice for maintaining the system (keep treated zone undisturbed, no soil or mulch over it, tell us before works near it…)',
+          type: 'textarea', required: true, aiFillable: true,
+        },
         { id: 'warrantyConditions', label: 'Conditions and exclusions', type: 'textarea' },
       ],
     },
     {
-      id: 'terms', number: 5, title: 'Terms & Conditions',
+      id: 'terms', number: 7, title: 'Terms & Conditions',
       subtitle: 'Terms applying to this certificate.', icon: '📖', color: '#475569', fixed: true, fields: [],
     },
-    inspectorSection(6),
+    inspectorSection(8),
     {
-      id: 'acknowledgement', number: 7, title: 'Client Acknowledgement',
+      id: 'acknowledgement', number: 9, title: 'Client Acknowledgement',
       subtitle: 'The owner acknowledges the system and their obligation to maintain inspections.',
       icon: '✅', color: '#166534',
       fields: [
@@ -388,6 +607,17 @@
           id: 'activityDetail', label: 'Which stations, and what was observed', type: 'textarea',
           required: true, showIf: { field: 'activityFound', equals: 'Yes' }, aiFillable: true,
         },
+        // v9, cl 5.5.1.4: no single test proves a colony is dead, and absence
+        // at a station is NOT proof. Signs of impending collapse are an
+        // overabundance of soldiers, sluggish or deformed termites, and white
+        // deposits; a follow-up inspection about three months after presumed
+        // collapse checks for further activity.
+        {
+          id: 'colonyStatus', since: 10, label: 'Colony status (absence from a station alone is not proof of colony death)', type: 'select',
+          options: ['Not baiting — monitoring only', 'Feeding on bait', 'Signs of impending collapse (soldier overabundance, sluggish, white deposits)',
+            'Presumed collapsed — follow-up inspection due in about 3 months', 'Activity moved away — colony status unknown'],
+          aiFillable: true,
+        },
         {
           id: 'baitReplenished', label: 'Bait replenished or replaced?', type: 'yesno', required: true,
         },
@@ -419,6 +649,15 @@
           options: ['Current — maintained by this service', 'At risk — client actions outstanding',
             'Lapsed — monitoring overdue'],
           default: 'Current — maintained by this service',
+        },
+        // v9, AS 3660.2 cl 5.2.2 and 5.5.1.3.3: baits and lures SHALL be
+        // inspected at intervals not exceeding three months; monthly is
+        // recommended while termites are feeding.
+        {
+          id: 'monitoringInterval', since: 10, label: 'Station inspection interval (AS 3660.2: no more than 3 months; monthly while feeding)',
+          type: 'select', required: true,
+          options: ['Monthly — termites feeding', 'Every 6 weeks', 'Every 2 months', 'Every 3 months (the maximum)'],
+          default: 'Every 3 months (the maximum)',
         },
         { id: 'nextServiceDue', label: 'Next monitoring visit due', type: 'date', required: true },
         { id: 'serviceNotes', label: 'Notes', type: 'textarea', aiFillable: true },

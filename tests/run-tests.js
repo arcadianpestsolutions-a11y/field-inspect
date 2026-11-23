@@ -4441,10 +4441,14 @@
       'and only the inside has tick-only checks (v143)');
     const labels = items.map((i) => i.label);
     assertEqual(new Set(labels).size, labels.length, 'no two steps share a label, since a label is where its photos are filed');
-    for (const old of ['Water Tanks / Downpipes', 'Garden Beds Against Walls', 'External Timbers', 'Sheds & Stored Items', 'Subfloor Damp / Ventilation']) {
+    for (const old of ['Water Tanks / Downpipes', 'External Timbers', 'Sheds & Stored Items', 'Subfloor Damp / Ventilation']) {
       const was = items.find((i) => i.label === old);
       assert(was && was.hidden && was.schemaField, `photos already taken as "${old}" still file into the report`);
     }
+    // v177: garden beds are a step again (AS 3660.2 cl 3.4.4), under the label
+    // their old photos were filed with, so those still file into the report.
+    const beds = items.find((i) => i.label === 'Garden Beds Against Walls');
+    assert(beds && !beds.hidden && beds.id === 'gardenBeds' && beds.schemaField === 'conducivePhotos', 'garden beds against the walls is asked for again, under its old label');
     const legacy = items.find((i) => i.label === 'Kitchen / Bathroom');
     assert(legacy && legacy.hidden && legacy.schemaField === 'conducivePhotos',
       'photos already taken as Kitchen / Bathroom still file into the report, though it is no longer asked for');
@@ -4591,6 +4595,7 @@
     for (const k of win.WalkRollup.KINDS) {
       assert(field(k.section, k.found).type === 'yesno', `${k.id}: its found question exists`);
       assert(field(k.section, k.photos).photoRequired === true, `${k.id}: and its photo is one the rules demand`);
+      if (k.details) assertEqual(field(k.section, k.details).type, 'textarea', `${k.id}: the box its note is written into exists`);
       if (k.areas) {
         for (const name of Object.values(win.WalkRollup.AREA_NAMES)) {
           assert(field(k.section, k.areas).options.includes(name), `${k.id}: "${name}" is one of its areas`);
@@ -5005,8 +5010,10 @@
     const win = frame.contentWindow;
     const job = await win.DB.addJob({ name: 'Access Answers Job', jobType: 'termite' });
     const get = async () => (await win.DB.getReport(job.id)).sections;
-    const SUB = 'Subfloor: could not be accessed at the time of inspection.';
-    const ROOF = 'Roof void: could not be accessed at the time of inspection.';
+    // v177: each line also says how to get in (AS 3660.2 cl 3.3.2.2).
+    const SUB_OLD = 'Subfloor: could not be accessed at the time of inspection.';
+    const SUB = SUB_OLD + ' Provide safe access (an access hatch, or clear what blocks the way in) so it can be inspected.';
+    const ROOF = 'Roof void: could not be accessed at the time of inspection. Provide safe access (a manhole, or clear what blocks the way in) so it can be inspected.';
 
     assert(await win.ReportUI.recordAccessAnswer(job.id, 'subfloor', 'no'), 'saved');
     let s = await get();
@@ -5036,6 +5043,18 @@
     s = await get();
     assertEqual(s.access.restrictedAccessDetails, 'Garage locked.', 'changing the answers takes back only those lines');
     assertEqual(s.access.restrictedAccess, 'Yes', 'and a restriction the technician recorded stays');
+
+    // A line the walk wrote before v177, in the shorter wording, is still the walk's own.
+    const older = await win.DB.getReport(job.id);
+    older.sections.access.restrictedAccessDetails = ['Garage locked.', SUB_OLD].join('\n');
+    await win.DB.saveReport(older);
+    await win.ReportUI.recordAccessAnswer(job.id, 'subfloor', 'blocked');
+    assertEqual((await get()).access.restrictedAccessDetails, ['Garage locked.', SUB].join('\n'), 'the shorter line from before is replaced by the one that says how to get in, not doubled');
+    await win.ReportUI.recordAccessAnswer(job.id, 'subfloor', 'yes');
+    assertEqual((await get()).access.restrictedAccessDetails, 'Garage locked.', 'and comes back out with a change of answer');
+    const access = win.REPORT_SCHEMA.find((x) => x.id === 'access');
+    assertEqual(win.ReportSchemaUtils.sectionValidationErrors(access, { ...(await get()).access, restrictedAccess: 'Yes', restrictedAccessDetails: SUB }).filter((e) => e.fieldId === 'restrictedAccessDetails').length, 0,
+      'the walk\'s line answers the now-required details');
 
     const job2 = await win.DB.addJob({ name: 'Access Answers Job 2', jobType: 'termite' });
     await win.ReportUI.recordAccessAnswer(job2.id, 'roof', 'blocked');
@@ -5280,7 +5299,7 @@
   test('Documents: each schema is structurally sound', () => {
     const win = frame.contentWindow;
     const VALID = new Set(['text', 'textarea', 'select', 'yesno', 'multiselect', 'date', 'time',
-      'photos', 'signature', 'static', 'productList', 'stationList', 'sketch', 'number']);
+      'photos', 'signature', 'static', 'productList', 'stationList', 'sketch', 'sketchData', 'number']);
     const schemas = [
       ['action plan', win.TERMITE_ACTION_PLAN_SCHEMA],
       ['certificate', win.TERMITE_CERTIFICATE_SCHEMA],
@@ -5399,6 +5418,303 @@
     const omitted = U.sectionValidationErrors(notice, { noticeInstalled: 'No' });
     assert(omitted.some((e) => e.fieldId === 'noticeOmittedReason'),
       'and if none was fixed, that needs explaining');
+  });
+
+  // ---------- AS 3660.2 gap fill (schema v9) ----------
+  test('AS 3660.2: a tick-list showIf (includes) shows the field only when that option is ticked', () => {
+    const U = frame.contentWindow.ReportSchemaUtils;
+    const f = { id: 'x', showIf: { field: 'systemType', includes: 'Reticulation system' } };
+    assert(!U.isFieldVisible(f, {}), 'hidden with nothing ticked');
+    assert(!U.isFieldVisible(f, { systemType: ['Termite baiting system'] }), 'hidden when only something else is ticked');
+    assert(U.isFieldVisible(f, { systemType: ['Termite baiting system', 'Reticulation system'] }), 'shown once it is ticked');
+    assert(!U.isFieldVisible(f, { systemType: 'Reticulation system' }), 'a plain string is not a tick list');
+  });
+
+  test('AS 3660.2 cl 5.9: a reticulation certificate cannot finalise without the pressure and fill volumes', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const inst = win.TERMITE_CERTIFICATE_SCHEMA.find((s) => s.id === 'installation');
+    const base = { systemType: ['Chemical soil treated zone'] };
+    const plain = U.sectionValidationErrors(inst, base).map((e) => e.fieldId);
+    assert(!plain.includes('reticMaxPressure'), 'no reticulation, no pressure question');
+    assert(plain.includes('labelServiceLife'), 'the label service life is required');
+    assert(plain.includes('linearMetresTreated'), 'the linear metres treated are required');
+    const retic = U.sectionValidationErrors(inst, { systemType: ['Reticulation system'] }).map((e) => e.fieldId);
+    assert(retic.includes('reticMaxPressure') && retic.includes('reticFillPoints'), 'reticulation needs both');
+  });
+
+  test('AS 3660.2 cl 5.9 (d): the certificate carries a required diagram', () => {
+    const win = frame.contentWindow;
+    const diagram = win.TERMITE_CERTIFICATE_SCHEMA.find((s) => s.id === 'systemDiagram');
+    assert(diagram, 'there is a diagram section');
+    assert(diagram.fields.some((f) => f.type === 'sketch' && f.required), 'and the drawing is required');
+  });
+
+  test('AS 3660.2 cl 4.3: the action plan has every heading the Standard requires', () => {
+    const win = frame.contentWindow;
+    const ids = win.TERMITE_ACTION_PLAN_SCHEMA.map((s) => s.id);
+    for (const id of ['clientDetails', 'basis', 'riskAssessment', 'proposedWorks', 'outcome']) {
+      assert(ids.includes(id), `action plan has ${id}`);
+    }
+    const U = win.ReportSchemaUtils;
+    const risk = win.TERMITE_ACTION_PLAN_SCHEMA.find((s) => s.id === 'riskAssessment');
+    const missing = U.sectionValidationErrors(risk, {}).map((e) => e.fieldId);
+    assert(missing.includes('consequencesOfInaction') && missing.includes('offTargetRisk'), 'risk assessment cannot be left blank');
+    const basis = win.TERMITE_ACTION_PLAN_SCHEMA.find((s) => s.id === 'basis');
+    const active = U.sectionValidationErrors(basis, { termiteActivity: 'Yes' }).map((e) => e.fieldId);
+    assert(active.includes('colonyControl'), 'active termites: colony control must be planned first');
+    const quiet = U.sectionValidationErrors(basis, { termiteActivity: 'No' }).map((e) => e.fieldId);
+    assert(!quiet.includes('colonyControl'), 'no active termites: not asked');
+  });
+
+  test('AS 3660.2 cl 3.4.1: an inspection report needs the time and the weather', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const client = win.REPORT_SCHEMA.find((s) => s.id === 'clientDetails');
+    const missing = U.sectionValidationErrors(client, {}).map((e) => e.fieldId);
+    assert(missing.includes('inspectionTime') && missing.includes('weather'), 'both are required');
+    const special = U.sectionValidationErrors(client, {
+      inspectionClassification: 'Special inspection (elevated risk — up to every 6 months)',
+    }).map((e) => e.fieldId);
+    assert(special.includes('specialInspectionExclusions'), 'a special inspection must say what it left out');
+  });
+
+  test('AS 3660.2: each follow-on document prints its own terms, not the inspection\'s', () => {
+    const P = frame.contentWindow.ReportPrint;
+    const cert = P.termsHtmlFor({ documentType: 'termite_certificate', sections: {} });
+    assert(/ten \(10\) years/.test(cert), 'certificate: 10-year retention');
+    assert(!/Non-Invasive, visual/.test(cert), 'certificate does not call itself an inspection');
+    const plan = P.termsHtmlFor({ documentType: 'termite_action_plan', sections: {} });
+    assert(/residual protection/.test(plan), 'plan: colony control gives no residual protection');
+    const insp = P.termsHtmlFor({ documentType: 'timber_pest_inspection', sections: {} });
+    assert(/AS 3660.2-2017/.test(insp) && /Non-Invasive/.test(insp), 'the inspection keeps its own terms');
+  });
+
+  // ---------- v177: the Standard's questions, fitted to how the app is used ----------
+  test('AS 3660.2 cl 3.4.4: the walk answers the garden bed, stored timber, timber in the ground and built-against questions', () => {
+    const win = frame.contentWindow;
+    const R = win.WalkRollup;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const outside = items.filter((i) => i.area === 'outside' && !i.hidden).map((i) => i.id);
+    const subfloor = items.filter((i) => i.area === 'subfloor' && !i.hidden).map((i) => i.id);
+    for (const id of ['gardenBeds', 'timberInGround', 'bridging', 'storedGoods']) assert(outside.includes(id), `${id} is on the outside list`);
+    const run = (activeIds, state, sections, wrote) => R.compute({ items, activeIds, state, sections: sections || {}, defaults: {}, wrote: wrote || {} });
+    const change = (out, f) => out.changes.find((x) => x.fieldId === f);
+    const to = (out, f) => { const c = change(out, f); return c ? c.to : undefined; };
+    const FOUR = ['gardenBedsAgainstWall', 'storedTimberFound', 'timberInGroundFound', 'bridgingFound'];
+    const conducive = win.REPORT_SCHEMA.find((s) => s.id === 'conducive');
+    for (const f of FOUR) assert(conducive.fields.find((x) => x.id === f).required, `${f} is a question the report must answer`);
+
+    // A slab home and "Rest are OK" on the outside: all four are answered, with no extra tap.
+    const allOk = {};
+    for (const id of outside) allOk[id] = { r: 'ok', at: 1 };
+    let out = run(outside, { results: allOk, skipped: [] });
+    for (const f of FOUR) assertEqual(to(out, f), 'No', `${f} is answered by the walk`);
+
+    // Not here is an answer to these: no garden beds at all is none against the walls.
+    const noBeds = { ...allOk };
+    delete noBeds.gardenBeds;
+    out = run(outside, { results: noBeds, skipped: ['gardenBeds'] });
+    assertEqual(to(out, 'gardenBedsAgainstWall'), 'No', 'Not here answers No');
+    // And only to these: a house with no weep holes has not been found to have clear ones.
+    const noWeep = { ...allOk };
+    delete noWeep.weepHoles;
+    out = run(outside, { results: noWeep, skipped: ['weepHoles'] });
+    assert(!change(out, 'weepHolesClear'), 'Not here still leaves the other questions alone');
+
+    // An Issue is a Yes, and its note says what.
+    out = run(outside, { results: { ...allOk, bridging: { r: 'issue', at: 2, note: 'Deck bolted to the wall, no gap' } }, skipped: [] });
+    assertEqual(to(out, 'bridgingFound'), 'Yes', 'an Issue answers Yes');
+    assertEqual(to(out, 'bridgingDetails'), 'Built Against the House: Deck bolted to the wall, no gap', 'with the note as its details');
+    assertEqual(to(out, 'gardenBedsAgainstWall'), 'No', 'and the others are still No');
+
+    // Stored timber is one question for two places.
+    const both = [...outside, ...subfloor];
+    out = run(both, { results: allOk, skipped: [] });
+    assert(!change(out, 'storedTimberFound'), 'with the subfloor still to check, it does not say No yet');
+    out = run(both, { results: { ...allOk, subfloorDebris: { r: 'issue', at: 3, note: 'Old formwork under the kitchen' } }, skipped: [] });
+    assertEqual(to(out, 'storedTimberFound'), 'Yes', 'timber lying on the subfloor ground is stored timber');
+    assertEqual(to(out, 'storedTimberDetails'), 'Timber on Subfloor Ground: Old formwork under the kitchen');
+
+    // An answer chosen in the report belongs to the technician.
+    out = run(outside, { results: allOk, skipped: [] }, { conducive: { gardenBedsAgainstWall: 'Yes' } });
+    assert(!change(out, 'gardenBedsAgainstWall'), 'a Yes chosen in the report is never turned into No');
+  });
+
+  test('AS 3660.2 cl 3.4.1: the note on a timber Issue becomes the description of the evidence, never over one typed in the report', () => {
+    const win = frame.contentWindow;
+    const R = win.WalkRollup;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const activeIds = items.filter((i) => !i.hidden).map((i) => i.id);
+    const run = (state, sections, wrote) => R.compute({ items, activeIds, state, sections: sections || {}, defaults: {}, wrote: wrote || {} });
+    const change = (out, f) => out.changes.find((x) => x.fieldId === f);
+    const SAID = 'Bearers & Joists: Mud leads up the pier under the bathroom';
+    const issue = { results: { subfloorTimbers: { r: 'issue', at: 1, kinds: ['workings', 'live'], note: 'Mud leads up the pier under the bathroom' } }, skipped: [] };
+
+    const first = run(issue);
+    assertEqual(change(first, 'evidenceDetails').to, SAID, 'what was typed on the walk is the nature of the evidence');
+    assertEqual(change(first, 'liveTermitesLocation').to, SAID, 'and where the live termites are');
+    assertEqual(change(first, 'workingsAreas').to.join(), 'Subfloor', 'with the area ticked');
+    assertEqual(change(first, 'liveTermitesAreas').to.join(), 'Subfloor');
+
+    const typed = run(issue, { findings: { evidenceDetails: 'Typed by the inspector in the report.' } });
+    assert(!change(typed, 'evidenceDetails'), 'words typed in the report are never replaced');
+
+    const noNote = run({ results: { subfloorTimbers: { r: 'issue', at: 1, kinds: ['workings'] } }, skipped: [] });
+    assert(!change(noNote, 'evidenceDetails'), 'an Issue with nothing typed writes nothing, so the Finish step asks for it');
+
+    const after = run({ results: { subfloorTimbers: { r: 'ok', at: 2 } }, skipped: [] },
+      { findings: { workingsFound: 'Yes', workingsAreas: ['Subfloor'], evidenceDetails: SAID, liveTermitesFound: 'Yes', liveTermitesAreas: ['Subfloor'], liveTermitesLocation: SAID } }, first.wrote);
+    assert(change(after, 'evidenceDetails') && change(after, 'evidenceDetails').to === undefined, 'changing the Issue to OK takes the walk\'s words back out');
+  });
+
+  test('AS 3660.2 cl 3.4.1, 3.3.2.2: what was found cannot be signed off without what, where and how much risk', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const section = (id) => win.REPORT_SCHEMA.find((s) => s.id === id);
+    const missing = (id, values) => U.sectionValidationErrors(section(id), values).filter((e) => e.kind === 'missing').map((e) => e.fieldId);
+    const WHEN_FOUND = ['termiteSpecies', 'riskOfAssociatedDamage', 'liveTermitesAreas', 'workingsAreas', 'evidenceDetails', 'workingsDamagePotential'];
+
+    const none = missing('findings', { liveTermitesFound: 'No', workingsFound: 'No' });
+    for (const f of WHEN_FOUND) assert(!none.includes(f), `nothing found: ${f} is not asked`);
+    const live = missing('findings', { liveTermitesFound: 'Yes' });
+    for (const f of ['termiteSpecies', 'riskOfAssociatedDamage', 'liveTermitesAreas']) assert(live.includes(f), `live termites: ${f} is required`);
+    const answered = missing('findings', { liveTermitesFound: 'Yes', termiteSpecies: 'Not determinable', riskOfAssociatedDamage: 'High', liveTermitesAreas: ['Subfloor'] });
+    assert(!answered.includes('termiteSpecies'), '"Not determinable" is an answer: the Standard asks for it as far as it can be told');
+    assert(section('findings').fields.find((f) => f.id === 'termiteSpecies').quickPicks.includes('Not determinable'), 'and it is one tap');
+    const past = missing('findings', { workingsFound: 'Yes' });
+    for (const f of ['workingsAreas', 'evidenceDetails', 'workingsDamagePotential']) assert(past.includes(f), `workings: ${f} is required`);
+
+    assert(missing('access', { restrictedAccess: 'Yes' }).includes('restrictedAccessDetails'), 'restricted access needs the recommendation for getting in');
+    assert(!missing('access', { restrictedAccess: 'No' }).includes('restrictedAccessDetails'), 'and nothing when access was not restricted');
+    const fresh = U.defaultValuesForSection(section('access'));
+    assert(fresh.toolsUsed.includes('Moisture meter') && fresh.invasivePerformed === 'No', 'the usual tools and "no invasive work" are there to begin with');
+    assert(!missing('access', { ...fresh, toolsUsed: [] }).includes('toolsUsed'), 'the tools are never what stops a report: the Standard does not make the report list them');
+    assert(missing('access', { ...fresh, invasivePerformed: 'Yes' }).includes('invasivePermission'), 'invasive work needs the owner\'s permission recorded');
+
+    const client = missing('clientDetails', { inspectionClassification: 'Special inspection (elevated risk — up to every 6 months)' });
+    assert(client.includes('specialInspectionPurpose') && client.includes('specialInspectionExclusions'), 'a special inspection says why, and what it left out');
+    const purpose = section('clientDetails').fields.find((f) => f.id === 'specialInspectionPurpose');
+    assert(purpose.options.some((o) => /full inspection/i.test(o)), 'with an answer for a full inspection done more often, which is what Scope called special until now');
+    assert(!missing('clientDetails', { inspectionClassification: 'Regular inspection (recommended at least every 12 months)' }).includes('specialInspectionExclusions'), 'a regular inspection is not asked');
+  });
+
+  test('AS 3660.2 cl 4.3: the plan\'s headings are in the Action Plan, not a second time inside the inspection', () => {
+    const win = frame.contentWindow;
+    const HEADINGS = ['colonyControl', 'optionsConsidered', 'numberOfVisits', 'preWorksRequired', 'consequencesOfInaction', 'treatmentRisks', 'expectedOutcome', 'successCriteria'];
+    const inInspection = win.REPORT_SCHEMA.find((s) => s.id === 'proposedWorks').fields.map((f) => f.id);
+    for (const id of HEADINGS) assert(!inInspection.includes(id), `the inspection does not ask for ${id}`);
+    const plan = win.TERMITE_ACTION_PLAN_SCHEMA;
+    const inPlan = plan.flatMap((s) => s.fields.map((f) => f.id));
+    for (const id of HEADINGS) assert(inPlan.includes(id), `the action plan does: ${id}`);
+    const field = (sid, id) => plan.find((s) => s.id === sid).fields.find((f) => f.id === id);
+    for (const [sid, id] of [['proposedWorks', 'numberOfVisits'], ['proposedWorks', 'estimatedDuration'], ['outcome', 'programDuration'], ['basis', 'termiteSpecies']]) {
+      assert(field(sid, id).type === 'text' && field(sid, id).quickPicks.length >= 3, `${id}: the usual answers are one tap`);
+    }
+  });
+
+  test('AS 3660.2: ticking a box shows the questions that depend on it straight away', () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const host = doc.createElement('div');
+    doc.body.appendChild(host);
+    try {
+      const values = {};
+      const r = win.FormRender.create({ values, container: host });
+      r.renderSection({ id: 'installation', fields: [
+        { id: 'systemType', label: 'System installed', type: 'multiselect', options: ['Chemical soil treated zone', 'Reticulation system'] },
+        { id: 'reticMaxPressure', label: 'Maximum pressure', type: 'text', showIf: { field: 'systemType', includes: 'Reticulation system' } },
+      ] });
+      const row = host.querySelector('[data-field-row="reticMaxPressure"]');
+      assert(row && row.classList.contains('hidden'), 'hidden until its box is ticked');
+      const boxes = Array.from(host.querySelectorAll('[data-field-row="systemType"] input[type="checkbox"]'));
+      const tick = (i, on) => { boxes[i].checked = on; boxes[i].dispatchEvent(new win.Event('change', { bubbles: true })); };
+      tick(0, true);
+      assert(row.classList.contains('hidden'), 'another tick does not show it');
+      tick(1, true);
+      assert(!row.classList.contains('hidden'), 'ticking Reticulation shows the pressure question at once, with no need to leave and come back');
+      assertEqual(values.systemType.join(), 'Chemical soil treated zone,Reticulation system');
+      tick(1, false);
+      assert(row.classList.contains('hidden'), 'and unticking hides it again');
+    } finally { host.remove(); }
+  });
+
+  test('Print: a report signed before a question existed does not print it as a blank, or a walk item as "Not recorded"', () => {
+    const win = frame.contentWindow;
+    const P = win.ReportPrint;
+    const NOW = win.REPORT_SCHEMA_VERSION;
+    const job = { id: 'since-1', jobType: 'termite', name: 'Since House', address: '1 Since St' };
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    // As a report signed under the previous questions holds it: none of the newer answers.
+    for (const s of win.REPORT_SCHEMA) for (const f of s.fields) if (f.since) delete sections[s.id][f.id];
+    const older = { jobId: job.id, documentType: 'timber_pest_inspection', sections, auditLog: [], finalizedAt: Date.now(), schemaVersion: NOW - 1 };
+
+    let html = P.buildBodyHtml(job, older, []);
+    assert(!/bridging the inspection zone/.test(html) && !/Garden beds, mulch/.test(html) && !/Inspection tools carried/.test(html) && !/invasive inspection carried out/.test(html),
+      'questions newer than the signature are left out');
+    assert(/Were water leaks found/.test(html) && /Is an Invasive Inspection recommended/.test(html), 'the questions it was signed against are all still there');
+    html = P.buildBodyHtml(job, { ...older, finalizedAt: null }, []);
+    assert(/bridging the inspection zone/.test(html), 'a report not signed yet shows every question of today');
+    html = P.buildBodyHtml(job, { ...older, schemaVersion: NOW }, []);
+    assert(/bridging the inspection zone/.test(html), 'and so does one signed under today\'s questions');
+    html = P.buildBodyHtml(job, { ...older, sections: { ...sections, conducive: { ...sections.conducive, bridgingFound: 'Yes' } } }, []);
+    assert(/bridging the inspection zone/.test(html), 'an answer that is there is always printed');
+
+    // The walk's list.
+    const walk = { results: { slabEdge: { r: 'ok', at: 1 } }, skipped: [], answers: { subfloor: 'no', roof: 'no' } };
+    const walked = { ...older, sections: { ...sections, walkthrough: walk } };
+    let part = P.buildWalkHtml(job, walked);
+    assert(/<td>Weep Holes<\/td><td>Not recorded\.<\/td>/.test(part), 'an item that was on the list and not dealt with still says so');
+    for (const label of ['Garden Beds Against Walls', 'Timber in the Ground', 'Built Against the House']) {
+      assert(!part.includes(label), `${label} was not on the list when this was signed, so it is left out`);
+    }
+    part = P.buildWalkHtml(job, { ...walked, finalizedAt: null });
+    assert(/<td>Timber in the Ground<\/td><td>Not recorded\.<\/td>/.test(part), 'on a report still being written it is on the list');
+
+    // A whole section that is newer than the signature.
+    const planJob = { id: 'since-2', jobType: 'termite', name: 'Since Plan', address: '2 Since St' };
+    const planSections = fillRequired(win, win.TERMITE_ACTION_PLAN_SCHEMA);
+    delete planSections.riskAssessment;
+    delete planSections.outcome;
+    const oldPlan = { jobId: planJob.id, documentType: 'termite_action_plan', sections: planSections, auditLog: [], finalizedAt: Date.now(), schemaVersion: NOW - 1 };
+    html = P.buildBodyHtml(planJob, oldPlan, []);
+    assert(!/Risk Assessment/.test(html) && !/Anticipated Outcome/.test(html), 'a section added after the signature is left out');
+    const numbers = Array.from(html.matchAll(/<h2>(\d+)\. /g)).map((m) => Number(m[1]));
+    assert(numbers.length >= 5 && numbers.every((n, i) => n === i + 1), `and the sections that are printed still count 1, 2, 3: ${numbers.join()}`);
+    html = P.buildBodyHtml(planJob, { ...oldPlan, finalizedAt: null }, []);
+    assert(/Risk Assessment/.test(html) && /Anticipated Outcome/.test(html), 'a plan still being written has them');
+
+    // Every mark names a version that has existed.
+    const marked = [];
+    for (const sch of [win.REPORT_SCHEMA, win.TERMITE_ACTION_PLAN_SCHEMA, win.TERMITE_CERTIFICATE_SCHEMA, win.TERMITE_MONITORING_SCHEMA]) {
+      for (const s of sch) { if (s.since) marked.push(s.since); for (const f of s.fields) if (f.since) marked.push(f.since); }
+    }
+    assert(marked.length >= 30 && marked.every((v) => Number.isInteger(v) && v >= 2 && v <= NOW), 'each "since" is a real version, never one from the future');
+  });
+
+  test('AS 3660.1: a plan or certificate for new building work does not claim AS 3660.2\'s clauses', () => {
+    const P = frame.contentWindow.ReportPrint;
+    const own = (html) => html.slice(0, html.indexOf('Australian Consumer Law'));
+    const cert = P.termsHtmlFor({ documentType: 'termite_certificate', sections: { installation: { standardApplied: 'AS 3660.1-2014 — new construction' } } });
+    assert(/AS 3660\.1-2014/.test(own(cert)) && !/3660\.2/.test(own(cert)) && !/ten \(10\) years/.test(cert), 'a new-build certificate names its own Standard');
+    assert(/<strong>3\. Maintenance and inspection/.test(cert) && /<strong>4\. Australian Consumer Law/.test(cert), 'and its clauses still count 1 to 4');
+    const existing = P.termsHtmlFor({ documentType: 'termite_certificate', sections: { installation: { standardApplied: 'AS 3660.2-2017 — existing structure' } } });
+    assert(/clauses 5\.8 and 5\.9/.test(existing) && /ten \(10\) years/.test(existing), 'one for an existing building keeps AS 3660.2\'s clauses');
+    const plan = P.termsHtmlFor({ documentType: 'termite_action_plan', sections: { basis: { standardApplied: 'AS 3660.1 — new building work' } } });
+    assert(!/Section 4 of AS 3660\.2/.test(plan) && /residual protection/.test(plan), 'a new-build plan does not say it follows Section 4 of AS 3660.2');
+    assert(/<strong>1\. Nature of this plan/.test(plan) && /<strong>2\. Colony control/.test(plan) && /<strong>3\. /.test(plan), 'and keeps its three clauses');
+  });
+
+  test('Client report: the conditions the Standard names are listed when found, in plain statements', () => {
+    const R = frame.contentWindow.ReportClient;
+    const found = R.conduciveFound(clientReport({ conducive: {
+      bridgingFound: 'Yes', bridgingItems: ['Verandah / deck', 'Hot water system'], bridgingDetails: 'Create a 25 mm gap.',
+      gardenBedsAgainstWall: 'Yes', storedTimberFound: 'No', timberInGroundFound: 'Yes', timberInGroundDetails: 'Remove the stump by the back door.',
+    } }));
+    assertEqual(found.map((x) => x.id).join(','), 'bridging,gardenBeds,timberInGround', 'each one found, and not the one answered No');
+    assertEqual(found[0].details, 'What: verandah / deck and hot water system. Create a 25 mm gap.', 'what is built against the house, then the inspector\'s words');
+    assert(found.every((x) => x.said && /[.]$/.test(x.said)), 'each with a statement of its own');
+    assertEqual(R.conduciveFound(clientReport({ conducive: { storedTimberFound: 'Yes' } }))[0].name, 'Timber and goods stored against the building');
   });
 
   // ---------- Reading a whole table (pagination) ----------
@@ -14208,6 +14524,9 @@
     const doc = frame.contentDocument;
     const job = await win.DB.addJob({ name: 'Finish Step Job', address: '1 Finish St', jobType: 'termite' });
     await win.DB.updateJob(job.id, { status: 'review' });
+    // What tapping Start does (app.js). The time is required since v177, so a
+    // report nobody tapped Start on is asked for it first; this one has it.
+    await win.ReportUI.prefillFieldValue(job.id, 'clientDetails', 'inspectionTime', '09:00');
     await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
     await waitFor(() => doc.getElementById('report-progress'), 'the card is drawn');
     const n = win.ReportUI.finishQuestions().length;

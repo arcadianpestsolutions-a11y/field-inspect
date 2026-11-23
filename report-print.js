@@ -53,8 +53,55 @@
     <p class="empty-hint">This wording reflects common industry practice and the AS 3660.2-2017 records-retention requirement, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
   `;
 
+  // v9: the three documents that follow an inspection used to print the
+  // inspection's terms ("This Inspection was non-invasive…") on a certificate
+  // or a quote. Each now prints what AS 3660.2 says about that document.
+  const TERMS_ACTION_PLAN = `
+    <p><strong>1. Nature of this plan.</strong> This Termite Management Plan is prepared in accordance with Section 4 of AS 3660.2-2017. It sets out the proposed actions, their expected outcome and the risks involved so that the Client and the Provider share an understanding of the process. It does not replace the inspection report it is based on.</p>
+    <p><strong>2. Colony control.</strong> Where termites are active, action to eliminate the colony is taken first. Colony control (including dusting, foaming and baiting) does not provide any ongoing or residual protection against other colonies, now or in future, and other termites may use the existing galleries to resume attack (AS 3660.2-2017 clause 5.5.1).</p>
+    <p><strong>3. No guarantee against future attack.</strong> A termite management system is designed to impede concealed termite entry; termites may still build around it. Regular inspection at not more than 12-month intervals remains necessary, and the warranty depends on it.</p>`;
+  const TERMS_CERTIFICATE = `
+    <p><strong>1. Certificate of Installation.</strong> This Certificate of Installation is issued in accordance with AS 3660.2-2017 (clauses 5.8 and 5.9). It is to be retained by the building owner or their agent. A copy is retained by the Provider for a minimum of ten (10) years.</p>
+    <p><strong>2. Further applications.</strong> A separate certificate is issued for each application of termiticide made more than one calendar month after the last.</p>
+    <p><strong>3. Maintenance and inspection.</strong> The system will only remain effective if it is maintained and inspected as stated in this certificate. Disturbing the treated zone, building over or against it, or bridging the inspection zone may allow concealed termite entry.</p>`;
+  const TERMS_MONITORING = `
+    <p><strong>1. Monitoring.</strong> Termite baits and monitoring stations are inspected at intervals not exceeding three months, and more often while termites are feeding (AS 3660.2-2017 clauses 5.2.2 and 5.5.1.3.3). Undetected feeding between visits may increase the risk to the structure.</p>
+    <p><strong>2. Colony status.</strong> The absence of termites from a station is not, on its own, proof that a colony has been destroyed (clause 5.5.1.4). Baiting does not provide residual protection against other colonies.</p>
+    <p><strong>3. Annual inspection.</strong> A full inspection of the building at not more than 12-month intervals is still required.</p>`;
+  // A plan or a certificate can be written under AS 3660.1 (new building
+  // work) instead: the form asks which. The first clauses above say the
+  // document follows AS 3660.2 and cite its clauses, which would be wrong on
+  // those. These say what the document is and cite nothing; the certificate
+  // also loses AS 3660.2's rule about repeat applications and the ten-year
+  // figure, which is AS 3660.2 clause 5.9's. Three clauses each, because the
+  // consumer law clause that follows them is numbered 4.
+  const TERMS_ACTION_PLAN_NEW_BUILD = `
+    <p><strong>1. Nature of this plan.</strong> This Termite Management Plan sets out the proposed actions, their expected outcome and the risks involved so that the Client and the Provider share an understanding of the process. It does not replace the inspection report it is based on.</p>`
+    + TERMS_ACTION_PLAN.slice(TERMS_ACTION_PLAN.indexOf('\n    <p><strong>2.'));
+  const TERMS_CERTIFICATE_NEW_BUILD = `
+    <p><strong>1. Certificate of Installation.</strong> This Certificate of Installation records the termite management system installed at the Property under AS 3660.1-2014.</p>
+    <p><strong>2. Keeping this certificate.</strong> It is to be retained by the building owner or their agent. A copy is retained by the Provider.</p>
+    <p><strong>3. Maintenance and inspection.</strong> The system will only remain effective if it is maintained and inspected as stated in this certificate. Disturbing the treated zone, building over or against it, or bridging the inspection zone may allow concealed termite entry.</p>`;
+  const isNewBuild = (standard) => /^AS 3660\.1/.test(String(standard || ''));
+  const TERMS_BY_DOCUMENT = {
+    termite_action_plan: TERMS_ACTION_PLAN,
+    termite_certificate: TERMS_CERTIFICATE,
+    termite_monitoring: TERMS_MONITORING,
+    termite_service_record: TERMS_MONITORING,
+  };
+
   // The terms for an inspection report, in the Standard it is written to.
   function termsHtmlFor(report) {
+    let docTerms = TERMS_BY_DOCUMENT[report && report.documentType];
+    if (docTerms) {
+      const answers = (report && report.sections) || {};
+      if (report.documentType === 'termite_action_plan' && isNewBuild((answers.basis || {}).standardApplied)) docTerms = TERMS_ACTION_PLAN_NEW_BUILD;
+      if (report.documentType === 'termite_certificate' && isNewBuild((answers.installation || {}).standardApplied)) docTerms = TERMS_CERTIFICATE_NEW_BUILD;
+      // Consumer law and the legal-review note are the same for every document.
+      const acl = FIXED_TERMS_HTML.slice(FIXED_TERMS_HTML.indexOf('<p><strong>4.'), FIXED_TERMS_HTML.indexOf('<p><strong>5.'));
+      const note = FIXED_TERMS_HTML.slice(FIXED_TERMS_HTML.indexOf('<p class="empty-hint">'));
+      return docTerms + '\n    ' + acl + note;
+    }
     const U = window.ReportSchemaUtils;
     const std = U && U.inspectionStandard ? U.inspectionStandard(report) : null;
     if (!std || std.code === 'as4349') return FIXED_TERMS_HTML;
@@ -71,6 +118,17 @@
     <p><strong>5. Limitations.</strong> Treatment was limited to the areas accessible and treated as noted in this report. Areas that were inaccessible, obstructed, or outside the agreed scope of work were not treated.</p>
     <p class="empty-hint">This wording reflects common industry practice, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
   `;
+
+  // `since` (v177): the schema version a question, a section or a walk item
+  // arrived in. A report signed before then never had it on screen, so it is
+  // left out of that report's print instead of showing as a dash or as "Not
+  // recorded". A report that is not signed yet is always printed against
+  // today's questions, because those are the ones it will be signed against.
+  const isBlank = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+  function predatesFor(report) {
+    const signedUnder = report && report.finalizedAt ? (Number(report.schemaVersion) || 0) : Infinity;
+    return (thing) => !!(thing && thing.since) && signedUnder < thing.since;
+  }
 
   function fmtVal(v) {
     if (Array.isArray(v)) return v.length ? v.join(', ') : '—';
@@ -128,9 +186,12 @@
     // Same running number as the on-screen list: a printed report must not
     // number its sections 1-8 then 11 because two were never needed.
     let printNumber = 0;
+    const predates = predatesFor(report);
     for (const section of visibleSchema(schemaFor(job && job.jobType, report), report)) {
-      printNumber++;
       const values = report.sections[section.id] || {};
+      // A whole section newer than the signature, with nothing in it.
+      if (predates(section) && !Object.keys(values).some((k) => !isBlank(values[k]))) continue;
+      printNumber++;
       html += `<div class="section"><div class="section-head" style="background:${section.color}"><h2>${printNumber}. ${escapeHtml(section.title)}</h2></div>`;
 
       if (section.id === 'summary') {
@@ -152,6 +213,7 @@
           if (!isFieldVisible(field, values)) continue;
           const val = values[field.id];
           if (field.type === 'sketchData') continue; // marker data, not printable
+          if (predates(field) && isBlank(val)) continue; // never asked on this report
           if (field.type === 'photos') {
             const photos = val || [];
             if (!photos.length) {
@@ -273,6 +335,10 @@
     if (!Object.keys(results).length && !skipped.size && !Object.keys(answers).length) return '';
     const kinds = (window.WalkRollup && window.WalkRollup.KINDS) || [];
     const kindLabel = (id) => { const k = kinds.find((x) => x.id === id); return k ? k.label.toLowerCase() : id; };
+    // An item added to the walk after this report was signed, and so never
+    // dealt with on it, is left out rather than printed as "Not recorded".
+    const predates = predatesFor(report);
+    const onThisWalk = (i) => !(predates(i) && !results[i.id] && !skipped.has(i.id));
 
     // An Issue (or a found notice) with no photograph says why (v151).
     function noPhotoText(r) { return r && r.noPhoto ? ' No photograph was taken: ' + r.noPhoto : ''; }
@@ -298,7 +364,7 @@
     let html = `<div class="section"><div class="section-head" style="background:#0f766e"><h2>What We Inspected</h2></div>`;
     html += `<p>Each area of the property, with every item checked and what was seen. Issues are photographed; the photographs are in the sections that follow.</p>`;
     for (const area of window.PhotoWalk.AREAS) {
-      const mine = items.filter((i) => i.area === area.id && !i.hidden);
+      const mine = items.filter((i) => i.area === area.id && !i.hidden && onThisWalk(i));
       if (!mine.length) continue;
       html += `<div class="field"><div class="field-label">${escapeHtml(area.title)}</div>`;
       const answer = answers[area.id];

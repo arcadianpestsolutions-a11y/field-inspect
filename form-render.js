@@ -588,6 +588,9 @@
           cb.addEventListener('change', () => {
             if (cb.checked) current.add(opt); else current.delete(opt);
             setValue(field, Array.from(current));
+            // v177: a question can depend on a tick (showIf `includes`), such
+            // as the pressure line that belongs to "Reticulation system".
+            refreshVisibility();
           });
           chip.appendChild(cb);
           chip.appendChild(document.createTextNode(opt + (isCustom ? ' (custom)' : '')));

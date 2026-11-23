@@ -153,6 +153,17 @@
     add(c.slabEdgeComplies === 'No', 'slabEdge', 'Slab edge inspection zone',
       'The slab edge inspection zone does not fully comply: it is not exposed and clear all round.',
       [str(c.slabEdgeDetails), str(c.slabEdgeComments)].filter(Boolean).join(' '));
+    // v177: the conditions AS 3660.2 cl 3.4.4 and 2.5.1 name. Fixed wording,
+    // like the rest of this list, and part of what Tal has still to approve.
+    add(c.bridgingFound === 'Yes', 'bridging', 'Structures built against the building',
+      'A structure or fitting is built against the building with no clear gap, which can hide a way in for termites.',
+      [list(c.bridgingItems).length ? `What: ${joinAnd(list(c.bridgingItems).map(lower))}.` : '', str(c.bridgingDetails)].filter(Boolean).join(' '));
+    add(c.gardenBedsAgainstWall === 'Yes', 'gardenBeds', 'Garden beds against the walls',
+      'Garden beds, mulch, raised soil or plants are built up against the building.', c.gardenBedsDetails);
+    add(c.storedTimberFound === 'Yes', 'storedTimber', 'Timber and goods stored against the building',
+      'Timber, firewood or other goods are stored under or against the building.', c.storedTimberDetails);
+    add(c.timberInGroundFound === 'Yes', 'timberInGround', 'Timber in the ground',
+      'Stumps, dead wood or timber in contact with the ground is close to the building.', c.timberInGroundDetails);
     add(c.otherConduciveFound === 'Yes', 'other', 'Other conditions',
       'Other conducive conditions were found.', c.otherConduciveDetails, 'otherConducivePhotos');
     return out;
