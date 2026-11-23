@@ -14501,6 +14501,276 @@
     await closeInspection(win, doc, job);
   });
 
+  // =====================================================================
+  // Carry forward: last visit's description of the property (v171)
+  // =====================================================================
+  async function finishedInspection(win, name, address, property, extra = {}) {
+    const job = await win.DB.addJob({ name, address, jobType: 'termite', ...extra.job });
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    sections.property = { ...sections.property, ...property };
+    sections.clientDetails.inspectionDate = '2025-11-12';
+    sections.findings = { ...sections.findings, liveTermitesFound: 'Yes', existingManagementSystem: 'Chemical barrier, 2019, intact' };
+    await win.DB.saveReport({
+      jobId: job.id, sections, auditLog: [],
+      documentType: extra.documentType || 'timber_pest_inspection',
+      finalizedAt: extra.unfinished ? null : Date.now() - 1000,
+    });
+    await win.DB.updateJob(job.id, { status: extra.unfinished ? 'review' : 'completed' });
+    return job;
+  }
+  const carriedNote = (doc) => doc.getElementById('carried-note');
+
+  test('Carry forward: a re-inspection opens with last visit\'s description of the property, and nothing else', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const unfurnished = 'At the time of the inspection the property was unfurnished';
+    const first = await finishedInspection(win, 'Carry Client', '10 Carry St, Camden', {
+      wallConstruction: 'Weatherboard', floorType: 'Timber Floor', structureHeight: 'Double Storey',
+      facade: 'Approximately South', furnishingStatus: unfurnished, propertyComments: 'Renovated 2020',
+    });
+    const next = await win.DB.addJob({ name: 'Carry Client', address: '10 Carry St, Camden', jobType: 'termite', recurringFromId: first.id });
+    await win.ReportUI.openReview(next.id, 'timber_pest_inspection');
+    await waitFor(() => carriedNote(doc), 'the report says where the property details came from');
+    assert(/inspection of 12 Nov 2025/.test(carriedNote(doc).textContent), `it names the visit: ${carriedNote(doc).textContent}`);
+    assert(/Change anything that is different/.test(carriedNote(doc).textContent), 'and asks for what has changed');
+    const cardTop = carriedNote(doc).getBoundingClientRect().top;
+    assert(cardTop <= doc.getElementById('report-progress').getBoundingClientRect().top, 'above the count of what is left');
+
+    doc.getElementById('carried-ok-btn').click();
+    await waitFor(() => !carriedNote(doc), '"They are right" clears the note');
+    const report = await win.DB.getReport(next.id);
+    const p = report.sections.property;
+    assertEqual(p.wallConstruction, 'Weatherboard', 'the wall construction came across');
+    assertEqual(p.floorType, 'Timber Floor', 'and the floor');
+    assertEqual(p.structureHeight, 'Double Storey', 'and the height');
+    assertEqual(p.facade, 'Approximately South', 'and which way it faces');
+    assert(p.furnishingStatus !== unfurnished, 'whether it was furnished on the day did not: that is a fact about that day');
+    assert(!p.propertyComments, 'nor did last visit\'s comments');
+    const f = report.sections.findings || {};
+    assert(f.liveTermitesFound === undefined || f.liveTermitesFound === '', 'no finding is ever carried');
+    assert(!f.existingManagementSystem, 'nor the condition of the system');
+    assert(!report.sections.siteSketch || !report.sections.siteSketch.sketchImage, 'nor the sketch, which holds last visit\'s markers');
+    assert(report.sections.carried && report.sections.carried.checkedAt, 'the check is recorded');
+    assertEqual(report.sections.carried.fromJobId, first.id, 'with the visit it came from');
+    const events = report.auditLog.map((e) => e.event);
+    assert(events.includes('carried-forward') && events.includes('carried-checked'), `both are in the audit trail: ${events.join()}`);
+    const line = report.auditLog.find((e) => e.event === 'carried-forward');
+    assert(/Wall Construction/.test(line.to) && /Floor Type/.test(line.to), 'the entry lists what was carried');
+
+    // Opening the report again does not carry a second time or bring the note back.
+    await win.ReportUI.openReview(next.id);
+    await wait(250);
+    assert(!carriedNote(doc), 'the note stays cleared');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(next.id);
+    await win.DB.deleteJob(first.id);
+  });
+
+  test('Carry forward: the same address is enough, and saving the property section counts as having looked', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const first = await finishedInspection(win, 'Address Match', '22 Match Rd, Narellan NSW', { wallConstruction: 'Full Brick', roofConstruction: 'Steel Truss — Metal/Colorbond' });
+    // Typed again a year later, not quite the same way.
+    const next = await win.DB.addJob({ name: 'Address Match', address: '22 match rd narellan nsw', jobType: 'termite' });
+    await win.ReportUI.openReview(next.id, 'timber_pest_inspection');
+    await waitFor(() => carriedNote(doc), 'the earlier inspection at this address is found');
+    doc.getElementById('carried-check-btn').click();
+    await waitFor(() => !doc.getElementById('view-report-section').classList.contains('hidden') && doc.querySelector('[data-field-row="wallConstruction"] select'), '"Check them" opens the property section');
+    assertEqual(doc.querySelector('[data-field-row="wallConstruction"] select').value, 'Full Brick', 'with last visit\'s answer in place');
+    assertEqual(doc.querySelector('[data-field-row="roofConstruction"] select').value, 'Steel Truss — Metal/Colorbond', 'and the roof');
+    doc.getElementById('section-save-btn').click();
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+    assert(!carriedNote(doc), 'having opened and saved it, the note goes');
+    assert((await win.DB.getReport(next.id)).sections.carried.checkedAt, 'and that is recorded');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(next.id);
+    await win.DB.deleteJob(first.id);
+  });
+
+  test('Carry forward: only from a finalized inspection of this property, and only answers the form still offers', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const openFresh = async (address, extra = {}) => {
+      const job = await win.DB.addJob({ name: 'No Carry', address, jobType: 'termite', ...extra });
+      await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+      await waitFor(() => doc.getElementById('report-progress'), 'the report opens');
+      await wait(150);
+      return job;
+    };
+    const cleanup = [];
+
+    const unfinished = await finishedInspection(win, 'Unfinished', '1 Draft Ct', { wallConstruction: 'Stone' }, { unfinished: true });
+    cleanup.push(unfinished, await openFresh('1 Draft Ct'));
+    assert(!carriedNote(doc), 'nothing comes from a report that was never finalized');
+
+    const plan = await finishedInspection(win, 'A Plan', '2 Plan Ct', { wallConstruction: 'Stone' }, { documentType: 'termite_action_plan' });
+    cleanup.push(plan, await openFresh('2 Plan Ct'));
+    assert(!carriedNote(doc), 'nor from a document that is not an inspection');
+
+    const elsewhere = await finishedInspection(win, 'Elsewhere', '3 Other Ct', { wallConstruction: 'Stone' });
+    cleanup.push(elsewhere, await openFresh('33 Other Ct'));
+    assert(!carriedNote(doc), 'nor from a different address');
+
+    const otherClient = await finishedInspection(win, 'Other Client', '4 Sold Ct', { wallConstruction: 'Stone' }, { job: { clientId: 'client-a' } });
+    cleanup.push(otherClient, await openFresh('4 Sold Ct', { clientId: 'client-b' }));
+    assert(!carriedNote(doc), 'nor from a different client at the same address');
+
+    const reworded = await finishedInspection(win, 'Reworded', '5 Old Words Ct', { wallConstruction: 'Mud brick (no longer offered)', floorType: 'Timber Floor' });
+    const after = await openFresh('5 Old Words Ct');
+    cleanup.push(reworded, after);
+    await waitFor(() => carriedNote(doc), 'what can be carried still is');
+    doc.getElementById('carried-ok-btn').click();
+    await waitFor(() => !carriedNote(doc), 'cleared');
+    const p = (await win.DB.getReport(after.id)).sections.property;
+    assertEqual(p.floorType, 'Timber Floor', 'an answer the form offers comes across');
+    assertEqual(p.wallConstruction, 'Brick Veneer', 'one it no longer offers is left at the form\'s own starting answer');
+
+    win.hideAllAppViews();
+    for (const job of cleanup) await win.DB.deleteJob(job.id);
+  });
+
+  test('Plan: its basis is filled from the inspection it follows, and has to be read', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const inspected = await finishedInspection(win, 'Plan Client', '12 Plan St, Camden', {});
+    const stored = await win.DB.getReport(inspected.id);
+    stored.sections.findings = {
+      ...stored.sections.findings,
+      liveTermitesFound: 'Yes', liveTermitesAreas: ['Subfloor', 'The Exterior'], liveTermitesLocation: 'Mud leads on the northern piers.',
+      termiteSpecies: 'Coptotermes acinaciformis', workingsFound: 'Yes', workingsAreas: ['Subfloor'], damageSeverity: 'Moderate',
+      managementSystemStatus: 'None present — management plan proposed', susceptibility: 'HIGH',
+    };
+    stored.sections.conducive = { ...stored.sections.conducive, waterLeaksFound: 'Yes', waterLeakAreas: ['Taps'] };
+    await win.DB.saveReport(stored);
+
+    const planJob = await win.DB.addJob({ name: 'Plan Client', address: '12 Plan St, Camden', jobType: 'termite', preferredDocumentType: 'termite_action_plan' });
+    await win.ReportUI.openReview(planJob.id, 'termite_action_plan');
+    await waitFor(() => carriedNote(doc), 'the plan says where its basis came from');
+    assert(/basis of this plan was filled from the inspection of 12 Nov 2025/.test(carriedNote(doc).textContent), `it names the inspection: ${carriedNote(doc).textContent}`);
+    assert(/Read it through before you sign/.test(carriedNote(doc).textContent), 'and asks for it to be read');
+    assertEqual(doc.getElementById('carried-ok-btn').textContent, 'It reads right', 'the button says what it confirms');
+
+    doc.getElementById('carried-check-btn').click();
+    await waitFor(() => !doc.getElementById('view-report-section').classList.contains('hidden') && doc.querySelector('[data-field-row="findingsSummary"] textarea'), '"Read it" opens the basis');
+    const value = (id, tag) => doc.querySelector(`[data-field-row="${id}"] ${tag}`).value;
+    assert(/Inspection Report of 12 Nov 2025$/.test(value('inspectionReference', 'input')), `the inspection is named: ${value('inspectionReference', 'input')}`);
+    const summary = value('findingsSummary', 'textarea');
+    assert(summary.includes('Live termites were found: Subfloor, The Exterior.'), 'what was found, and where');
+    assert(summary.includes('Mud leads on the northern piers.'), 'in the inspector\'s own words where there are any');
+    assert(summary.includes('Termite workings or damage were found: Subfloor. The damage appears to be moderate.'), 'the damage and how bad');
+    assert(summary.includes('Existing termite management system: none present.'), 'the state of the existing system');
+    assert(/Conditions that attract termites were noted: .*Water leaks/.test(summary), 'and the conducive conditions');
+    assert(doc.querySelector('[data-field-row="termiteActivity"] .yesno-btn.active').textContent === 'Yes', 'live activity is answered from the inspection');
+    assertEqual(value('termiteSpecies', 'input'), 'Coptotermes acinaciformis', 'with the species');
+    assertEqual(value('riskLevel', 'select'), 'HIGH', 'and the susceptibility given');
+    doc.getElementById('section-save-btn').click();
+    await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+    assert(!carriedNote(doc), 'reading and saving the basis clears the note');
+    const plan = await win.DB.getReport(planJob.id);
+    assert(plan.sections.carried.checkedAt && plan.sections.carried.sectionId === 'basis', 'and that is recorded against the basis');
+    assert(plan.auditLog.some((e) => e.event === 'carried-forward' && e.sectionId === 'basis'), 'the fill is in the audit trail');
+    assert(!plan.sections.proposedWorks || !plan.sections.proposedWorks.managementMethod || !plan.sections.proposedWorks.managementMethod.length, 'nothing about the proposal itself is filled in');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(planJob.id);
+    await win.DB.deleteJob(inspected.id);
+  });
+
+  test('Plan: when no live termites were found the basis says so in the protected words, and a plan with no inspection is left blank', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const protectedWords = 'No live termites were found at the time of inspection.';
+    const summary = win.ReportUI.planBasisSummary({ sections: { findings: { liveTermitesFound: 'No', nestFound: 'No', workingsFound: 'No' }, conducive: {} } });
+    assertEqual(summary, protectedWords, 'the sentence, exactly, and nothing invented beside it');
+    const clientReport = await (await fetch('../report-client.js', { cache: 'reload' })).text();
+    assert(clientReport.includes(`'${protectedWords}'`), 'the same sentence the client report prints');
+    assertEqual(win.ReportUI.planBasisSummary({ sections: { findings: {}, conducive: {} } }), '', 'an unanswered inspection yields no summary at all');
+
+    const planJob = await win.DB.addJob({ name: 'Plan Alone', address: '99 Nowhere Pl', jobType: 'termite', preferredDocumentType: 'termite_action_plan' });
+    await win.ReportUI.openReview(planJob.id, 'termite_action_plan');
+    await waitFor(() => doc.getElementById('report-progress'), 'the plan opens');
+    await wait(150);
+    assert(!carriedNote(doc), 'with no inspection at this address there is nothing to fill from, and no note');
+    win.hideAllAppViews();
+    await win.DB.deleteJob(planJob.id);
+  });
+
+  // =====================================================================
+  // The address lookup answers late (v171)
+  // =====================================================================
+  // Holds the lookups open until release() is called, the way a slow
+  // connection does.
+  function slowGeo(win) {
+    const real = { ensure: win.Geo.ensureJobCoords, facade: win.Geo.fetchFacadeOrientation, topo: win.Geo.fetchSiteTopography };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    win.Geo.ensureJobCoords = async () => ({ lat: -34.05, lng: 150.7 });
+    win.Geo.fetchFacadeOrientation = async () => { await gate; return { facade: 'Approximately West', street: 'Late St', metres: 12, confident: true }; };
+    win.Geo.fetchSiteTopography = async () => { await gate; return { topography: 'Falls to the East', drop: 4, confident: true }; };
+    return {
+      release,
+      restore() { win.Geo.ensureJobCoords = real.ensure; win.Geo.fetchFacadeOrientation = real.facade; win.Geo.fetchSiteTopography = real.topo; },
+    };
+  }
+
+  test('Address lookup: an answer that arrives late never undoes what was saved meanwhile', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Late Lookup Job', address: '6 Late St', jobType: 'termite' });
+    const geo = slowGeo(win);
+    try {
+      await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+      await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the report is open, the lookup still out');
+      openReportSection(doc, 'About the Property');
+      await waitFor(() => !doc.getElementById('view-report-section').classList.contains('hidden') && doc.querySelector('[data-field-row="facade"] select'), 'the property section');
+      const pick = (id, value) => { const s = doc.querySelector(`[data-field-row="${id}"] select`); s.value = value; s.dispatchEvent(new win.Event('change', { bubbles: true })); };
+      pick('facade', 'Approximately North');
+      pick('wallConstruction', 'Weatherboard');
+      doc.getElementById('section-save-btn').click();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved while the lookup was still out');
+      geo.release();
+      await waitFor(async () => (await win.DB.getReport(job.id)).sections.property.topography === 'Falls to the East', 'the lookup fills what is still unanswered');
+      const p = (await win.DB.getReport(job.id)).sections.property;
+      assertEqual(p.facade, 'Approximately North', 'the facade chosen by hand stays');
+      assertEqual(p.wallConstruction, 'Weatherboard', 'and so does everything else saved while it was out');
+    } finally {
+      geo.restore();
+    }
+    win.hideAllAppViews();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Address lookup: an answer that arrives after another report is opened goes nowhere', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const first = await win.DB.addJob({ name: 'Lookup First', address: '7 First St', jobType: 'termite' });
+    const second = await win.DB.addJob({ name: 'Lookup Second', address: '8 Second St', jobType: 'termite' });
+    const geo = slowGeo(win);
+    try {
+      await win.ReportUI.openReview(first.id, 'timber_pest_inspection');
+      await waitFor(() => doc.getElementById('report-subtitle').textContent.includes('Lookup First'), 'the first report is open, its lookup out');
+      // The second report is opened with nothing to look up, so only the first lookup is in flight.
+      win.Geo.ensureJobCoords = async () => null;
+      await win.ReportUI.openReview(second.id, 'timber_pest_inspection');
+      await waitFor(() => doc.getElementById('report-subtitle').textContent.includes('Lookup Second'), 'then the second');
+      geo.release();
+      await wait(400);
+      // A report is only stored once something saves it; make the second one say what it holds.
+      doc.getElementById('report-section-list').querySelector('.report-section-item').click();
+      await waitFor(() => !doc.getElementById('view-report-section').classList.contains('hidden'), 'a section of the second report');
+      doc.getElementById('section-back-btn').click();
+      await win.ReportUI.prefillFieldValue(second.id, 'clientDetails', 'inspectionTime', '09:00');
+      const p = ((await win.DB.getReport(second.id)) || { sections: {} }).sections.property || {};
+      assert(!p.facade && !p.topography, `the first house's facade and fall are not written into the second report: ${p.facade || ''} ${p.topography || ''}`);
+      const firstStored = await win.DB.getReport(first.id);
+      assert(!firstStored || !(firstStored.sections.property || {}).facade, 'and nothing is saved to the first one behind the screen either');
+    } finally {
+      geo.restore();
+    }
+    win.hideAllAppViews();
+    await win.DB.deleteJob(first.id);
+    await win.DB.deleteJob(second.id);
+  });
+
   test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {
     const sql = await (await fetch('../supabase-migration-048-subcontractors.sql', { cache: 'reload' })).text();
     const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');

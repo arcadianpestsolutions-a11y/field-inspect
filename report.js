@@ -853,7 +853,216 @@
     };
     await carryForwardStations(job, report);
     appendAudit(report, { event: 'created' });
+    await carryForwardDescriptions(job, report);
     return report;
+  }
+
+  // ---------- Carry forward: last visit's description of the property (v171) ----------
+  // A re-inspection is of a house that has not changed: still brick veneer on
+  // a slab, still facing north. Those answers were chosen again every year.
+  // They now come across from the last finalized inspection of the property.
+  //
+  // DESCRIPTIONS ONLY, NEVER FINDINGS. People rarely change an answer that is
+  // already filled in, so nothing that is a finding of the day comes across:
+  // not what was found, not the condition of anything, not whether the house
+  // was furnished or occupied, and not the sketch (it holds last visit's
+  // markers). The report screen says where the details came from until
+  // somebody has looked at them.
+  const CARRIED_PROPERTY_FIELDS = ['facade', 'topography', 'structureType', 'structureHeight', 'wallConstruction', 'floorType', 'roofConstruction'];
+
+  function sameAddress(a, b) {
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    return !!norm(a) && norm(a) === norm(b);
+  }
+
+  // The last finalized inspection of this property: the visit this job was
+  // rebooked from, or failing that the newest one at the same address.
+  async function previousInspectionFor(job) {
+    if (!job || job.jobType !== 'termite') return null;
+    const usable = (r) => !!r && !!r.finalizedAt && !!r.sections
+      && (r.documentType || 'timber_pest_inspection') === 'timber_pest_inspection';
+    if (job.recurringFromId) {
+      const linked = await DB.getReport(job.recurringFromId).catch(() => null);
+      if (usable(linked)) return linked;
+    }
+    const jobs = await DB.getJobs().catch(() => []);
+    let best = null;
+    for (const other of jobs) {
+      if (other.id === job.id || other.jobType !== 'termite' || !sameAddress(other.address, job.address)) continue;
+      // Where both jobs name a client it must be the same one.
+      if (job.clientId && other.clientId && job.clientId !== other.clientId) continue;
+      const r = await DB.getReport(other.id).catch(() => null);
+      if (usable(r) && (!best || r.finalizedAt > best.finalizedAt)) best = r;
+    }
+    return best;
+  }
+
+  async function carryForwardDescriptions(job, report) {
+    try {
+      if (report.documentType === 'termite_action_plan') { await fillPlanFromInspection(job, report); return; }
+      if (report.documentType !== 'timber_pest_inspection') return;
+      const previous = await previousInspectionFor(job);
+      if (!previous) return;
+      const section = (window.REPORT_SCHEMA || []).find((s) => s.id === 'property');
+      if (!section) return;
+      const from = previous.sections.property || {};
+      const mine = { ...(report.sections.property || {}) };
+      const labels = [];
+      const ids = [];
+      for (const id of CARRIED_PROPERTY_FIELDS) {
+        const field = section.fields.find((f) => f.id === id);
+        const value = from[id];
+        if (!field || typeof value !== 'string' || !value) continue;
+        // Only an answer the form still offers.
+        if (Array.isArray(field.options) && !field.options.includes(value)) continue;
+        mine[id] = value;
+        labels.push(field.label);
+        ids.push(id);
+      }
+      if (!ids.length) return;
+      report.sections.property = mine;
+      const inspectionDate = String((previous.sections.clientDetails || {}).inspectionDate || '');
+      // Kept under sections, like the walk's record, because sections are
+      // what sync: a second phone shows the same note. No schema has a
+      // section called this, so nothing prints it.
+      report.sections.carried = { sectionId: 'property', fromJobId: previous.jobId, inspectionDate, fields: ids, at: Date.now(), checkedAt: null };
+      appendAudit(report, { event: 'carried-forward', sectionId: 'property', to: labels.join(', '), basis: inspectionDate });
+    } catch (e) {
+      // A report with nothing carried is the report as it always was.
+      console.warn('[report] could not carry the property details forward:', e.message || e);
+    }
+  }
+
+  // ---------- The plan fills from the inspection it follows (v171) ----------
+  // A management plan opens with "Basis for This Plan": which inspection it
+  // follows and what that inspection found. All of it was typed a second
+  // time, from a report the same person had just signed. It is now filled
+  // from that report: its date, whether live termites were found and which,
+  // the susceptibility given, and a summary of what was found built from the
+  // inspection's own answers. These are that signed report's findings
+  // restated, not new ones, and the note on the report screen asks for the
+  // summary to be read before the plan is signed.
+  //
+  // The sentence about live termites not being found is protected wording
+  // (a test keeps it identical to the one the client report prints).
+  const NO_LIVE_TERMITES = 'No live termites were found at the time of inspection.';
+
+  function planBasisSummary(inspection) {
+    const s = (id) => (inspection.sections && inspection.sections[id]) || {};
+    const f = s('findings');
+    const c = s('conducive');
+    const text = (v) => String(v || '').trim();
+    const where = (v) => (Array.isArray(v) && v.length ? `: ${v.join(', ')}` : '');
+    const lines = [];
+    const add = (line) => { if (line) lines.push(line); };
+    if (f.liveTermitesFound === 'Yes') {
+      add(`Live termites were found${where(f.liveTermitesAreas)}.`);
+      add(text(f.liveTermitesLocation));
+    } else if (f.liveTermitesFound === 'No') {
+      add(NO_LIVE_TERMITES);
+    }
+    if (f.nestFound === 'Yes') add(`A termite nest was found${text(f.nestLocation) ? `: ${text(f.nestLocation)}` : '.'}`);
+    if (f.workingsFound === 'Yes') {
+      add(`Termite workings or damage were found${where(f.workingsAreas)}.${f.damageSeverity ? ` The damage appears to be ${String(f.damageSeverity).toLowerCase()}.` : ''}`);
+      add(text(f.evidenceDetails));
+    }
+    if (f.borersFound === 'Yes') add(`Evidence of borers of seasoned timber was found${where(f.borerAreas)}.`);
+    if (c.fungalDecayFound === 'Yes') add(`Fungal decay was found${where(c.fungalDecayAreas)}.`);
+    if (f.managementSystemStatus) add(`Existing termite management system: ${String(f.managementSystemStatus).split(' — ')[0].toLowerCase()}.`);
+    add(text(f.existingManagementSystem));
+    const conducive = window.ReportClient && window.ReportClient.conduciveFound
+      ? window.ReportClient.conduciveFound(inspection).map((x) => x.name).filter(Boolean)
+      : [];
+    if (conducive.length) add(`Conditions that attract termites were noted: ${conducive.join('; ')}.`);
+    return lines.join('\n');
+  }
+
+  async function fillPlanFromInspection(job, report) {
+    const inspection = await previousInspectionFor(job);
+    if (!inspection) return;
+    const f = inspection.sections.findings || {};
+    const inspectionDate = String((inspection.sections.clientDetails || {}).inspectionDate || '');
+    const when = carriedDate(inspectionDate);
+    const basis = { ...(report.sections.basis || {}) };
+    const blank = (v) => v === undefined || v === null || v === '';
+    const filled = [];
+    const put = (id, value, label) => {
+      if (blank(value) || !blank(basis[id])) return;
+      basis[id] = value;
+      filled.push([id, label]);
+    };
+    const U = window.ReportSchemaUtils;
+    const title = U && U.inspectionStandard ? U.inspectionStandard(inspection).title : 'Termite Inspection Report';
+    put('inspectionReference', when ? `${title} of ${when}` : '', 'Inspection report this follows from');
+    put('findingsSummary', planBasisSummary(inspection), 'What was found');
+    if (f.liveTermitesFound === 'Yes' || f.liveTermitesFound === 'No') put('termiteActivity', f.liveTermitesFound, 'Live activity present at inspection');
+    if (f.liveTermitesFound === 'Yes') put('termiteSpecies', String(f.termiteSpecies || '').trim(), 'Termite species');
+    if (['LOW', 'MODERATE', 'HIGH'].includes(f.susceptibility)) put('riskLevel', f.susceptibility, 'Risk of further attack');
+    if (!filled.length) return;
+    report.sections.basis = basis;
+    report.sections.carried = { sectionId: 'basis', fromJobId: inspection.jobId, inspectionDate, fields: filled.map(([id]) => id), at: Date.now(), checkedAt: null };
+    appendAudit(report, { event: 'carried-forward', sectionId: 'basis', to: filled.map(([, label]) => label).join(', '), basis: inspectionDate });
+  }
+
+  function carriedDate(iso) {
+    const d = iso ? new Date(iso + 'T09:00:00') : null;
+    return d && Number.isFinite(d.getTime())
+      ? d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+      : '';
+  }
+
+  // "Property details are from the inspection of 12 Nov 2025." Shown until
+  // somebody has looked: opening the section and saving it, or saying they
+  // are right, clears it and is logged.
+  function renderCarriedNote() {
+    const old = document.getElementById('carried-note');
+    if (old) old.remove();
+    const carried = currentReport && currentReport.sections ? currentReport.sections.carried : null;
+    if (!carried || carried.checkedAt || currentReport.finalizedAt) return;
+    const anchor = document.getElementById('report-progress') || reportSectionList;
+    if (!anchor || !anchor.parentNode) return;
+    const card = document.createElement('div');
+    card.id = 'carried-note';
+    card.className = 'card carried-note';
+    const text = document.createElement('p');
+    text.className = 'carried-note-text';
+    const when = carriedDate(carried.inspectionDate);
+    const fromWhat = when ? `the inspection of ${when}` : 'the last inspection here';
+    const forPlan = carried.sectionId === 'basis';
+    text.textContent = forPlan
+      ? `The basis of this plan was filled from ${fromWhat}. Read it through before you sign.`
+      : `The property details are from ${fromWhat}. Change anything that is different.`;
+    const row = document.createElement('div');
+    row.className = 'row gap';
+    const check = document.createElement('button');
+    check.type = 'button';
+    check.id = 'carried-check-btn';
+    check.className = 'btn btn-outline flex1';
+    check.textContent = forPlan ? 'Read it' : 'Check them';
+    check.addEventListener('click', () => openSectionEditor(forPlan ? 'basis' : 'property'));
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.id = 'carried-ok-btn';
+    ok.className = 'btn btn-secondary flex1';
+    ok.textContent = forPlan ? 'It reads right' : 'They are right';
+    ok.addEventListener('click', async () => {
+      ok.disabled = true;
+      try {
+        markCarriedChecked();
+        await DB.saveReport(currentReport);
+        renderSectionList();
+      } catch (e) { ok.disabled = false; toast(DB.describeSaveFailure(e, 'That')); }
+    });
+    row.append(check, ok);
+    card.append(text, row);
+    anchor.parentNode.insertBefore(card, anchor);
+  }
+
+  function markCarriedChecked() {
+    const carried = currentReport && currentReport.sections ? currentReport.sections.carried : null;
+    if (!carried || carried.checkedAt) return;
+    currentReport.sections.carried = { ...carried, checkedAt: Date.now() };
+    appendAudit(currentReport, { event: 'carried-checked', sectionId: carried.sectionId || 'property', basis: carried.inspectionDate || '' });
   }
 
   // Brings the station register forward from the previous visit.
@@ -1402,6 +1611,7 @@
     walkOutstanding: (jobId) => walkOutstandingFor(jobId),
     confirmWalkNoneFound: (jobId) => confirmWalkNoneFound(jobId),
     // The Finish step (v169): what is left on the open report, and the way in.
+    planBasisSummary: (inspection) => planBasisSummary(inspection),
     finishQuestions: () => finishQuestions(),
     startFinish: () => startFinish(),
     // The subfloor and roof void questions of the photo walk. Each has three
@@ -1795,6 +2005,17 @@
         + (entry.note ? `<br><span class="audit-reason">Reason: ${escapeHtml(entry.note)}</span>` : '');
     }
     if (entry.event === 'reviewed') return `<strong>Reviewed by the business</strong> — ${when} by ${who}`;
+    // v171: the description of the property, brought from the last inspection.
+    if (entry.event === 'carried-forward') {
+      const of = carriedDate(entry.basis);
+      const plan = entry.sectionId === 'basis';
+      return `<strong>${plan ? 'Basis of the plan filled' : 'Property details carried forward'}</strong>${of ? ` from the inspection of ${escapeHtml(of)}` : ''}<br>`
+        + `<span class="audit-change">${escapeHtml(entry.to || '')}</span><br>`
+        + `<span class="audit-meta">${when}. ${plan ? 'The findings of that signed report, restated.' : 'Descriptions only: no finding is carried.'}</span>`;
+    }
+    if (entry.event === 'carried-checked') {
+      return `<strong>${entry.sectionId === 'basis' ? 'Basis of the plan read and confirmed' : 'Carried-forward property details checked'}</strong> — ${when} by ${who}`;
+    }
     if (entry.event === 'ai-draft-prepared') {
       return `<strong>AI suggestions prepared</strong><br>`
         + `<span class="audit-change">${escapeHtml(entry.to || '')}</span><br>`
@@ -1954,6 +2175,9 @@
     const values = currentReport.sections.property || {};
     const wanted = DERIVED_SITE_FIELDS.filter((id) => isUnanswered(property, values, id));
     if (!wanted.length) return;
+    // Which report this lookup is FOR. It takes seconds, and by the time it
+    // answers a different report may be on screen (see below).
+    const lookupJobId = currentReport.jobId;
 
     let coords;
     try {
@@ -1996,7 +2220,21 @@
     }
     if (!filled.length) return;
 
-    currentReport.sections.property = { ...values };
+    // v171. Two things could go wrong while the lookups were out, and both
+    // wrote wrong answers into a report without a word:
+    //   - another report was opened: this house's facade went into THAT one;
+    //   - this section was saved in the meantime: the answers just saved were
+    //     put back to what they were when the lookup began.
+    // So: still the same report, the section as it stands now, and only the
+    // fields nobody has answered since.
+    if (!currentReport || currentReport.jobId !== lookupJobId) return;
+    const latest = currentReport.sections.property || {};
+    const stillOpen = filled.filter((item) => isUnanswered(property, latest, item.fieldId));
+    if (!stillOpen.length) return;
+    filled.length = 0;
+    filled.push(...stillOpen);
+
+    currentReport.sections.property = { ...latest };
     for (const item of filled) {
       currentReport.sections.property[item.fieldId] = item.value;
       appendAudit(currentReport, {
@@ -2425,6 +2663,7 @@
     }
 
     renderReportProgress(doneCount, displayNumber, firstOpen);
+    renderCarriedNote();
     renderWalkTodo();
     finalizeBtn.dataset.sectionsGreen = allRequiredGreen ? '1' : '0';
     finalizeBtn.disabled = !allRequiredGreen || !!currentReport.finalizedAt || walkBlocksFinalize();
@@ -4311,6 +4550,8 @@
     const sectionsBefore = new Set(visibleSchema(currentSchema(), currentReport).map((s) => s.id));
 
     currentReport.sections[currentSectionId] = pendingSectionValues;
+    // Saving the section the carried answers are in counts as having looked.
+    if (currentReport.sections.carried && currentSectionId === (currentReport.sections.carried.sectionId || 'property')) markCarriedChecked();
     await DB.saveReport(currentReport);
     stopAutosave();
     DB.deleteSectionDraft(currentReport.jobId, currentSectionId).catch(() => {});

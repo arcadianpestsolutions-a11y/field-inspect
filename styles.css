@@ -3881,3 +3881,7 @@ body:has(#inspection-modal.walk-mode:not(.hidden):not(.front-pending)) .toast {
   bottom: auto;
   top: calc(10px + var(--safe-top));
 }
+
+/* ---------- Carried forward from the last visit (v171) ---------- */
+.carried-note { margin-bottom: 12px; border-left: 4px solid var(--accent-2); display: flex; flex-direction: column; gap: 10px; }
+.carried-note-text { margin: 0; font-size: 0.92rem; line-height: 1.4; }
