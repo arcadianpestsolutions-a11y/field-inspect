@@ -53,8 +53,37 @@
     <p class="empty-hint">This wording reflects common industry practice and the AS 3660.2-2017 records-retention requirement, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
   `;
 
+  // v9: the three documents that follow an inspection used to print the
+  // inspection's terms ("This Inspection was non-invasive…") on a certificate
+  // or a quote. Each now prints what AS 3660.2 says about that document.
+  const TERMS_ACTION_PLAN = `
+    <p><strong>1. Nature of this plan.</strong> This Termite Management Plan is prepared in accordance with Section 4 of AS 3660.2-2017. It sets out the proposed actions, their expected outcome and the risks involved so that the Client and the Provider share an understanding of the process. It does not replace the inspection report it is based on.</p>
+    <p><strong>2. Colony control.</strong> Where termites are active, action to eliminate the colony is taken first. Colony control (including dusting, foaming and baiting) does not provide any ongoing or residual protection against other colonies, now or in future, and other termites may use the existing galleries to resume attack (AS 3660.2-2017 clause 5.5.1).</p>
+    <p><strong>3. No guarantee against future attack.</strong> A termite management system is designed to impede concealed termite entry; termites may still build around it. Regular inspection at not more than 12-month intervals remains necessary, and the warranty depends on it.</p>`;
+  const TERMS_CERTIFICATE = `
+    <p><strong>1. Certificate of Installation.</strong> This Certificate of Installation is issued in accordance with AS 3660.2-2017 (clauses 5.8 and 5.9). It is to be retained by the building owner or their agent. A copy is retained by the Provider for a minimum of ten (10) years.</p>
+    <p><strong>2. Further applications.</strong> A separate certificate is issued for each application of termiticide made more than one calendar month after the last.</p>
+    <p><strong>3. Maintenance and inspection.</strong> The system will only remain effective if it is maintained and inspected as stated in this certificate. Disturbing the treated zone, building over or against it, or bridging the inspection zone may allow concealed termite entry.</p>`;
+  const TERMS_MONITORING = `
+    <p><strong>1. Monitoring.</strong> Termite baits and monitoring stations are inspected at intervals not exceeding three months, and more often while termites are feeding (AS 3660.2-2017 clauses 5.2.2 and 5.5.1.3.3). Undetected feeding between visits may increase the risk to the structure.</p>
+    <p><strong>2. Colony status.</strong> The absence of termites from a station is not, on its own, proof that a colony has been destroyed (clause 5.5.1.4). Baiting does not provide residual protection against other colonies.</p>
+    <p><strong>3. Annual inspection.</strong> A full inspection of the building at not more than 12-month intervals is still required.</p>`;
+  const TERMS_BY_DOCUMENT = {
+    termite_action_plan: TERMS_ACTION_PLAN,
+    termite_certificate: TERMS_CERTIFICATE,
+    termite_monitoring: TERMS_MONITORING,
+    termite_service_record: TERMS_MONITORING,
+  };
+
   // The terms for an inspection report, in the Standard it is written to.
   function termsHtmlFor(report) {
+    const docTerms = TERMS_BY_DOCUMENT[report && report.documentType];
+    if (docTerms) {
+      // Consumer law and the legal-review note are the same for every document.
+      const acl = FIXED_TERMS_HTML.slice(FIXED_TERMS_HTML.indexOf('<p><strong>4.'), FIXED_TERMS_HTML.indexOf('<p><strong>5.'));
+      const note = FIXED_TERMS_HTML.slice(FIXED_TERMS_HTML.indexOf('<p class="empty-hint">'));
+      return docTerms + '\n    ' + acl + note;
+    }
     const U = window.ReportSchemaUtils;
     const std = U && U.inspectionStandard ? U.inspectionStandard(report) : null;
     if (!std || std.code === 'as4349') return FIXED_TERMS_HTML;

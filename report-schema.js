@@ -56,8 +56,10 @@ const REPORT_SCHEMA = [
       { id: 'clientEmail', label: 'Client Email', type: 'text' },
       { id: 'propertyAddress', label: 'Property Inspected Address', type: 'text', required: true },
       { id: 'inspectionDate', label: 'Inspection Date', type: 'date', required: true },
-      { id: 'inspectionTime', label: 'Inspection Time', type: 'time' },
-      { id: 'weather', label: 'Weather Conditions at time of inspection', type: 'text', aiFillable: true },
+      // v9: both required. AS 3660.2 cl 3.4.1 (d) and (e) say an inspection
+      // report SHALL state the time and the weather; they were optional.
+      { id: 'inspectionTime', label: 'Inspection Time', type: 'time', required: true },
+      { id: 'weather', label: 'Weather Conditions at time of inspection', type: 'text', required: true, aiFillable: true },
       // v139, from Tal's Formitize Timber Pest Inspection form (AS 4349.3).
       { id: 'peoplePresent', label: 'People present at the time of inspection', type: 'multiselect', options: ['Client', 'Vendor', 'Purchaser', 'Real Estate Agent', 'Tenant'] },
       {
@@ -71,6 +73,28 @@ const REPORT_SCHEMA = [
           'Special inspection (elevated risk — up to every 6 months)',
         ],
         default: 'Regular inspection (recommended at least every 12 months)',
+      },
+      // v9, AS 3660.2 cl 3.3.3. A special inspection is a follow-up — checking
+      // works, a stage before the next one, or an area that was inaccessible —
+      // and it may leave things out that a regular inspection covers. The
+      // Standard requires those exclusions to be written in the report.
+      {
+        id: 'specialInspectionPurpose', label: 'Purpose of this special inspection (AS 3660.2 cl 3.3.3)',
+        type: 'select', required: true,
+        options: [
+          'Checking the effect of termite control or risk reduction works',
+          'Checking the first stage of works before the next stage begins',
+          'Extending the inspection to areas previously inaccessible',
+          'Extending the inspection with radar, thermal imaging or invasive methods',
+          'Works in progress',
+        ],
+        showIf: { field: 'inspectionClassification', equals: 'Special inspection (elevated risk — up to every 6 months)' },
+      },
+      {
+        id: 'specialInspectionExclusions',
+        label: 'What this special inspection left out, and why (e.g. roof void covered by the regular inspection on …)',
+        type: 'textarea', required: true,
+        showIf: { field: 'inspectionClassification', equals: 'Special inspection (elevated risk — up to every 6 months)' },
       },
     ],
   },
@@ -220,11 +244,34 @@ const REPORT_SCHEMA = [
       { id: 'otherHinderedDetails', label: 'Other hindered area details', type: 'textarea', showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'obstructionPhotos', label: 'Obstruction Photos', type: 'photos', photoRequired: { anyTicked: ['exteriorObstructions', 'subfloorObstructions', 'roofVoidObstructions'] }, showIf: { field: 'hinderedObstructions', equals: 'Yes' }, aiFillable: true },
       { id: 'restrictedAccess', label: 'Were there any normally accessible areas that had restricted access?', type: 'yesno', required: true, aiFillable: true },
-      { id: 'restrictedAccessDetails', label: 'Restricted Access Details', type: 'textarea', showIf: { field: 'restrictedAccess', equals: 'Yes' }, aiFillable: true },
+      // Label widened in v9 (id unchanged, so saved answers keep their place):
+      // AS 3660.2 cl 3.3.2.2 requires recommendations for gaining access
+      // wherever safe access was not available, not just a description.
+      { id: 'restrictedAccessDetails', label: 'Restricted access: details & recommendations for gaining access', type: 'textarea', showIf: { field: 'restrictedAccess', equals: 'Yes' }, aiFillable: true },
       { id: 'highRiskAreas', label: 'Were there any High Risk Area(s) to which access should be gained or fully gained?', type: 'yesno', required: true, aiFillable: true },
       { id: 'highRiskDetails', label: 'High risk areas: details & recommendations', type: 'textarea', showIf: { field: 'highRiskAreas', equals: 'Yes' }, aiFillable: true },
       { id: 'invasiveRecommended', label: 'Is an Invasive Inspection recommended to this property?', type: 'yesno', required: true, aiFillable: true },
       { id: 'invasiveComments', label: 'Invasive Inspection Comments', type: 'textarea', showIf: { field: 'invasiveRecommended', equals: 'Yes' }, aiFillable: true },
+      // v9, AS 3660.2 cl 3.3.2.2 (e)(v): invasive work damages linings, so the
+      // owner's permission SHALL be obtained BEFORE it starts. Recorded here
+      // because it is the first thing asked if a client disputes the damage.
+      { id: 'invasivePerformed', label: 'Was any invasive inspection carried out (cutting, drilling, removing linings)?', type: 'yesno', required: true, default: 'No' },
+      { id: 'invasivePermission', label: "Owner's (or authorised representative's) permission obtained before any invasive work", type: 'select', required: true, options: ['Yes — written', 'Yes — verbal', 'No'], showIf: { field: 'invasivePerformed', equals: 'Yes' } },
+      { id: 'invasivePermissionBy', label: 'Permission given by, and what was agreed about making good', type: 'textarea', required: true, showIf: { field: 'invasivePerformed', equals: 'Yes' } },
+      // v9, AS 3660.2 cl 3.3.2.2 and 3.5. The Standard expects visual
+      // inspection plus sounding and a moisture meter where they add value,
+      // and names the basic and specialist tools. Recording which were used
+      // is what shows the inspection was done the way the Standard describes.
+      {
+        id: 'toolsUsed', label: 'Inspection tools used', type: 'multiselect', required: true,
+        options: ['Torch', 'Camera', 'Moisture meter', 'Sounding / tapping tool', 'Probe or knife', 'Ladder (3.6 m)',
+          'Measuring tape', 'Thermal imaging camera', 'Termite radar', 'Termite detector dog', 'Borescope'],
+        default: ['Torch', 'Camera', 'Moisture meter', 'Sounding / tapping tool', 'Probe or knife', 'Ladder (3.6 m)'],
+      },
+      // Where moisture can't be explained or activity is suspected but not
+      // found, the Standard says specialist tools SHOULD be used.
+      { id: 'specialistToolsRecommended', label: 'Is a specialist inspection recommended (thermal imaging, termite radar, detector dog) — e.g. unexplained high moisture or suspected activity not located?', type: 'yesno', aiFillable: true },
+      { id: 'specialistToolsDetails', label: 'Where, and why', type: 'textarea', showIf: { field: 'specialistToolsRecommended', equals: 'Yes' }, aiFillable: true },
     ],
   },
   {
@@ -242,6 +289,9 @@ const REPORT_SCHEMA = [
       { id: 'liveTermitesAreas', label: 'Termites were found but not necessarily limited to the following areas', type: 'multiselect', options: ['Tree stumps', 'The Interior', 'The Exterior', 'Subfloor', 'Roof Void', 'Outbuildings', 'The Site', 'Fences', 'Retaining Walls', 'Landscaping Timbers'], showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'liveTermitesLocation', label: 'Location details', type: 'textarea', showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
       { id: 'liveTermitesPhotos', label: 'Live Termite Photos', type: 'photos', photoRequired: true, showIf: { field: 'liveTermitesFound', equals: 'Yes' }, aiFillable: true },
+      // v9, AS 3660.2 cl 3.4.3: identifying to genus or species normally needs
+      // soldiers or alates, and termites collected SHALL be kept in alcohol.
+      { id: 'samplesCollected', label: 'Soldier / alate samples collected and preserved in alcohol for identification?', type: 'yesno', showIf: { field: 'liveTermitesFound', equals: 'Yes' } },
       { id: 'nestFound', label: 'Was a termite nest found at the time of Inspection?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'nestLocation', label: 'Nest Location(s)', type: 'textarea', showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
       { id: 'nestPhotos', label: 'Nest Photos', type: 'photos', photoRequired: true, showIf: { field: 'nestFound', equals: 'Yes' }, aiFillable: true },
@@ -250,6 +300,10 @@ const REPORT_SCHEMA = [
       { id: 'evidenceDetails', label: 'Details of the nature of the evidence found', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'damagePhotos', label: 'Damage Photos', type: 'photos', photoRequired: true, showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'damageSeverity', label: 'Damage appears to be', type: 'select', options: ['Minor', 'Minor to Moderate', 'Moderate', 'Moderate to Extensive', 'Extensive', 'Extensive to Severe', 'Severe'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
+      // v9, AS 3660.2 cl 3.4.1 (i)(ii): for evidence of prior activity the
+      // report SHALL give an indication of the potential for associated
+      // damage — what may be hidden, not just what is visible (severity above).
+      { id: 'workingsDamagePotential', label: 'Potential for associated (possibly concealed) damage from this evidence', type: 'select', required: true, options: ['Low', 'Moderate', 'High'], showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'findingsAdditionalComments', label: 'Additional Comments', type: 'textarea', showIf: { field: 'workingsFound', equals: 'Yes' }, aiFillable: true },
       { id: 'treatmentRecommended', label: 'Is a termite treatment recommended?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       // Shown whatever the answer since v139: "Termite management system in
@@ -259,6 +313,10 @@ const REPORT_SCHEMA = [
       { id: 'priorTreatmentEvidence', label: 'Was evidence of a previous treatment located?', type: 'yesno', required: true, aiFillable: true, confirmBeforeUse: true },
       { id: 'priorTreatmentDescription', label: 'Description of the evidence found', type: 'multiselect', options: ['Treatment sticker in meter box', 'Treatment sticker under kitchen sink', 'Drill holes in slab or paving', 'Bait / monitoring stations', 'Physical barrier visible', 'History known from client'], showIf: { field: 'priorTreatmentEvidence', equals: 'Yes' }, aiFillable: true },
       { id: 'priorTreatmentComments', label: 'Previous treatment: comments', type: 'textarea', showIf: { field: 'priorTreatmentEvidence', equals: 'Yes' } },
+      // v9, AS 3660.2 cl 3.4.4 (b): report the labelled expected protection
+      // period of any termiticide thought to have been applied — the thing a
+      // client actually wants to know is whether it has run out.
+      { id: 'priorTreatmentProtectionPeriod', label: 'Labelled protection period of the termiticide previously applied, and whether it has expired (or "unknown")', type: 'text', showIf: { field: 'priorTreatmentEvidence', equals: 'Yes' } },
       { id: 'existingManagementSystem', label: 'Existing termite management system present, type & condition', type: 'textarea', aiFillable: true },
       // The gate for the action-plan half of this report. Answering "adequate"
       // ends the document here; any other answer opens the proposed-works and
@@ -347,7 +405,7 @@ const REPORT_SCHEMA = [
       // ventilation, weepholes...). Scope had the question and nowhere to
       // say what was wrong or what to do about it.
       { id: 'waterLeaksFound', label: 'Were water leaks found at the time of inspection?', type: 'yesno', required: true, aiFillable: true },
-      { id: 'waterLeakAreas', label: 'Visible leaks were located in the following areas', type: 'multiselect', options: ['Down Pipes', 'Gutters', 'Air conditioning overflow', 'Taps', 'Hot Water Service relief valve', 'Bathroom', 'Kitchen', 'Laundry', 'Shower', 'Plumbing under floor', 'Garage', 'Roof'], showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
+      { id: 'waterLeakAreas', label: 'Visible leaks were located in the following areas', type: 'multiselect', options: ['Down Pipes', 'Gutters', 'Air conditioning overflow', 'Taps', 'Hot Water Service relief valve', 'Bathroom', 'Kitchen', 'Laundry', 'Shower', 'Plumbing under floor', 'Garage', 'Roof', 'Damp-proof course / flashing', 'Waterproofing membrane', 'Stormwater / drains'], showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
       { id: 'waterLeakDetails', label: 'Water leaks: details & recommendations', type: 'textarea', showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
       { id: 'waterLeakPhotos', label: 'Water Leak Photos', type: 'photos', photoRequired: true, showIf: { field: 'waterLeaksFound', equals: 'Yes' }, aiFillable: true },
       { id: 'waterTankPresent', label: 'Was a water tank(s) located at the time of inspection?', type: 'yesno', aiFillable: true },
@@ -383,6 +441,35 @@ const REPORT_SCHEMA = [
       { id: 'slabEdgeComplies', label: 'Does the slab edge inspection zone fully comply (exposed and clear all round)?', type: 'yesno', aiFillable: true },
       { id: 'slabEdgeDetails', label: 'Details & Recommendations', type: 'textarea', showIf: { field: 'slabEdgeComplies', equals: 'No' }, aiFillable: true },
       { id: 'slabEdgeComments', label: 'Slab edge: additional comments', type: 'textarea' },
+      // ---- v9: conducive conditions AS 3660.2 names, which Scope only ever
+      // caught if someone typed them into "other conducive conditions". ----
+      //
+      // Cl 2.5.1 and 5.4.3: steps, decks, pergolas, hot water, air con and the
+      // like that are not part of a termite management system SHALL have a
+      // clear 25 mm gap from the building. Without one they are concealed
+      // entry points and the building needs inspecting more often.
+      { id: 'bridgingFound', label: 'Are any attachments or structures bridging the inspection zone (no clear 25 mm gap)?', type: 'yesno', required: true, aiFillable: true },
+      {
+        id: 'bridgingItems', label: 'Bridging items', type: 'multiselect', aiFillable: true,
+        options: ['Steps / landings', 'Verandah / deck', 'Pergola / carport', 'Patio / raised paving', 'Hot water system', 'Air conditioning unit',
+          'Downpipes / service pipes', 'Fence attached to building', 'Retaining wall / landscaping timbers', 'Cladding to ground', 'Access ramp', 'Other'],
+        showIf: { field: 'bridgingFound', equals: 'Yes' },
+      },
+      { id: 'bridgingDetails', label: 'Bridging: details & recommendations', type: 'textarea', showIf: { field: 'bridgingFound', equals: 'Yes' }, aiFillable: true },
+      // Cl 2.4, 3.4.4 (e) and 5.3.4: garden beds, mulch, raised soil and
+      // vegetation against the walls — hide the inspection zone and weep holes,
+      // hold moisture, and let termites keep their tubes damp.
+      { id: 'gardenBedsAgainstWall', label: 'Garden beds, mulch, raised soil or vegetation against the building?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'gardenBedsDetails', label: 'Garden beds / vegetation: details & recommendations', type: 'textarea', showIf: { field: 'gardenBedsAgainstWall', equals: 'Yes' }, aiFillable: true },
+      // Cl 3.4.4 (f) and 5.4.2: timber or cellulose stored under or against
+      // the building is food and cover.
+      { id: 'storedTimberFound', label: 'Timber, firewood or other cellulose stored under or against the building?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'storedTimberDetails', label: 'Stored materials: details & recommendations', type: 'textarea', showIf: { field: 'storedTimberFound', equals: 'Yes' }, aiFillable: true },
+      // Cl 3.4.4 (d) and 5.3.4: within 5 m of the building, stumps, roots over
+      // 50 mm, dead wood and timber in ground contact SHALL be removed where
+      // practicable; timber in ground or masonry contact is a durability issue.
+      { id: 'timberInGroundFound', label: 'Stumps, roots over 50 mm, dead wood or timber in ground contact within 5 m of the building?', type: 'yesno', required: true, aiFillable: true },
+      { id: 'timberInGroundDetails', label: 'Timber in ground contact: details & recommendations', type: 'textarea', showIf: { field: 'timberInGroundFound', equals: 'Yes' }, aiFillable: true },
       // Tal reported "other conducive conditions" on 52 of his last 60
       // inspections (bushland within 75 m, timber debris, posts in soil...).
       { id: 'otherConduciveFound', label: 'Any other conducive conditions to report on?', type: 'yesno', aiFillable: true },
@@ -459,6 +546,28 @@ const REPORT_SCHEMA = [
         label: 'What the occupants must do on the day (vacating, pets, fish tanks, covering food)',
         type: 'textarea', required: true,
       },
+      // ---- v9: the rest of an AS 3660.2 Section 4 termite management plan.
+      // This section is the plan when no separate Action Plan is written, and
+      // a plan can only be claimed to conform to the Standard (cl 4.2) when it
+      // has every heading cl 4.3 lists. These are the ones it was missing. ----
+      // Cl 5.2.1 / 5.5.1: an active infestation SHALL be dealt with before any
+      // other risk mitigation, and colony destruction comes first.
+      {
+        id: 'colonyControl', label: 'Colony control before other works (required where termites are active)', type: 'select', required: true, aiFillable: true,
+        options: ['Not required — no active termites', 'Termiticidal dust into active workings', 'Liquid / foamed termiticide into galleries',
+          'Baiting to colony elimination', 'Physical removal / destruction of the nest', 'Combination — see notes'],
+      },
+      // Cl 4.3.5: options and a recommended path, or why only one is offered.
+      { id: 'optionsConsidered', label: 'Other management options considered, and why this one is recommended', type: 'textarea', required: true, aiFillable: true },
+      // Cl 4.3.5: the number of visits and anything that has to happen first.
+      { id: 'numberOfVisits', label: 'Number of visits expected', type: 'text', required: true },
+      { id: 'preWorksRequired', label: 'Works or changes needed before termite management can begin (e.g. clear debris, remove obstructions, fix leaks)', type: 'textarea', required: true, aiFillable: true },
+      // Cl 4.3.4: risk assessment.
+      { id: 'consequencesOfInaction', label: 'Risk assessment — what this termite can do, and the likely consequences of doing nothing', type: 'textarea', required: true, aiFillable: true },
+      { id: 'treatmentRisks', label: 'Risk assessment — risks of the proposed works (chemical, occupants, pets, drains/waterways, off-target wildlife) and how they are controlled', type: 'textarea', required: true, aiFillable: true },
+      // Cl 4.3.6: anticipated outcome.
+      { id: 'expectedOutcome', label: 'Anticipated outcome and expected duration of the program', type: 'textarea', required: true, aiFillable: true },
+      { id: 'successCriteria', label: 'How success or failure will be measured (e.g. no activity at follow-up inspection, colony collapse in stations)', type: 'textarea', required: true },
     ],
   },
   {
@@ -566,6 +675,13 @@ function isFieldVisible(field, values) {
   // before the question existed has no answer at all, and keeps showing
   // what it always showed.
   if ('notEquals' in field.showIf) return values[field.showIf.field] !== field.showIf.notEquals;
+  // `includes` (v9 schemas): shown once a tick list has that option ticked —
+  // e.g. the reticulation pressure line on a certificate appears only when
+  // "Reticulation system" is one of the systems installed.
+  if ('includes' in field.showIf) {
+    const v = values[field.showIf.field];
+    return Array.isArray(v) && v.includes(field.showIf.includes);
+  }
   return values[field.showIf.field] === field.showIf.equals;
 }
 
@@ -795,7 +911,20 @@ function defaultValuesForSection(section, org) {
 //       photo fields liveTermitesPhotos, waterLeakPhotos, moisturePhotos and
 //       fungalDecayPhotos; "<field>NoPhotoReason" records why one could not
 //       be taken
-const SCHEMA_VERSION = 8;
+//   9 — gap fill against AS 3660.2-2017, all four termite documents.
+//       Inspection: time and weather required (cl 3.4.1); special inspection
+//       purpose and exclusions (3.3.3); invasive work and the owner's prior
+//       permission, tools used, specialist tools recommended (3.3.2.2, 3.5);
+//       samples in alcohol (3.4.3); potential for concealed damage from prior
+//       activity (3.4.1 i ii); labelled protection period of a past treatment
+//       (3.4.4 b); bridging attachments, garden beds, stored timber and timber
+//       in ground within 5 m (2.4, 2.5, 3.4.4, 5.3.4, 5.4); three water leak
+//       options. Proposed works gains the missing Section 4 plan headings:
+//       colony control first, options, visits, pre-works, risk assessment,
+//       anticipated outcome. Action plan, certificate and monitoring record:
+//       see termite-management-schemas.js. Field visibility gains `includes`
+//       for tick lists.
+const SCHEMA_VERSION = 9;
 
 window.REPORT_SCHEMA = REPORT_SCHEMA;
 window.REPORT_SCHEMA_VERSION = SCHEMA_VERSION;

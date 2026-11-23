@@ -5280,7 +5280,7 @@
   test('Documents: each schema is structurally sound', () => {
     const win = frame.contentWindow;
     const VALID = new Set(['text', 'textarea', 'select', 'yesno', 'multiselect', 'date', 'time',
-      'photos', 'signature', 'static', 'productList', 'stationList', 'sketch', 'number']);
+      'photos', 'signature', 'static', 'productList', 'stationList', 'sketch', 'sketchData', 'number']);
     const schemas = [
       ['action plan', win.TERMITE_ACTION_PLAN_SCHEMA],
       ['certificate', win.TERMITE_CERTIFICATE_SCHEMA],
@@ -5399,6 +5399,76 @@
     const omitted = U.sectionValidationErrors(notice, { noticeInstalled: 'No' });
     assert(omitted.some((e) => e.fieldId === 'noticeOmittedReason'),
       'and if none was fixed, that needs explaining');
+  });
+
+  // ---------- AS 3660.2 gap fill (schema v9) ----------
+  test('AS 3660.2: a tick-list showIf (includes) shows the field only when that option is ticked', () => {
+    const U = frame.contentWindow.ReportSchemaUtils;
+    const f = { id: 'x', showIf: { field: 'systemType', includes: 'Reticulation system' } };
+    assert(!U.isFieldVisible(f, {}), 'hidden with nothing ticked');
+    assert(!U.isFieldVisible(f, { systemType: ['Termite baiting system'] }), 'hidden when only something else is ticked');
+    assert(U.isFieldVisible(f, { systemType: ['Termite baiting system', 'Reticulation system'] }), 'shown once it is ticked');
+    assert(!U.isFieldVisible(f, { systemType: 'Reticulation system' }), 'a plain string is not a tick list');
+  });
+
+  test('AS 3660.2 cl 5.9: a reticulation certificate cannot finalise without the pressure and fill volumes', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const inst = win.TERMITE_CERTIFICATE_SCHEMA.find((s) => s.id === 'installation');
+    const base = { systemType: ['Chemical soil treated zone'] };
+    const plain = U.sectionValidationErrors(inst, base).map((e) => e.fieldId);
+    assert(!plain.includes('reticMaxPressure'), 'no reticulation, no pressure question');
+    assert(plain.includes('labelServiceLife'), 'the label service life is required');
+    assert(plain.includes('linearMetresTreated'), 'the linear metres treated are required');
+    const retic = U.sectionValidationErrors(inst, { systemType: ['Reticulation system'] }).map((e) => e.fieldId);
+    assert(retic.includes('reticMaxPressure') && retic.includes('reticFillPoints'), 'reticulation needs both');
+  });
+
+  test('AS 3660.2 cl 5.9 (d): the certificate carries a required diagram', () => {
+    const win = frame.contentWindow;
+    const diagram = win.TERMITE_CERTIFICATE_SCHEMA.find((s) => s.id === 'systemDiagram');
+    assert(diagram, 'there is a diagram section');
+    assert(diagram.fields.some((f) => f.type === 'sketch' && f.required), 'and the drawing is required');
+  });
+
+  test('AS 3660.2 cl 4.3: the action plan has every heading the Standard requires', () => {
+    const win = frame.contentWindow;
+    const ids = win.TERMITE_ACTION_PLAN_SCHEMA.map((s) => s.id);
+    for (const id of ['clientDetails', 'basis', 'riskAssessment', 'proposedWorks', 'outcome']) {
+      assert(ids.includes(id), `action plan has ${id}`);
+    }
+    const U = win.ReportSchemaUtils;
+    const risk = win.TERMITE_ACTION_PLAN_SCHEMA.find((s) => s.id === 'riskAssessment');
+    const missing = U.sectionValidationErrors(risk, {}).map((e) => e.fieldId);
+    assert(missing.includes('consequencesOfInaction') && missing.includes('offTargetRisk'), 'risk assessment cannot be left blank');
+    const basis = win.TERMITE_ACTION_PLAN_SCHEMA.find((s) => s.id === 'basis');
+    const active = U.sectionValidationErrors(basis, { termiteActivity: 'Yes' }).map((e) => e.fieldId);
+    assert(active.includes('colonyControl'), 'active termites: colony control must be planned first');
+    const quiet = U.sectionValidationErrors(basis, { termiteActivity: 'No' }).map((e) => e.fieldId);
+    assert(!quiet.includes('colonyControl'), 'no active termites: not asked');
+  });
+
+  test('AS 3660.2 cl 3.4.1: an inspection report needs the time and the weather', () => {
+    const win = frame.contentWindow;
+    const U = win.ReportSchemaUtils;
+    const client = win.REPORT_SCHEMA.find((s) => s.id === 'clientDetails');
+    const missing = U.sectionValidationErrors(client, {}).map((e) => e.fieldId);
+    assert(missing.includes('inspectionTime') && missing.includes('weather'), 'both are required');
+    const special = U.sectionValidationErrors(client, {
+      inspectionClassification: 'Special inspection (elevated risk — up to every 6 months)',
+    }).map((e) => e.fieldId);
+    assert(special.includes('specialInspectionExclusions'), 'a special inspection must say what it left out');
+  });
+
+  test('AS 3660.2: each follow-on document prints its own terms, not the inspection\'s', () => {
+    const P = frame.contentWindow.ReportPrint;
+    const cert = P.termsHtmlFor({ documentType: 'termite_certificate', sections: {} });
+    assert(/ten \(10\) years/.test(cert), 'certificate: 10-year retention');
+    assert(!/Non-Invasive, visual/.test(cert), 'certificate does not call itself an inspection');
+    const plan = P.termsHtmlFor({ documentType: 'termite_action_plan', sections: {} });
+    assert(/residual protection/.test(plan), 'plan: colony control gives no residual protection');
+    const insp = P.termsHtmlFor({ documentType: 'timber_pest_inspection', sections: {} });
+    assert(/AS 3660.2-2017/.test(insp) && /Non-Invasive/.test(insp), 'the inspection keeps its own terms');
   });
 
   // ---------- Reading a whole table (pagination) ----------
