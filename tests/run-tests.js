@@ -14980,6 +14980,113 @@
     assert(doc.getElementById('business-details-btn').classList.contains('hidden'), 'and the second "Settings" link is gone from the sign-in strip');
   });
 
+  // =====================================================================
+  // Quiet mode: the optional parts a business uses (v174)
+  // =====================================================================
+  test('Quiet mode: a part that is switched off leaves the menus, and nothing else does', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const P = win.Parts;
+    assert(P && P.PARTS.length === 9, 'nine optional parts are listed');
+    const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
+    let selectors = 0;
+    for (const part of P.PARTS) {
+      assert(part.label && part.blurb && part.hides.length, `${part.id} says what it is and what it hides`);
+      for (const sel of part.hides) {
+        selectors++;
+        assert(css.includes(`body.part-off-${part.id} ${sel}`), `the stylesheet hides ${sel} when ${part.id} is off`);
+        assert(doc.querySelector(sel) || /followups|tab-leads/.test(sel), `${sel} is a real thing on the page`);
+      }
+    }
+    assertEqual(css.split('body.part-off-').length - 1, selectors, 'and hides nothing the list does not name');
+
+    const realGet = win.Org.get;
+    try {
+      // Everything on: no class at all.
+      win.Org.get = () => ({ ...realGet(), partsOff: [] });
+      P.apply();
+      assert(!/part-off-/.test(doc.body.className), 'with nothing switched off the page is untouched');
+      assert(P.isOn('referrals'), 'and every part is on');
+
+      win.Org.get = () => ({ ...realGet(), partsOff: ['referrals', 'enquiries', 'not-a-part'] });
+      doc.dispatchEvent(new win.Event('scope-org'));
+      assert(doc.body.classList.contains('part-off-referrals') && doc.body.classList.contains('part-off-enquiries'), 'the profile arriving switches them off');
+      assert(!doc.body.classList.contains('part-off-not-a-part'), 'an id this app does not know hides nothing');
+      assertEqual(P.off().join(), 'referrals,enquiries', 'and is not counted');
+      assert(!P.isOn('referrals') && P.isOn('sops'), 'off is off, the rest stay on');
+      assertEqual(win.getComputedStyle(doc.getElementById('open-referrals-btn')).display, 'none', 'Referrals has left the More menu');
+      assert(win.getComputedStyle(doc.getElementById('open-sops-btn')).display !== 'none', 'the SOP library has not');
+      assert(win.getComputedStyle(doc.getElementById('open-clients-btn')).display !== 'none', 'and Clients, which is not optional, never does');
+      const leadsTab = doc.getElementById('tab-leads');
+      if (leadsTab) assertEqual(win.getComputedStyle(leadsTab).display, 'none', 'the Enquiries tab has left the bar');
+    } finally {
+      win.Org.get = realGet;
+      P.apply();
+    }
+    assert(!/part-off-/.test(doc.body.className), 'put back, everything shows again');
+  });
+
+  test('Quiet mode: the switches are in Settings and are saved with the rest', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const real = { get: win.Org.get, refresh: win.Org.refresh, save: win.Org.save };
+    const profile = { name: 'Quiet Co Pty Ltd', tradingName: 'Quiet Co', abn: '', licenceNumber: '', phone: '', email: '', address: '', website: '', partsSupported: true, partsOff: ['figures'] };
+    let saved = null;
+    try {
+      win.Org.refresh = async () => ({ ...profile });
+      win.Org.get = () => ({ ...profile });
+      win.Org.save = async (changes) => { saved = changes; return changes; };
+      await win.openBusinessDetails();
+      const panel = doc.getElementById('business-panel');
+      assert(panel && panel.querySelector('.parts-settings'), 'Settings has a "What you use" part');
+      assertEqual(panel.querySelector('h2').textContent, 'Settings', 'on the one Settings screen');
+      const boxes = panel.querySelectorAll('.parts-settings input[type=checkbox]');
+      assertEqual(boxes.length, win.Parts.PARTS.length, 'a switch for each optional part');
+      assert(!doc.getElementById('part-figures').checked, 'the one already off is unticked');
+      assert(doc.getElementById('part-referrals').checked && doc.getElementById('part-invoices').checked, 'the rest are on');
+      assert(/Nothing is deleted/.test(panel.querySelector('.parts-settings').textContent), 'and it says nothing is deleted');
+      doc.getElementById('part-referrals').click();
+      Array.from(panel.querySelectorAll('button')).find((b) => b.textContent === 'Save').click();
+      await waitFor(() => saved, 'saved');
+      assertEqual(saved.partsOff.join(), 'referrals,figures', 'what is unticked is what is saved as off');
+      assertEqual(saved.name, 'Quiet Co Pty Ltd', 'along with the business details');
+      await waitFor(() => !doc.getElementById('business-panel'), 'and the screen closes');
+
+      // A server without the column: no switches, and nothing sent for them.
+      profile.partsSupported = false;
+      saved = null;
+      await win.openBusinessDetails();
+      assert(!doc.getElementById('business-panel').querySelector('.parts-settings'), 'no switches until the server can keep them');
+      Array.from(doc.getElementById('business-panel').querySelectorAll('button')).find((b) => b.textContent === 'Save').click();
+      await waitFor(() => saved, 'saved');
+      assert(!('partsOff' in saved), 'and nothing about parts is sent');
+    } finally {
+      win.Org.get = real.get; win.Org.refresh = real.refresh; win.Org.save = real.save;
+      const left = doc.getElementById('business-panel');
+      if (left) left.remove();
+      win.Parts.apply();
+    }
+  });
+
+  test('Quiet mode: registered, and the database change only adds', async () => {
+    const win = frame.contentWindow;
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(idx.indexOf('"parts.js"') > idx.indexOf('"org.js"') && idx.indexOf('"parts.js"') < idx.indexOf('"app.js"'), 'parts.js loads after the profile it reads, before the app');
+    assert(sw.includes("'./parts.js'"), 'and is in the offline shell');
+
+    const sql = await (await fetch('../supabase-migration-049-parts-off.sql', { cache: 'reload' })).text();
+    const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+    assert(/add column parts_off text\[\] not null/.test(code), 'it adds one column');
+    const def = /default array\[([^\]]*)\]::text\[\]/.exec(code);
+    assert(def, 'with a default');
+    const defaultOff = def[1].split(',').map((s) => s.trim().replace(/'/g, ''));
+    assertEqual(defaultOff.join(), win.Parts.PARTS.map((p) => p.id).join(), 'a new business starts with exactly the parts the app knows, all off');
+    assert(/update public\.organisations set parts_off = '\{\}'::text\[\];/.test(code), 'a business that exists keeps everything on');
+    assert(code.indexOf('update public.organisations') > code.indexOf('if not exists') && code.indexOf('update public.organisations') < code.indexOf('end if'), 'and only in the run that adds the column, so running it twice resets nobody');
+    assert(!/\b(drop|grant|revoke|create policy|alter policy|delete from|truncate)\b/i.test(code), 'nothing is removed, granted or loosened');
+  });
+
   test('Subcontractors: the migration adds to the wall and loosens nothing', async () => {
     const sql = await (await fetch('../supabase-migration-048-subcontractors.sql', { cache: 'reload' })).text();
     const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');

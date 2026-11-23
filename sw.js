@@ -1,7 +1,7 @@
 // Keep this in sync with version.js's APP_VERSION — that's what drives the
 // login screen's build-color/label indicator, so a mismatched bump here
 // defeats the whole point of it.
-const CACHE_NAME = 'field-inspect-v173';
+const CACHE_NAME = 'field-inspect-v174';
 const APP_SHELL = [
   './',
   './index.html',
@@ -45,6 +45,7 @@ const APP_SHELL = [
   './sync-merge.js',
   './sync.js',
   './org.js',
+  './parts.js',
   './subcontractor.js',
   './subcontractors-ui.js',
   './media.js',

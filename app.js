@@ -2681,6 +2681,14 @@
       card.appendChild(notesWrap);
     }
 
+    // Which optional parts the business uses (v174, parts.js). Only offered
+    // once the server has somewhere to keep the choice (migration 049).
+    let partsSection = null;
+    if (current.partsSupported && window.Parts) {
+      partsSection = window.Parts.settingsSection();
+      card.appendChild(partsSection.node);
+    }
+
     // SharePoint copies (sharepoint.js). Says plainly whether it is set up,
     // and offers one button to copy every finalised job's files.
     if (window.SharePoint && window.supabaseClient && !window.IS_DEMO && !window.IS_TEST) {
@@ -2745,10 +2753,11 @@
         changes.assistantNotes = assistantNotes.value.trim();
       }
       if (current.logoSupported) changes.logoDataUrl = logoValue;
+      if (partsSection) changes.partsOff = partsSection.value();
       if (!changes.name) { toast('A registered business name is required.'); save.disabled = false; return; }
       try {
         await window.Org.save(changes);
-        toast('Business details saved');
+        toast('Settings saved');
         panel.remove();
       } catch (e) {
         if (window.ErrorLog) window.ErrorLog.note(e, 'business details: save');

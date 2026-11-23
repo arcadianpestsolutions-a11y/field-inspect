@@ -30,6 +30,10 @@
     // 048), so a report prints it with no signal. logoSupported is whether
     // the server has the column: see assistantSupported above.
     logoSupported: false, logoDataUrl: '',
+    // Which optional parts of Scope the business has switched off (v174,
+    // migration 049, parts.js). partsSupported: whether the server has the
+    // column, as above. Empty means everything is on.
+    partsSupported: false, partsOff: [],
   };
   const EMPTY_ME = { displayName: '', licenceNumber: '', phone: '', address: '' };
 
@@ -197,6 +201,8 @@
             tester: orgRow.tester === true,
             logoSupported: Object.prototype.hasOwnProperty.call(orgRow, 'logo_data_url'),
             logoDataUrl: orgRow.logo_data_url || '',
+            partsSupported: Object.prototype.hasOwnProperty.call(orgRow, 'parts_off'),
+            partsOff: Array.isArray(orgRow.parts_off) ? orgRow.parts_off.filter((x) => typeof x === 'string') : [],
           };
           write(ORG_KEY, org);
         } else if (window.Sync && window.Sync.isActiveSubcontractor && window.Sync.isActiveSubcontractor()) {
@@ -273,6 +279,8 @@
       } catch (e) {
         console.warn('[org] could not refresh business details:', e.message || e);
       }
+      // Anything drawn from the profile (parts.js) can catch up.
+      document.dispatchEvent(new Event('scope-org'));
       return { ...org };
     },
 
@@ -294,6 +302,9 @@
       if (org.logoSupported && 'logoDataUrl' in changes) {
         row.logo_data_url = String(changes.logoDataUrl || '');
       }
+      if (org.partsSupported && 'partsOff' in changes) {
+        row.parts_off = Array.isArray(changes.partsOff) ? changes.partsOff.filter((x) => typeof x === 'string').slice(0, 40) : [];
+      }
       const { data, error } = await client
         .from('organisations').update(row).eq('id', org.id).select('id');
       if (error) throw error;
@@ -305,6 +316,7 @@
       }
       org = { ...org, ...changes };
       write(ORG_KEY, org);
+      document.dispatchEvent(new Event('scope-org'));
       return { ...org };
     },
   };

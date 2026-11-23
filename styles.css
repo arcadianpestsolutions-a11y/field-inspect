@@ -3941,3 +3941,26 @@ body.has-tabbar #home-tabs { display: none; }
 
 /* Settings: its first part is the business's details. */
 .business-subhead { margin: 0 0 6px; font-size: 0.95rem; color: var(--text-dim); }
+
+/* ---------- Quiet mode (v174, parts.js) ----------
+   A part of Scope the business has switched off leaves the menus. One rule
+   per part; parts.js puts the class on <body> and lists the same selectors,
+   and a test keeps the two the same. */
+body.part-off-invoices #view-invoice-btn,
+body.part-off-enquiries #tab-leads,
+body.part-off-enquiries #open-leads-btn,
+body.part-off-followups #open-followups-btn,
+body.part-off-followups #followups-banner,
+body.part-off-referrals #open-referrals-btn,
+body.part-off-swms #open-swms-btn,
+body.part-off-sops #open-sops-btn,
+body.part-off-stations #open-assets-btn,
+body.part-off-figures #open-business-btn,
+body.part-off-assistant #agent-open { display: none !important; }
+
+/* The switches, in Settings. */
+.parts-settings { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 14px; }
+.parts-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.parts-row input { width: 22px; height: 22px; flex: 0 0 22px; margin-top: 2px; accent-color: var(--accent); }
+.parts-words { display: flex; flex-direction: column; gap: 2px; }
+.parts-blurb { font-size: 0.82rem; line-height: 1.35; color: var(--text-dim); }
