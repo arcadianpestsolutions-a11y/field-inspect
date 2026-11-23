@@ -198,6 +198,7 @@
   function endPhotoWalk() {
     if (photoWalk) photoWalk.destroy();
     photoWalk = null;
+    if (inspectionFinishBtn) inspectionFinishBtn.classList.remove('finish-early');
     if (inspectionWalkEl) inspectionWalkEl.classList.add('hidden');
     setWalkMode(false);
   }
@@ -994,6 +995,31 @@
     });
   }
 
+  // v178: the way back into an inspection whose report is already open.
+  //
+  // There was none. "Finish and open report" moves the job to review, and
+  // from then on this screen offered only the report. A walk left unfinished
+  // locks Sign and finish (v144), and the report said to "go back to the job
+  // and tap Start Inspection", a button that is hidden on a job in review. So
+  // a report opened one area too early could never be signed.
+  //
+  // Made here rather than in index.html, so it cannot be missing from a page
+  // cached before the script that needs it.
+  let resumeInspectionBtn = null;
+  function resumeInspectionButton() {
+    if (resumeInspectionBtn) return resumeInspectionBtn;
+    const anchor = docTypeRow || viewReportBtn;
+    if (!anchor || !anchor.parentNode) return null;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'resume-inspection-btn';
+    b.className = 'btn btn-outline full hidden';
+    b.addEventListener('click', () => startInspection());
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
+    resumeInspectionBtn = b;
+    return b;
+  }
+
   function renderInspectionControls(job) {
     renderDueCallout(job);
     jobStatusBadge.textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
@@ -1025,6 +1051,15 @@
       hide(startInspectionBtn);
       hide(finishInspectionBtn);
       hide(inspectionTimerEl);
+    }
+
+    // Offered until the report is signed (a signed job is "completed"). The
+    // report is still the next step, so this one is the quieter button.
+    const resume = resumeInspectionButton();
+    if (resume) {
+      const canResume = !isRecording && job.status === 'review';
+      resume.classList.toggle('hidden', !canResume);
+      if (canResume) resume.textContent = job.jobType === 'pest_treatment' ? '📷 Add more photos' : '▶ Continue inspection';
     }
 
     if (job.status === 'review' || job.status === 'completed') {
@@ -2006,6 +2041,10 @@
   // a tap that does nothing AND says nothing is indistinguishable from a dead
   // button, which is exactly how this was once reported from the field.
   let startInspectionInProgress = false;
+  // Set while an inspection that was come back to is open (v178): which job,
+  // and how many photos it already had, so finishing again with nothing new
+  // does not send every photo to the AI a second time.
+  let resumedFrom = null;
 
   // ---------- The first shot of the job ----------
   // Starting a job opens straight onto one instruction: photograph the front
@@ -2060,6 +2099,8 @@
     const startJobId = currentJobId;
     if (startInspectionInProgress) return;
     startInspectionInProgress = true;
+    // Coming back to an inspection whose report is already open (v178).
+    let resuming = false;
 
     const originalLabel = startLabel(currentJobType);
     const resetButton = () => {
@@ -2097,6 +2138,8 @@
 
       inspectionChecklistDone = new Set(already.filter((c) => c.zone).map((c) => c.zone));
       const jobForChecklist = await DB.getJob(startJobId);
+      resuming = !!jobForChecklist && jobForChecklist.status === 'review';
+      resumedFrom = resuming ? { jobId: startJobId, photos: already.filter((c) => c.photoBlob).length } : null;
       const jobCategoryForChecklist = window.ReportUI && window.ReportUI.getJobCategory
         ? await window.ReportUI.getJobCategory(startJobId).catch(() => null)
         : null;
@@ -2117,6 +2160,10 @@
           items: inspectionChecklistItems,
           done: () => inspectionChecklistDone,
           visible: !frontPhotoPending,
+          // v178: Finish and open report is the quiet button until the walk
+          // has nothing left, so the brightest thing on the screen is never
+          // the way out of a walk that is one area in.
+          onProgress: (left) => { if (inspectionFinishBtn) inspectionFinishBtn.classList.toggle('finish-early', left > 0); },
           // The report's copy of the walk (v143): another phone's ticks, or
           // this one's after its storage was cleared.
           remote: existingReport && existingReport.sections ? existingReport.sections.walkthrough : null,
@@ -2203,7 +2250,10 @@
     }, 500);
 
     const jobIdForStart = startJobId;
-    await DB.updateJob(jobIdForStart, { status: 'in_progress', inspectionStartedAt });
+    // A job that is being come back to stays in review, and keeps the time it
+    // was first started: its photos are timed against that. Nothing to recover
+    // either, if the app is closed half way: the walk saves as it goes.
+    if (!resuming) await DB.updateJob(jobIdForStart, { status: 'in_progress', inspectionStartedAt });
     const job = await DB.getJob(jobIdForStart);
     renderInspectionControls(job);
     if (photoWalk) {
@@ -2218,7 +2268,7 @@
     // inspection screen opening, and both only fill an empty field (never
     // overwrite something the technician already entered).
     if (window.ReportUI) {
-      const hhmm = new Date(inspectionStartedAt).toTimeString().slice(0, 5);
+      const hhmm = new Date((resuming && job && job.inspectionStartedAt) || inspectionStartedAt).toTimeString().slice(0, 5);
       window.ReportUI.prefillFieldValue(jobIdForStart, 'clientDetails', 'inspectionTime', hhmm)
         .catch((err) => console.warn('[inspection] could not prefill inspection time:', err.message || err));
     }
@@ -2451,8 +2501,12 @@
         const captures = await DB.getCaptures(jobIdAtStart);
         const photos = captures.filter((c) => c.photoBlob);
         photoCount = photos.length;
+        // v178: back from finishing the walk with no new photograph. There
+        // is nothing new for the AI to read, so it is not asked a second time.
+        const nothingNew = !!resumedFrom && resumedFrom.jobId === jobIdAtStart && photos.length <= resumedFrom.photos;
+        resumedFrom = null;
 
-        if (photos.length && window.AI && window.ReportUI) {
+        if (photos.length && window.AI && window.ReportUI && !nothingNew) {
           const jobForAi = await DB.getJob(jobIdAtStart);
           window.AI.analyzeInspectionPhotos(photos, jobForAi && jobForAi.jobType)
             .then((result) => window.ReportUI.applyAiDraft(jobIdAtStart, result))
@@ -2496,6 +2550,16 @@
   }
 
   startInspectionBtn.addEventListener('click', () => startInspection());
+  // "Finish the walk-through" on the report (report.js, v178): the job's
+  // screen, then the inspection over it, opened at the first thing still to
+  // do. Finish and open report then lands back on the report.
+  window.resumeInspection = async function (jobId) {
+    if (!jobId) return false;
+    await showJobView(jobId);
+    if (currentJobId !== jobId) return false;
+    await startInspection();
+    return true;
+  };
   finishInspectionBtn.addEventListener('click', finishInspection);
   inspectionFinishBtn.addEventListener('click', finishInspection);
 

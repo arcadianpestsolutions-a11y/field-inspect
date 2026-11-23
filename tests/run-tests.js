@@ -14907,6 +14907,125 @@
     await closeInspection(win, doc, job);
   });
 
+  // v178. Found by Tal on 24 Nov 2026 ("Walk-through: 7 still to do"): a report
+  // opened before the walk was finished could never be signed. The unfinished
+  // walk locks Sign and finish, the card said to "go back to the job and tap
+  // Start Inspection", and a job in review has no Start button.
+  test('Walk: a report opened before the walk was finished has a way back, and the walk opens where it was left', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Walk Way Back Job', address: '6 Walk St', jobType: 'termite' });
+    const modal = walkModal(doc);
+    const walk = doc.getElementById('inspection-walk');
+    const finish = doc.getElementById('inspection-finish-btn');
+    const button = (re) => Array.from(walk.querySelectorAll('button')).find((x) => re.test(x.textContent));
+    const row = (id) => walk.querySelector(`.walk-check[data-item="${id}"]`);
+    const reportOpen = () => modal.classList.contains('hidden') && !doc.getElementById('view-report').classList.contains('hidden');
+    const resumeBtn = () => doc.getElementById('resume-inspection-btn');
+    // The AI is counted, not called: finishing a second time with no new
+    // photo must not send every photo to it again.
+    const realRead = win.AI && win.AI.analyzeInspectionPhotos;
+    let aiRuns = 0;
+    if (win.AI) win.AI.analyzeInspectionPhotos = async () => { aiRuns++; return { draftFields: {}, fieldReasons: {}, frameNotes: [] }; };
+    try {
+      await openInspection(win, doc, job, { guided: true });
+      await snap(win, doc);
+      await waitFor(() => !modal.classList.contains('front-pending') && row('meterBox'), 'the outside list is up');
+
+      // The way out is the quiet button until the walk has nothing left.
+      assert(finish.classList.contains('finish-early'), 'Finish and open report is not the bright button while the walk has things left');
+      assert(!walk.querySelector('.walk-hint-left'), 'and with nothing ticked yet the list does not nag');
+
+      // Rest are OK leaves the meter box, and the screen now says so.
+      walk.querySelector('[data-action="all-ok"]').click();
+      const left = walk.querySelector('.walk-hint-left');
+      assert(left && left.textContent === 'One left to tick: Meter Box. Tap Notice found, No notice or N/A.', `the one row still open is named: ${left && left.textContent}`);
+      assert(button(/^Next/).disabled, 'which is why Next is still grey');
+
+      // Leaving now, the way the screen used to invite.
+      finish.click();
+      await waitFor(reportOpen, 'the report opens', 10000);
+      let stored = await win.DB.getJob(job.id);
+      const startedAt = stored.inspectionStartedAt;
+      assertEqual(stored.status, 'review', 'the job is in review');
+      assert(startedAt > 0, 'with the time it was started');
+      await waitFor(() => doc.getElementById('walk-resume-btn'), 'the report offers the way back');
+      const lines = doc.querySelectorAll('#walk-todo .walk-todo-line').length;
+      assertEqual(lines, 4, 'outside (the meter box), subfloor, roof void and inside');
+      assertEqual(doc.getElementById('walk-todo-title').textContent, 'Walk-through: 4 areas still to do', 'the card counts the areas it lists, not the entries behind them');
+      assertEqual(doc.getElementById('walk-resume-btn').textContent, 'Finish the walk-through');
+      assert(!/Start Inspection/.test(doc.getElementById('walk-todo').textContent), 'and no longer points at a button the job does not have');
+      assert(doc.getElementById('finalize-report-btn').disabled, 'signing is locked until the walk is done');
+      if (win.AI) await waitFor(() => aiRuns === 1, 'the photos were read once');
+
+      // The job's own screen has a way back too.
+      await win.showJobViewById(job.id);
+      await waitFor(() => isShown(win, resumeBtn()), 'a job in review offers a way back in');
+      assertEqual(resumeBtn().textContent, '▶ Continue inspection');
+      assert(!isShown(win, doc.getElementById('start-inspection-btn')), 'which is not a second Start');
+
+      // From the report: one tap, and the walk is open where it was left.
+      await win.ReportUI.openReview(job.id);
+      await waitFor(() => doc.getElementById('walk-resume-btn') && !doc.getElementById('view-report').classList.contains('hidden'), 'back on the report');
+      doc.getElementById('walk-resume-btn').click();
+      await waitFor(() => !modal.classList.contains('hidden') && modal.classList.contains('walk-mode') && !modal.classList.contains('front-pending') && row('meterBox'),
+        'the walk reopens, and does not ask for the front photo again', 8000);
+      assert(walk.querySelector('.walk-hint-left'), 'on the list that still has a row open');
+      assert(row('slabEdge').querySelector('.chosen-ok'), 'with what was ticked before still ticked');
+      stored = await win.DB.getJob(job.id);
+      assertEqual(stored.status, 'review', 'the job stays in review');
+      assertEqual(stored.inspectionStartedAt, startedAt, 'and keeps the time it was first started');
+
+      // Finish it.
+      row('meterBox').querySelector('[data-result="issue"]').click(); // "No notice"
+      assert(!button(/^Next/).disabled && !walk.querySelector('.walk-hint-left'), 'the last row answered frees Next');
+      button(/^Next/).click();
+      await waitFor(() => /Is there a subfloor\?/.test(walk.textContent), 'on to the subfloor');
+      walk.querySelector('[data-answer="no"]').click();
+      await waitFor(() => /Is there a roof void\?/.test(walk.textContent), 'a slab goes on to the roof void', 4000);
+      walk.querySelector('[data-answer="no"]').click();
+      await waitFor(() => /Inside: tick each one/.test(walk.textContent), 'then the inside', 4000);
+      assert(finish.classList.contains('finish-early'), 'still the quiet button with the inside to do');
+      walk.querySelector('[data-action="all-ok"]').click();
+      button(/^Next/).click();
+      await waitFor(() => button(/Save, next/), 'what blocked the view');
+      button(/Save, next/).click();
+      await waitFor(() => /All areas done/.test(walk.textContent), 'the walk is finished', 4000);
+      assert(!finish.classList.contains('finish-early'), 'and now Finish and open report is the bright button');
+
+      const photos = (await win.DB.getCaptures(job.id)).length;
+      finish.click();
+      await waitFor(reportOpen, 'back on the report', 10000);
+      await waitFor(() => /Walk-through complete/.test((doc.getElementById('walk-todo-title') || {}).textContent || ''), 'which says the walk is complete', 4000);
+      assert(!doc.getElementById('walk-resume-btn'), 'with nothing left to go back for');
+      assertEqual((await win.DB.getCaptures(job.id)).length, photos, 'no photo was needed to finish it');
+      if (win.AI) { await wait(300); assertEqual(aiRuns, 1, 'and with no new photo, the photos were not sent to the AI a second time'); }
+      assert(!finish.classList.contains('finish-early'), 'the button is put back for the next job');
+    } finally {
+      if (win.AI) win.AI.analyzeInspectionPhotos = realRead;
+      if (!modal.classList.contains('hidden')) { finish.click(); await waitFor(reportOpen, 'the inspection closes', 10000).catch(() => {}); }
+      win.hideAllAppViews();
+      await win.DB.deleteJob(job.id);
+    }
+
+    // A treatment in review can be gone back to as well; a signed job cannot.
+    const spray = await win.DB.addJob({ name: 'Walk Way Back Spray', jobType: 'pest_treatment' });
+    try {
+      await win.DB.updateJob(spray.id, { status: 'review' });
+      await win.showJobViewById(spray.id);
+      await waitFor(() => isShown(win, resumeBtn()) && resumeBtn().textContent === '📷 Add more photos', 'a treatment in review offers more photos');
+      await win.DB.updateJob(spray.id, { status: 'completed' });
+      await win.showJobViewById(spray.id);
+      await waitFor(() => !isShown(win, resumeBtn()), 'a signed job has no way back in: its report is closed');
+      await win.DB.updateJob(spray.id, { status: 'new' });
+      await win.showJobViewById(spray.id);
+      await waitFor(() => isShown(win, doc.getElementById('start-inspection-btn')) && !isShown(win, resumeBtn()), 'and a new job has Start, not Continue');
+    } finally {
+      win.hideAllAppViews();
+      await win.DB.deleteJob(spray.id);
+    }
+  });
+
   // =====================================================================
   // Carry forward: last visit's description of the property (v171)
   // =====================================================================

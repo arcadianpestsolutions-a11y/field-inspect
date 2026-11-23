@@ -285,7 +285,9 @@
   // report. remote: the report's copy of the walk, if it has one.
   // takePhoto(item): opens the camera (v170), called when an answer that
   // needs a photo is tapped and there is none yet.
-  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, suggest, refile, takePhoto, remote, visible: startVisible }) {
+  // onProgress(left): told on every redraw how many things the walk still
+  // needs (v178), 0 when it is finished.
+  function mount({ container, jobId, items, done, setZone, saveNotes, saveAnswer, saveResults, suggest, refile, takePhoto, remote, onProgress, visible: startVisible }) {
     let state = remote ? mergeStates(loadState(jobId), remote) : loadState(jobId);
     let steps = buildSteps(items, state);
     let index = firstOpenIndex(steps, done(), state);
@@ -509,6 +511,7 @@
     function render() {
       container.innerHTML = '';
       container.classList.toggle('hidden', !visible);
+      if (onProgress) { try { onProgress(outstanding(items, state, done()).length); } catch (e) { /* a display nicety only */ } }
       if (!visible) return;
       const step = steps[index];
       const doneSet = done();
@@ -559,11 +562,23 @@
       } else if (step.kind === 'checks') {
         const inside = step.area === 'inside';
         container.appendChild(el('div', 'walk-title', (inside ? 'Inside' : step.areaTitle) + ': tick each one'));
-        container.appendChild(el('div', 'walk-hint', inside
+        // v178: once most of the list is ticked, say which rows are not.
+        // "Rest are OK" never answers the meter box, so Next stayed grey with
+        // every other row green and nothing on the screen saying why.
+        const stillOpen = step.items.filter((i) => !state.results[i.id] && !state.skipped.includes(i.id));
+        const nearlyDone = stillOpen.length > 0 && stillOpen.length <= 3 && stillOpen.length < step.items.length;
+        const leftLine = () => {
+          const names = stillOpen.map((i) => i.label).join(', ');
+          if (stillOpen.length > 1) return `${stillOpen.length} left to tick: ${names}.`;
+          return `One left to tick: ${names}. Tap ${stillOpen[0].okLabel || 'OK'}, ${stillOpen[0].issueLabel || 'Issue'} or N/A.`;
+        };
+        const hintEl = el('div', 'walk-hint' + (nearlyDone ? ' walk-hint-left' : ''), nearlyDone ? leftLine() : (inside
           ? 'No photos needed inside unless something is wrong. Mark an Issue, then photograph it.'
           : (takePhoto
             ? 'Tap Issue only where something is wrong: the camera opens for the photo. Then “Rest are OK”.'
             : 'Tap Issue only where something is wrong, then photograph it. Then “Rest are OK”.')));
+        if (nearlyDone) hintEl.dataset.left = String(stillOpen.length);
+        container.appendChild(hintEl);
         const list = el('div', 'walk-checks');
         const closeBox = () => { commitDraft(); noteOpenFor = null; draft = null; setZone(zoneFor(step)); render(); };
         for (const item of step.items) {

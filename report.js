@@ -763,11 +763,14 @@
   async function renderWalkTodo() {
     const list = document.getElementById('report-section-list');
     if (!list || !currentReport) return;
-    let card = document.getElementById('walk-todo');
     const jobId = currentJobId;
     let todo = null;
     try { todo = await walkOutstandingFor(jobId, currentReport); } catch (e) { todo = null; }
     if (jobId !== currentJobId) return; // another report was opened meanwhile
+    // Looked up after the wait, not before it (v178). Two redraws in flight at
+    // once each found no card and each made one, so the report could show the
+    // walk's card twice. From here to the end nothing waits.
+    let card = document.getElementById('walk-todo');
     walkBlock = { jobId, count: todo ? todo.length : 0 };
     const fb = document.getElementById('finalize-report-btn');
     const fh = document.getElementById('finalize-hint');
@@ -790,10 +793,19 @@
     if (card.nextSibling !== anchor) anchor.parentNode.insertBefore(card, anchor);
     card.classList.toggle('walk-todo-clear', !todo.length);
     card.innerHTML = '';
+    // What is left, area by area: one line of the card for each.
+    const byArea = new Map();
+    for (const t of todo) {
+      if (!byArea.has(t.areaTitle)) byArea.set(t.areaTitle, []);
+      byArea.get(t.areaTitle).push(t.label);
+    }
     const head = document.createElement('strong');
     head.id = 'walk-todo-title';
+    // v178: the number is the number of areas listed underneath. It used to
+    // count the entries of the list ("7 still to do" over four lines, one of
+    // them "8 items"), which nobody could check against anything on screen.
     head.textContent = todo.length
-      ? `Walk-through: ${todo.length} still to do`
+      ? `Walk-through: ${byArea.size} ${byArea.size === 1 ? 'area' : 'areas'} still to do`
       : '✓ Walk-through complete: every spot photographed or ticked';
     card.appendChild(head);
     if (!todo.length) {
@@ -817,11 +829,6 @@
       }
       return;
     }
-    const byArea = new Map();
-    for (const t of todo) {
-      if (!byArea.has(t.areaTitle)) byArea.set(t.areaTitle, []);
-      byArea.get(t.areaTitle).push(t.label);
-    }
     for (const [area, labels] of byArea) {
       const p = document.createElement('p');
       p.className = 'walk-todo-line';
@@ -831,9 +838,27 @@
       p.appendChild(document.createTextNode(labels.join(', ')));
       card.appendChild(p);
     }
+    // v178: one tap back into the walk. The card used to say "go back to the
+    // job and tap Start Inspection", and a job in review has no such button,
+    // so a report opened before the walk was finished could never be signed.
     const hint = document.createElement('p');
     hint.className = 'walk-todo-hint';
-    hint.textContent = 'Go back to the job and tap Start Inspection to finish these.';
+    if (typeof window.resumeInspection === 'function') {
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.id = 'walk-resume-btn';
+      go.className = 'btn btn-primary full';
+      go.textContent = 'Finish the walk-through';
+      go.addEventListener('click', async () => {
+        go.disabled = true;
+        try { await window.resumeInspection(jobId); } catch (e) { toast('The walk-through did not open: ' + ((e && e.message) || e)); }
+        go.disabled = false;
+      });
+      card.appendChild(go);
+      hint.textContent = 'Do this first: it answers some of the questions below.';
+    } else {
+      hint.textContent = 'Go back to the job and tap Continue inspection to finish these.';
+    }
     card.appendChild(hint);
   }
 
@@ -2859,7 +2884,7 @@
     // Asked again at the moment of signing, not trusted from the last render.
     const walkLeft = await walkOutstandingFor(currentJobId, currentReport).catch(() => null);
     if (walkLeft && walkLeft.length) {
-      toast(`The walk-through still has ${walkLeft.length} to do. Finish it before you sign.`);
+      toast('The walk-through is not finished. Finish it before you sign.');
       renderWalkTodo();
       return;
     }
