@@ -2725,7 +2725,9 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   border: 0; border-radius: 8px; font-size: 0.95rem; text-align: left; cursor: pointer;
 }
 .more-item:hover { background: var(--card); }
-.more-item span { font-size: 1.15rem; }
+/* Every icon in one fixed-width box, so the labels line up (v179): the
+   tag, folder and gear drew narrower than the others and shifted their text. */
+.more-item > span:first-child { font-size: 1.15rem; width: 1.6em; flex: 0 0 1.6em; display: inline-flex; justify-content: center; }
 
 /* ---- Leads ------------------------------------------------------------- */
 .leads-due { border-left: 4px solid var(--warning); margin-bottom: 16px; }
@@ -3426,6 +3428,13 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
    ran 50px past the edge of the form and was cut off. */
 #job-scheduled-date { flex: 1.3 1 0; min-width: 0; }
 #job-scheduled-time { flex: 1 1 0; min-width: 0; }
+/* v179: once "How long" joined the row (booking-edit.js) the date and time
+   were squeezed to "dd/" and "(" on a phone. The date has its own line and
+   the time and the length share the next one. */
+.row:has(> #job-scheduled-length) { flex-wrap: wrap; }
+.row:has(> #job-scheduled-length) > #job-scheduled-date { flex: 1 1 100%; }
+.row:has(> #job-scheduled-length) > #job-scheduled-time,
+.row:has(> #job-scheduled-length) > #job-scheduled-length { flex: 1 1 0; min-width: 0; }
 
 /* ---------- Referral register (referrals-ui.js, v121) ---------- */
 .referrals-rule { margin: 0 0 12px; text-align: left; padding: 0; }

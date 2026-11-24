@@ -1406,7 +1406,7 @@
       return;
     }
     const rows = history.slice(0, 5).map((j) => {
-      const date = new Date(j.createdAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      const date = new Date(j.createdAt).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' });
       const type = j.jobType === 'pest_treatment' ? 'Pest Treatment' : 'Termite';
       return `<li>${escapeHtml(j.name)} — ${type} · ${escapeHtml(j.address || 'no address')} · ${date}</li>`;
     }).join('');

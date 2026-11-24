@@ -275,13 +275,14 @@
       key: 'delaney', name: 'Delaney Property', address: '5 Rosewood Avenue, Ambarvale NSW 2560',
       lat: -34.0891, lng: 150.8006, jobType: 'termite',
       clientPhone: '0421 668 034', clientEmail: 'm.delaney@example.com',
-      unbooked: true, status: 'completed', report: 'termiteClean', dueOffset: -9, invoice: 'paid',
+      // Last visited a year before it fell due (v179): it said "overdue 9d" over "last done today".
+      unbooked: true, status: 'completed', report: 'termiteClean', dueOffset: -9, dayOffset: -374, hour: 9, mins: 90, invoice: 'paid',
     },
     {
       key: 'harrington', name: 'Harrington Duplex', address: '22 Fitzgibbon Lane, Woodbine NSW 2560',
       lat: -34.0796, lng: 150.8177, jobType: 'termite',
       clientPhone: '0407 119 425', clientEmail: 'p.harrington@example.com',
-      unbooked: true, status: 'completed', report: 'termiteClean', dueOffset: 11, invoice: 'paid',
+      unbooked: true, status: 'completed', report: 'termiteClean', dueOffset: 11, dayOffset: -354, hour: 10, mins: 90, invoice: 'paid',
     },
     // The week ahead, so the scheduler and calendar aren't empty.
     {
@@ -392,6 +393,33 @@
         timberInGroundFound: 'Yes',
         timberInGroundDetails: 'Retaining sleeper in contact with the soil on the southern boundary. Remove it, or replace it with a wall that is not timber.',
       });
+      // v179: complete, so a signed sample prints as a finished report would.
+      // The photos the rules demand for what was found, and the plan the
+      // "management plan proposed" answer opens.
+      const shot = () => [{ id: DB.uid(), blob: media.accessPhotos[0].blob }];
+      Object.assign(s.access, { obstructionPhotos: shot() });
+      Object.assign(s.findings, {
+        damagePhotos: shot(),
+        existingManagementSystem: 'No termite management system found. No durable notice in the meter box.',
+        managementSystemStatus: 'None present — management plan proposed',
+      });
+      Object.assign(s.conducive, { moisturePhotos: shot() });
+      Object.assign(s.proposedWorks, {
+        managementMethod: ['Chemical soil treated zone (AS 3660.2)'],
+        treatmentExtent: 'Complete perimeter',
+        areasToTreat: ['External perimeter', 'Slab penetrations', 'Landscaping timbers'],
+        drillingRequired: 'Yes',
+        drillingDetail: 'Rear patio and front path drilled at 200 mm centres, holes plugged with matching grey cement.',
+        productsProposed: [{ id: 'pp1', productName: 'Termidor HE Residual Termiticide', activeConstituent: 'Fipronil 96 g/L', areaApplied: ['External'], concentrateUsed: '600 mL', totalMixApplied: '100 L', dilutionRate: '6 mL / L' }],
+        systemLimitations: 'A treated zone deters concealed entry; it does not stop termites crossing an exposed surface in the open. Regular inspection is still required.',
+        estimatedDuration: '1 day',
+        occupantRequirements: 'Keep children and pets off treated soil until dry. Move pot plants and stored items away from the walls before the day.',
+      });
+      Object.assign(s.worksWarranty, {
+        warrantyPeriod: '2 years',
+        warrantyConditions: ['Annual inspection by a licensed technician', 'Do not disturb the treated zone', 'Remove timber in contact with soil'],
+        reinspectionAfterWorks: '12 months',
+      });
       Object.assign(s.inspector, inspectorBlock(media.techSignature));
       Object.assign(s.acknowledgement, {
         clientAckName: spec.name, clientSignature: media.clientSignature, clientAckDate: localDate(spec.dayOffset || 0),
@@ -405,12 +433,12 @@
       Object.assign(s.clientDetails, { weather: 'Fine and sunny, 26°C, wind 8 km/h N' });
       Object.assign(s.findings, {
         liveTermitesFound: 'Yes', nestFound: 'No', workingsFound: 'Yes',
-        workingsAreas: ['Subfloor', 'Interior', 'Fencing'],
+        workingsAreas: ['Subfloor', 'The Interior', 'Fences'],
         evidenceDetails: 'Live subterranean termites (Coptotermes sp. suspected, not identified to species on site) located in the subfloor to the south-east bearer, with active mudding tracking up the adjacent pier. Damage extends into the bearer and one floor joist. Live workings also present in the boundary fence palings.',
         termiteSpecies: 'Coptotermes (not identified to species on site)', riskOfAssociatedDamage: 'High',
         liveTermitesAreas: ['Subfloor', 'Fences'],
         liveTermitesLocation: 'South-east subfloor bearer and the adjacent pier; boundary fence palings.',
-        damageSeverity: 'Major', workingsDamagePotential: 'High', treatmentRecommended: 'Yes',
+        damageSeverity: 'Moderate to Extensive', workingsDamagePotential: 'High', treatmentRecommended: 'Yes',
         treatmentComments: 'URGENT. Do not disturb the workings. Recommend a chemical treated zone to AS 3660.1 plus in-situ treatment of active workings, followed by a timber replacement assessment by a licensed builder.',
         priorTreatmentEvidence: 'No', borersFound: 'No', durableNoticeFound: 'No',
         reinspectionInterval: '3 months', susceptibility: 'HIGH',
@@ -421,7 +449,15 @@
         moistureDetails: 'Leaking hot water overflow discharging against the south-east external wall. Very high readings (>28%) to the south-east subfloor bearer and the adjacent soil.',
         fungalDecayFound: 'Yes', siteDrainage: 'Inadequate', subfloorDrainage: 'Inadequate',
         ventilation: 'Inadequate', antCappingCondition: 'Inadequate', weepHolesClear: 'No',
+        waterLeakAreas: ['Hot Water Service relief valve'],
+        waterLeakDetails: 'Hot water relief valve discharging against the south-east wall. Pipe it to a drain.',
+        fungalDecayAreas: ['Timber Bearers'],
+        fungalDecayLocation: 'South-east subfloor bearer, beside the termite damage.',
       });
+      // v179: the photos the rules demand for what was found.
+      const shot = () => [{ id: DB.uid(), blob: media.accessPhotos[0].blob }];
+      Object.assign(s.findings, { liveTermitesPhotos: shot() });
+      Object.assign(s.conducive, { waterLeakPhotos: shot(), fungalDecayPhotos: shot() });
       Object.assign(s.property, { structureType: 'Townhouse', structureHeight: 'Double Storey' });
       return s;
     },
@@ -732,12 +768,20 @@
       const changes = {};
       if (spec.status && spec.status !== 'new') changes.status = spec.status;
       if (typeof spec.dueOffset === 'number') changes.nextDueAt = atLocal(spec.dueOffset, 9);
-      if (!spec.unbooked && spec.status) {
+      if (spec.status && (!spec.unbooked || typeof spec.dayOffset === 'number')) {
         const startedAt = atLocal(spec.dayOffset, spec.hour);
+        // A past visit was also added in the past, not "Added today".
+        if (spec.dayOffset < 0) changes.createdAt = startedAt - 3 * 24 * 60 * 60 * 1000;
         changes.inspectionStartedAt = startedAt;
         changes.inspectionEndedAt = startedAt + (spec.mins || 60) * 60 * 1000;
         changes.inspectionDate = localDate(spec.dayOffset);
         changes.inspectionTime = String(spec.hour).padStart(2, '0') + ':00';
+      }
+      // The job list shows the newest-added first. Upcoming sample jobs are
+      // "added" soonest-first (v179), so the list reads today, tomorrow, then
+      // later, instead of the order this file happens to make them in.
+      if (!(typeof spec.dayOffset === 'number' && spec.dayOffset < 0)) {
+        changes.createdAt = Date.now() - ((spec.dayOffset || 0) + 1) * 60 * 1000 - (spec.hour || 0) * 1000;
       }
       if (Object.keys(changes).length) await DB.updateJob(job.id, changes);
 
@@ -761,6 +805,27 @@
       }
 
       if (spec.invoice) await seedInvoice(job, spec, invoiceIndex++);
+    }
+    // A few enquiries at each open stage (v179), so the Enquiries tab shows
+    // what it is for instead of an empty screen.
+    if (DB.addLead && DB.saveLead) {
+      const DAY = 24 * 60 * 60 * 1000;
+      const LEADS = [
+        { name: 'Priya Raman', phone: '0413 552 018', address: '14 Banksia Way, Mount Annan NSW 2567', source: 'Google', jobType: 'termite',
+          notes: 'Buying the house next week. Wants a pre-purchase inspection before settlement.', stage: 'new', ageDays: 0 },
+        { name: 'Greg Hollis', phone: '0428 301 774', address: '3 Wattle Crescent, Narellan NSW 2567', source: 'Facebook', jobType: 'pest_treatment',
+          notes: 'Cockroaches in the kitchen. Two young kids and a dog.', stage: 'contacted', ageDays: 2 },
+        { name: 'Elena Marsh', phone: '0402 889 140', address: '27 Riverview Road, Camden NSW 2570', source: 'Referral', jobType: 'termite',
+          notes: 'Mud leads on the garage door frame. Quoted a chemical treated zone.', stage: 'quoted', ageDays: 5, quotedCents: 248000 },
+        { name: 'Tom Whitfield', phone: '0435 117 602', address: '9 Kurrajong Street, Gregory Hills NSW 2557', source: 'Repeat client', jobType: 'termite',
+          notes: 'Annual inspection due. Prefers a morning.', stage: 'new', ageDays: 1 },
+      ];
+      for (const spec of LEADS) {
+        const lead = await DB.addLead(spec);
+        const at = Date.now() - spec.ageDays * DAY;
+        await DB.saveLead({ ...lead, stage: spec.stage, stageChangedAt: at, createdAt: at,
+          lastContactedAt: spec.stage === 'new' ? null : at });
+      }
     }
     // Group the sample jobs into clients now (v164). The app's own grouping
     // runs as it opens, before these exist, so every demo client said

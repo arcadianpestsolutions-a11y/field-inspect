@@ -1192,7 +1192,7 @@
   function fmtDate(ts) {
     if (!ts) return '';
     const d = new Date(ts);
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
   // ---------- Public entry point ----------
@@ -2623,7 +2623,16 @@
     next.className = 'btn btn-primary full hidden';
     if (note) note.classList.add('hidden');
 
-    if (finalized) { text.textContent = 'Report finalized'; return; }
+    // v179: a signed report reads as finished. It was complete against the
+    // questions of the day it was signed, so it is not measured against today's.
+    if (finalized) {
+      const when = new Date(currentReport.finalizedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+      text.textContent = `✓ Signed and finalized ${when}`;
+      card.querySelector('#report-progress-pct').textContent = '';
+      card.querySelector('#report-progress-fill').style.width = '100%';
+      card.querySelector('.progress-bar').setAttribute('aria-valuenow', '100');
+      return;
+    }
 
     // An older page paired with this script has no finish-step.js: the card
     // as it was, sections counted and one button to the next open one.
@@ -2723,7 +2732,7 @@
       finalizeBtn.textContent = currentReport.finalizedAt ? `✓ Submitted to ${host}` : `Sign and submit to ${host}`;
     }
     renderReviewStrip();
-    finalizeHint.classList.toggle('hidden', allRequiredGreen && !walkBlocksFinalize());
+    finalizeHint.classList.toggle('hidden', !!currentReport.finalizedAt || (allRequiredGreen && !walkBlocksFinalize()));
     // Send/Save only make sense once the report is actually finalized —
     // stays visible on reopen too, so a technician can come back and send
     // it later without having to re-finalize.
@@ -2770,7 +2779,10 @@
     toggle.dataset.done = String(done);
     toggle.dataset.total = String(total);
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    toggle.textContent = `${open ? 'Hide' : 'Show'} the whole document (${done} of ${total} section${total === 1 ? '' : 's'} done)`;
+    const signed = !!(currentReport && currentReport.finalizedAt);
+    toggle.textContent = signed
+      ? `${open ? 'Hide' : 'Show'} the whole document (${total} section${total === 1 ? '' : 's'})`
+      : `${open ? 'Hide' : 'Show'} the whole document (${done} of ${total} section${total === 1 ? '' : 's'} done)`;
     reportSectionList.classList.toggle('hidden', !open);
   }
 

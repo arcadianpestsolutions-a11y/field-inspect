@@ -12270,7 +12270,7 @@
     // A report only exists in the database once a section has been saved, so make one.
     await win.DB.saveReport({ jobId: job.id, sections: {}, documentType: 'timber_pest_inspection', finalizedAt: Date.now() });
     await win.ReportUI.openReview(job.id);
-    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Report finalized', 'it says finalized');
+    await waitFor(() => /^✓ Signed and finalized \d/.test(doc.getElementById('report-progress-text').textContent), 'it says finalized');
     assert(doc.getElementById('report-next-btn').classList.contains('hidden'), 'nothing left to continue');
     win.hideAllAppViews();
     await win.DB.deleteJob(job.id);
@@ -14661,7 +14661,7 @@
     assertEqual(done.schemaVersion, win.REPORT_SCHEMA_VERSION, 'signed against the question set of the day it was signed');
     assertEqual(done.sections.findings.susceptibility, 'LOW', 'with the answers given on the way');
     assertEqual(done.sections.acknowledgement.ackStatus, 'Client not on site', 'including the client not being there');
-    await waitFor(() => doc.getElementById('report-progress-text').textContent === 'Report finalized', 'the card says finalized');
+    await waitFor(() => /^✓ Signed and finalized \d/.test(doc.getElementById('report-progress-text').textContent), 'the card says finalized');
     win.hideAllAppViews();
     await win.DB.deleteJob(job.id);
   });
