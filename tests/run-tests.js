@@ -15026,6 +15026,51 @@
     }
   });
 
+  // v180. Tal, 24 Nov: "the front of house photo is not saving". It saved, but
+  // the report kept whatever photo was already on it, so the new one never
+  // showed. And the retake the portrait warning asks for was never the cover.
+  test('Front photo: the one just taken becomes the report cover, even over an older photo, and a retake after the portrait warning replaces it', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Front Photo Job', address: '7 Cover St', jobType: 'termite' });
+    const old = await fakePhoto(win, 640, 480);
+    // A photo already on the report, as a demo job or an earlier visit has.
+    await win.DB.saveReport({ jobId: job.id, documentType: 'timber_pest_inspection', finalizedAt: null, auditLog: [],
+      sections: { property: { propertyPhotos: [{ id: 'older', blob: old }] } } });
+    const cover = async () => ((await win.DB.getReport(job.id)).sections.property.propertyPhotos || []);
+    const modal = walkModal(doc);
+    try {
+      await openInspection(win, doc, job, { guided: true });
+      const portrait = await fakePhoto(win, 480, 640);
+      await snap(win, doc, { files: [portrait] });
+      await waitFor(async () => (await cover())[0] && (await cover())[0].frontPhoto, 'the front photo is put on the report', 4000);
+      let photos = await cover();
+      assertEqual(photos.length, 2, 'the older photo is kept');
+      assertEqual(photos[1].id, 'older', 'behind the new one');
+      const first = photos[0].captureId;
+      assert(first, 'the cover knows which photo it is, so it is never filed twice');
+      await waitFor(() => /portrait/.test(doc.getElementById('toast').textContent), 'a portrait cover is pointed out', 3000);
+
+      // The retake, with nothing on the walk open.
+      await snap(win, doc, { w: 1600, h: 1000 });
+      await waitFor(async () => (await cover())[0].captureId !== first, 'the retake becomes the cover', 4000);
+      photos = await cover();
+      assertEqual(photos.length, 2, 'replacing the first front photo, not piling up');
+      assertEqual(photos.filter((p) => p.frontPhoto).length, 1, 'one front photo');
+      assertEqual(photos[1].id, 'older', 'the older photo still kept');
+      const caps = await win.DB.getCaptures(job.id);
+      assertEqual(caps.filter((c) => c.isFrontElevation).length, 2, 'both front photos are kept in the gallery');
+
+      // After that, a photo is an ordinary photo again.
+      await snap(win, doc, { w: 1600, h: 1000 });
+      await wait(400);
+      assertEqual((await cover())[0].captureId, photos[0].captureId, 'the next photo does not touch the cover');
+    } finally {
+      if (!modal.classList.contains('hidden')) await closeInspection(win, doc, job);
+      else { win.hideAllAppViews(); await win.DB.deleteJob(job.id); }
+    }
+  });
+
   // =====================================================================
   // Carry forward: last visit's description of the property (v171)
   // =====================================================================

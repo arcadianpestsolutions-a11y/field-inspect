@@ -1224,7 +1224,7 @@
     // The technician photographed it for exactly this purpose, so making them
     // find it again in the gallery and attach it by hand is the kind of step
     // that turns into "the cover was blank again".
-    async attachCoverPhoto(jobId, blob) {
+    async attachCoverPhoto(jobId, blob, captureId) {
       const report = await loadOrCreateReport(jobId);
       const job = await DB.getJob(jobId);
       const schema = schemaFor(job && job.jobType, report);
@@ -1238,11 +1238,17 @@
           .find((x) => x.field.id === 'propertyPhotos');
       if (!target) return;
 
+      if (report.finalizedAt) return; // a signed report keeps the cover it was signed with
       const section = { ...(report.sections[target.sectionId] || {}) };
       const existing = Array.isArray(section[target.field.id]) ? section[target.field.id] : [];
-      // Never displace a photo the technician chose deliberately.
-      if (existing.length) return;
-      section[target.field.id] = [{ id: DB.uid(), blob }];
+      // v180: the front photo just taken IS the cover. It used to be dropped
+      // whenever the field already held a photo (Tal, 24 Nov: "the front of
+      // house photo is not saving"): a retake after the portrait warning, a
+      // second visit, or a demo job with a sample picture all kept the old
+      // cover. Nothing is thrown away: an earlier front photo is replaced,
+      // and any other photo is kept, behind the new one (the cover is the first).
+      const kept = existing.filter((p) => p && !p.frontPhoto && !(captureId && p.captureId === captureId));
+      section[target.field.id] = [{ id: DB.uid(), blob, frontPhoto: true, ...(captureId ? { captureId } : {}) }, ...kept];
       report.sections[target.sectionId] = section;
       await DB.saveReport(report);
       if (currentJobId === jobId) { currentReport = report; renderSectionList(); }

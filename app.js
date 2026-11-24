@@ -199,6 +199,7 @@
     if (photoWalk) photoWalk.destroy();
     photoWalk = null;
     if (inspectionFinishBtn) inspectionFinishBtn.classList.remove('finish-early');
+    frontRetake = false;
     if (inspectionWalkEl) inspectionWalkEl.classList.add('hidden');
     setWalkMode(false);
   }
@@ -2059,6 +2060,9 @@
   // type, storeys and the general condition of the place, which is most of
   // the property section answered before anyone has walked around the back.
   let frontPhotoPending = false;
+  // v180: the cover came out portrait and the technician was asked to take it
+  // again. The next photo with no item open is that retake, and replaces it.
+  let frontRetake = false;
 
   function showFrontPhotoPrompt(on) {
     if (!inspectionPrompt) return;
@@ -2324,8 +2328,8 @@
   function shotForNow() {
     return {
       jobId: currentJobId,
-      isFront: frontPhotoPending,
-      zone: frontPhotoPending ? 'Front Elevation' : inspectionZoneInput.value.trim(),
+      isFront: frontPhotoPending || (frontRetake && !inspectionZoneInput.value.trim()),
+      zone: (frontPhotoPending || (frontRetake && !inspectionZoneInput.value.trim())) ? 'Front Elevation' : inspectionZoneInput.value.trim(),
     };
   }
 
@@ -2353,7 +2357,7 @@
       // Made a sensible size (photo-prep.js); the original is kept if that fails.
       const blob = window.PhotoPrep ? await window.PhotoPrep.prepare(files[i]) : files[i];
       // From the gallery, several at once: only the first can be the cover.
-      const isFront = shot.isFront && i === 0 && frontPhotoPending;
+      const isFront = shot.isFront && i === 0 && (frontPhotoPending || frontRetake);
       const zone = isFront ? 'Front Elevation' : (shot.isFront ? inspectionZoneInput.value.trim() : shot.zone);
       await saveInspectionPhoto(blob, { jobId: shot.jobId, isFront, zone });
     }
@@ -2376,6 +2380,7 @@
     }
     shutterFeedback();
     showLastPhoto(blob);
+    frontRetake = false;
 
     if (!isFront) {
       if (zone && inspectionChecklistItems.some((item) => item.label === zone)) {
@@ -2392,28 +2397,27 @@
     // letterboxed into it with the house small in the middle, and a house is
     // wider than it is tall anyway, so this is checked rather than only asked
     // for. It warns and keeps the photo: a usable-but-tall cover beats none.
+    let portrait = false;
     try {
       const bitmap = await createImageBitmap(blob);
-      const portrait = bitmap.height > bitmap.width;
+      portrait = bitmap.height > bitmap.width;
       bitmap.close();
-      if (portrait) {
-        toast('That cover photo is portrait. Turn the phone sideways and take it again for a better report cover.');
-      }
+      if (portrait) frontRetake = true;
     } catch (e) { /* some browsers refuse createImageBitmap on a fresh blob; not worth a message */ }
 
     // Marked so a later visit does not ask for the cover shot again, and put
     // straight into the report's cover field.
     await DB.updateCapture(capture.id, { isFrontElevation: true });
     if (window.ReportUI && window.ReportUI.attachCoverPhoto) {
-      await window.ReportUI.attachCoverPhoto(jobId, blob)
+      await window.ReportUI.attachCoverPhoto(jobId, blob, capture.id)
         .catch((err) => console.warn('[inspection] could not set the cover photo:', err.message || err));
     }
-    if (photoWalk) {
-      const nextName = photoWalk.frontSaved();
-      toast('Front photo saved. Next: ' + nextName + '.');
-    } else {
-      toast('Front photo saved. Now work through the property.');
-    }
+    // The portrait warning is the message left on screen (v180): it was
+    // shown first and covered at once by "Front photo saved".
+    const nextName = photoWalk ? photoWalk.frontSaved() : '';
+    if (portrait) toast('Front photo saved, but it is portrait. Turn the phone sideways and tap Take photo again: the next photo replaces it.');
+    else if (photoWalk) toast('Front photo saved. Next: ' + nextName + '.');
+    else toast('Front photo saved. Now work through the property.');
     // Reading it is best-effort and must not hold up the walkthrough.
     draftPropertyFromFrontPhoto(jobId, blob);
   }
