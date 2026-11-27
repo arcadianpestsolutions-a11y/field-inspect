@@ -34,6 +34,7 @@
     'view-swms-list': 'more',
     'view-assets': 'more',
     'view-business': 'more',
+    'view-chem-register': 'more',
     'view-archive': 'more',
   };
 

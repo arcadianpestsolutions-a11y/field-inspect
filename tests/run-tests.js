@@ -1610,6 +1610,88 @@
     lineItems: [{ description: 'Work', quantity: 1, unitAmountCents: cents }],
   }, extra || {});
 
+  // ---------- Chemical register (chem-register.js) ----------
+  const CR = () => window.ChemRegister;
+  const chemReport = (over) => ({
+    jobId: 'j1', documentType: 'general_pest', finalizedAt: new Date(2026, 10, 20, 15).getTime(),
+    sections: {
+      clientDetails: { clientName: 'A Client', clientPhone: '0400 000 000', propertyAddress: '1 Spray St, Camden',
+        inspectionDate: '2026-11-20', inspectionTime: '09:00', applicationFinishTime: '10:15', weather: 'Fine' },
+      pestIdentification: { targetPests: ['Ants', 'Spiders'], rodentStationsInUse: 'No' },
+      treatmentDetails: { areasTreated: ['Interior'], equipmentUsed: ['Hand Compression Sprayer'] },
+      chemicals: { products: [
+        { id: 'p1', productName: 'Biflex Ultra', activeConstituent: 'Bifenthrin 100 g/L', areaApplied: ['External'],
+          concentrateUsed: '60 mL', dilutionRate: '6 mL / L', totalMixApplied: '10 L', batchNumber: 'B123' },
+        { id: 'p2', productName: 'Advion Cockroach Gel AEPMA', activeConstituent: 'Indoxacarb 6 g/kg', areaApplied: ['Internal'], totalMixApplied: '12 g' },
+        { id: 'p3', areaApplied: [] },
+      ] },
+      safety: { appliedOutdoorsWithSpray: 'Yes', windSpeed: '8', windDirection: 'SW', temperature: '24' },
+      inspector: { inspectorName: 'Tech One', inspectorLicence: 'LIC-1', inspectorPhone: '0411 111 111' },
+    },
+    ...over,
+  });
+
+  test('Chemical register: one row per product applied, carrying the record the regulation asks for', () => {
+    const rows = CR().build({ reports: [chemReport()], jobs: [], provider: { providerAddress: '20 Base St' } });
+    assertEqual(rows.length, 2, 'two products, and the blank third row is not a record');
+    const r = rows[0];
+    assertEqual(r.date, '2026-11-20');
+    assertEqual(r.startTime + '-' + r.finishTime, '09:00-10:15', 'start and finish time');
+    assertEqual(r.propertyAddress, '1 Spray St, Camden');
+    assertEqual(r.productName, 'Biflex Ultra');
+    assertEqual(r.concentrateUsed + ' / ' + r.dilutionRate + ' / ' + r.totalApplied, '60 mL / 6 mL / L / 10 L', 'rate and quantity');
+    assertEqual(r.areaApplied, 'External');
+    assertEqual(r.equipment, 'Hand Compression Sprayer');
+    assertEqual(r.situation, 'Ants, Spiders', 'situation of use');
+    assertEqual(r.windSpeed + ' ' + r.windDirection, '8 SW', 'wind, for outdoor spraying');
+    assertEqual(r.applicatorLicence, 'LIC-1');
+    assert(/0411 111 111/.test(r.applicatorContact) && /20 Base St/.test(r.applicatorContact), 'applicator contact, with the business address when the technician has none');
+    assert(/A Client/.test(r.ownerDetails), 'owner details');
+    assert(r.signed, 'signed');
+  });
+
+  test('Chemical register: proposed products are not applied ones, and every document type with products counts', () => {
+    const plan = { jobId: 'j2', documentType: 'termite_action_plan', finalizedAt: 1,
+      sections: { clientDetails: { inspectionDate: '2026-11-21' }, proposedWorks: { productsProposed: [{ productName: 'Termidor' }] } } };
+    const cert = { jobId: 'j3', documentType: 'termite_certificate', finalizedAt: null,
+      sections: { clientDetails: { inspectionDate: '2026-11-22', propertyAddress: '3 Barrier Rd' },
+        installation: { areasTreated: ['External perimeter'], productsUsed: [{ productName: 'Termidor HE', totalMixApplied: '400 L' }] } } };
+    const rows = CR().build({ reports: [plan, cert], jobs: [] });
+    assertEqual(rows.length, 1, 'the action plan proposes; it applies nothing');
+    assertEqual(rows[0].productName, 'Termidor HE', 'the installation certificate counts');
+    assertEqual(rows[0].situation, 'Termites');
+    assertEqual(rows[0].areaApplied, 'External perimeter', 'falls back to the areas on the document');
+    assert(!rows[0].signed, 'and an unsigned one is listed, marked unsigned');
+    assertEqual(CR().summarise(rows).unsignedJobs, 1);
+  });
+
+  test('Chemical register: dates are inclusive, rows run oldest first, and a spreadsheet cannot run a formula', () => {
+    const a = chemReport({ jobId: 'a' });
+    const b = chemReport({ jobId: 'b' });
+    b.sections = { ...b.sections, clientDetails: { ...b.sections.clientDetails, inspectionDate: '2026-11-02', propertyAddress: '=HYPERLINK("x")' } };
+    const day = (iso) => CR().dayMs(iso);
+    const rows = CR().build({ reports: [a, b], jobs: [], from: day('2026-11-02'), to: day('2026-11-20') + 86400000 - 1 });
+    assertEqual(rows.length, 4, 'both ends of the range are included');
+    assertEqual(rows[0].date, '2026-11-02', 'oldest first');
+    assertEqual(CR().build({ reports: [a, b], jobs: [], from: day('2026-11-03'), to: day('2026-11-19') }).length, 0, 'and outside it, nothing');
+    const csv = CR().toCsv(rows);
+    const lines = csv.split('\r\n');
+    assertEqual(lines.length, 5, 'a header and one line per application');
+    assert(/^Date,Start,Finish,Property address/.test(lines[0]));
+    assert(csv.includes(`"'=HYPERLINK(""x"")"`), 'a leading = is quoted as text');
+  });
+
+  test('Chemical register: a signed record with chemicals is kept for 3 years; a draft or a report with none is not', () => {
+    const r = chemReport();
+    const until = CR().retainedUntil(r, null);
+    assertEqual(CR().isoDay(until), '2029-11-20', '3 years from the service date');
+    assert(CR().isRetained(r, null, new Date(2029, 10, 19).getTime()), 'held the day before');
+    assert(!CR().isRetained(r, null, new Date(2029, 10, 20).getTime()), 'released on the day');
+    assert(!CR().isRetained({ ...r, finalizedAt: null }, null), 'a draft is not held: a job made by mistake must stay deletable');
+    const inspection = { jobId: 'x', finalizedAt: 1, sections: { clientDetails: { inspectionDate: '2026-11-20' } } };
+    assert(!CR().isRetained(inspection, null), 'nor is a report with no chemicals on it');
+  });
+
   test('Business: the financial year runs July to June, not January to December', () => {
     // A January-to-December year to date is the wrong answer to every
     // question a BAS or a tax agent asks.
@@ -15029,6 +15111,55 @@
   // v180. Tal, 24 Nov: "the front of house photo is not saving". It saved, but
   // the report kept whatever photo was already on it, so the new one never
   // showed. And the retake the portrait warning asks for was never the cover.
+  test('Chemical register: the screen lists signed and unsigned applications, exports, and a signed job cannot be deleted', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const today = win.ChemRegister.isoDay(Date.now());
+    const signedJob = await win.DB.addJob({ name: 'Chem Signed', address: '5 Register Rd', jobType: 'pest_treatment' });
+    const draftJob = await win.DB.addJob({ name: 'Chem Draft', address: '6 Register Rd', jobType: 'pest_treatment' });
+    const sections = (addr) => ({
+      clientDetails: { clientName: 'Reg Client', propertyAddress: addr, inspectionDate: today, inspectionTime: '08:30' },
+      chemicals: { products: [{ id: 'p', productName: 'Biflex Ultra', activeConstituent: 'Bifenthrin 100 g/L', areaApplied: ['External'], concentrateUsed: '50 mL', totalMixApplied: '8 L' }] },
+      inspector: { inspectorName: 'Reg Tech', inspectorLicence: 'L-9' },
+    });
+    await win.DB.saveReport({ jobId: signedJob.id, documentType: 'general_pest', finalizedAt: Date.now(), auditLog: [], sections: sections('5 Register Rd') });
+    await win.DB.saveReport({ jobId: draftJob.id, documentType: 'general_pest', finalizedAt: null, auditLog: [], sections: sections('6 Register Rd') });
+    const realAlert = win.alert;
+    let alerted = '';
+    win.alert = (m) => { alerted = String(m); };
+    try {
+      win.showJobListView();
+      doc.getElementById('tab-more').click();
+      await wait(150);
+      doc.getElementById('open-chem-register-btn').click();
+      await waitFor(() => !doc.getElementById('view-chem-register').classList.contains('hidden'), 'the register opens from More');
+      const period = doc.getElementById('chem-period');
+      period.value = 'last-3-years';
+      period.dispatchEvent(new win.Event('change'));
+      await waitFor(() => doc.querySelectorAll('.chem-row[data-job="' + signedJob.id + '"]').length === 1, 'the signed application is listed');
+      assertEqual(doc.querySelectorAll('.chem-row[data-job="' + draftJob.id + '"].chem-unsigned').length, 1, 'the draft is listed, marked unsigned');
+      assert(/not signed yet/.test(doc.getElementById('chem-body').textContent), 'and the unsigned one is pointed out');
+      assert(!doc.getElementById('chem-csv-btn').disabled && !doc.getElementById('chem-print-btn').disabled, 'both exports are on');
+      const html = win.ChemRegisterUI.buildPrintHtml();
+      assert(html.includes('5 Register Rd') && html.includes('Biflex Ultra') && html.includes('NOT SIGNED'), 'the printed page carries the rows');
+
+      // Tapping a row opens its job; Delete is refused for the signed one.
+      doc.querySelector('.chem-row[data-job="' + signedJob.id + '"]').click();
+      await waitFor(() => !doc.getElementById('view-job').classList.contains('hidden'), 'the row opens the job');
+      doc.getElementById('delete-job-btn').click();
+      await waitFor(() => /can't be deleted until/.test(alerted), 'deleting is refused, with the date');
+      assert(/3 years/.test(alerted), 'and the reason');
+      await wait(300);
+      assert(await win.DB.getJob(signedJob.id), 'the job is still there');
+      assert(await win.DB.getReport(signedJob.id), 'and so is the record');
+    } finally {
+      win.alert = realAlert;
+      await win.DB.deleteJob(signedJob.id);
+      await win.DB.deleteJob(draftJob.id);
+      win.showJobListView();
+    }
+  });
+
   test('Front photo: the one just taken becomes the report cover, even over an older photo, and a retake after the portrait warning replaces it', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

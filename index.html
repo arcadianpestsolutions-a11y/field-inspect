@@ -59,6 +59,7 @@
       <button id="open-swms-btn" class="more-item"><span>🦺</span> Safety statements</button>
       <button id="open-assets-btn" class="more-item"><span>🏷️</span> Station register</button>
       <button id="open-business-btn" class="more-item"><span>📊</span> Business figures</button>
+      <button id="open-chem-register-btn" class="more-item"><span>🧴</span> Chemical register</button>
       <button id="open-archive-btn" class="more-item"><span>🗂️</span> Saved reports</button>
       <button id="open-subcontractors-btn" class="more-item hidden"><span>🧰</span> Subcontractors</button>
       <button id="open-settings-btn" class="more-item"><span>⚙️</span> Settings</button>
@@ -683,6 +684,31 @@
   </main>
 </section>
 
+<!-- ============ CHEMICAL REGISTER ============ -->
+<section id="view-chem-register" class="view hidden">
+  <header class="topbar">
+    <button id="chem-back-btn" class="icon-btn" aria-label="Back">←</button>
+    <div class="topbar-title">
+      <h1>Chemical register</h1>
+      <span class="subtitle">Every pesticide application, all jobs</span>
+    </div>
+  </header>
+
+  <main class="content">
+    <label class="field-label" for="chem-period">Dates</label>
+    <select id="chem-period" class="business-period"></select>
+    <div class="chem-dates">
+      <label>From <input type="date" id="chem-from"></label>
+      <label>To <input type="date" id="chem-to"></label>
+    </div>
+    <div class="chem-actions">
+      <button type="button" id="chem-csv-btn" class="btn btn-outline">Download for Excel</button>
+      <button type="button" id="chem-print-btn" class="btn btn-outline">Print / save as PDF</button>
+    </div>
+    <div id="chem-body"></div>
+  </main>
+</section>
+
 <!-- ============ SAFE WORK METHOD STATEMENTS ============ -->
 <!-- Three views, mirroring the report flow a technician already knows:
      the register, one statement's sections, and one section being filled in.
@@ -1037,6 +1063,8 @@
 <script src="invoice-ui.js"></script>
 <script src="swms-ui.js"></script>
 <script src="business-ui.js"></script>
+<script src="chem-register.js"></script>
+<script src="chem-register-ui.js"></script>
 <script src="assets-ui.js"></script>
 <script src="leads-ui.js"></script>
 <script src="clients-ui.js"></script>

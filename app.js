@@ -563,6 +563,7 @@
     'view-scheduler': () => window.Scheduler && (window.Scheduler.reopen || window.Scheduler.open)(),
     'view-clients': () => window.ClientsUI && window.ClientsUI.open(),
     'view-business': () => window.BusinessUI && window.BusinessUI.open(),
+    'view-chem-register': () => window.ChemRegisterUI && window.ChemRegisterUI.open(),
   };
   function noteJobReturn() {
     const open = Array.from(document.querySelectorAll('section.view')).filter((v) => !v.classList.contains('hidden'));
@@ -1724,6 +1725,20 @@
     // delete then ran with no id. See hasKey in db.js for what that cost.
     const jobId = currentJobId;
     if (!jobId) return;
+    // A signed report with chemicals on it is the pesticide-use record the
+    // law says to keep for 3 years (chem-register.js). Deleting the job
+    // would delete it, here and in the cloud.
+    if (window.ChemRegister) {
+      const [held, heldJob] = await Promise.all([DB.getReport(jobId), DB.getJob(jobId)]);
+      if (window.ChemRegister.isRetained(held, heldJob)) {
+        const until = new Date(window.ChemRegister.retainedUntil(held, heldJob))
+          .toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+        const msg = `This job can't be deleted until ${until}. Its signed report records chemicals applied, and NSW law says that record must be kept for ${window.ChemRegister.RETENTION_YEARS} years.`;
+        if (window.Dialog && window.Dialog.alert) await window.Dialog.alert(msg, { title: 'Kept for the chemical register' });
+        else toast(msg);
+        return;
+      }
+    }
     if (!await askConfirm('Delete this job and all its photos and voice memos?',
       { title: 'Delete job', okLabel: 'Delete', danger: true })) return;
     const doomed = await DB.getJob(jobId);
