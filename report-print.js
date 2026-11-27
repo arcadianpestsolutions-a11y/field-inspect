@@ -41,7 +41,7 @@
   // v183: the consent the client gives in the pre-inspection agreement
   // (supabase/functions/_shared/agreement.js, 'Photos, video and your
   // information'), repeated in the report's terms. A test keeps them equal.
-  const PHOTO_CONSENT_TEXT = "The Inspection Provider takes photographs (and, where it helps, video) of the Property during the Inspection, and may use a drone to view the roof where that is safe and lawful. Photographs, the Report and the Client's details are stored securely and kept for at least three years, and are not shared outside the Inspection Provider except as the law requires or the Client asks. Software, including artificial intelligence, may read the photographs to help draft the Report; a licensed technician checks and approves every finding before the Report is issued.";
+  const PHOTO_CONSENT_TEXT = "The Inspection Provider takes photographs (and, where it helps, video) of the Property during the Inspection. Photographs, the Report and the Client's details are stored securely and kept for at least three years, and are not shared outside the Inspection Provider except as the law requires or the Client asks. Software, including artificial intelligence, may read the photographs to help draft the Report; a licensed technician checks and approves every finding before the Report is issued.";
 
   // v153: two versions of clauses 1 and 2, one per Standard. The rest is shared.
   const TERMS_3660_HEAD = `
@@ -55,7 +55,7 @@
     <p><strong>3. Records retention.</strong> Records of this Inspection, including photographs and this Report, are retained by the Inspection Provider for a minimum of three (3) years in accordance with AS 3660.2-2017.</p>
     <p><strong>4. Australian Consumer Law.</strong> Nothing in this Report or these Terms excludes, restricts or modifies any guarantee, warranty, term or condition implied or imposed by the Australian Consumer Law (or any other applicable law) that cannot lawfully be excluded. Where permitted, the Inspection Provider's liability is limited, at its option, to resupply of the Inspection or Report, or payment of the cost of resupply.</p>
     <p><strong>5. Limitations.</strong> The Inspection did not include areas that were inaccessible, obstructed, restricted, or deemed unsafe at the time of Inspection (see "Areas We Were Unable to Inspect"). Non-detectable Termite activity and damage may be present at the Property despite this Inspection.</p>
-    <p><strong>6. Photographs, records and software.</strong> ${PHOTO_CONSENT_TEXT}</p>
+    <p class="fine-print"><strong>6. Photographs, records and software.</strong> ${PHOTO_CONSENT_TEXT}</p>
     <p class="empty-hint">This wording reflects common industry practice and the AS 3660.2-2017 records-retention requirement, but it is not legal advice — have a solicitor review the final terms before relying on them commercially.</p>
   `;
 
@@ -166,7 +166,8 @@
     .limits-box{border:2px solid #c0552a;border-radius:6px;padding:8px 14px;margin:10px 0;font-size:13px;}
     .limits-head{font-weight:bold;font-size:15px;color:#c0552a;margin-bottom:4px;}
     .limits-box ul{margin:4px 0 6px 18px;padding:0;}
-    .ai-note{font-size:12px;color:#444;border-left:3px solid #999;padding:4px 10px;margin-top:10px;}
+    .fine-print{font-size:10px;color:#555;line-height:1.35;}
+    .ai-note{font-size:11px;color:#444;border-left:3px solid #999;padding:4px 10px;margin-top:10px;}
     @media print { .no-print{display:none;} }
   `;
 

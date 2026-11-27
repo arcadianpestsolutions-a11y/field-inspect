@@ -16,7 +16,7 @@
 //
 // Not legal advice. Have a solicitor read it before relying on it.
 
-export const AGREEMENT_VERSION = 'tpi-agreement-2026-11-27';
+export const AGREEMENT_VERSION = 'tpi-agreement-2026-11-27b';
 
 export const str = (v) => (v == null ? '' : String(v)).trim();
 
@@ -57,13 +57,15 @@ export const AGREEMENT_TERMS = [
     text: 'The report is for you, the client, and nobody else may rely on it. We keep records of the '
       + 'inspection, including photographs and the report, for at least three years (AS 3660.2-2017).',
   },
-  // v183: consent to photos, video, a drone, storing the records and software
+  // v183: consent to photos, video, storing the records and software
   // reading the photos, given before the visit. The report's terms say the
   // same in clause 6 (PHOTO_CONSENT_TEXT in report-print.js).
   {
     heading: 'Photos, video and your information',
+    // Small print on the portal (v183, Tal): it is agreed to, not headlined.
+    small: true,
     text: 'By signing, you agree that we take photographs (and, where it helps, video) of the property during '
-      + 'the inspection, and that we may use a drone to view the roof where that is safe and lawful. Photographs, '
+      + 'the inspection. Photographs, '
       + 'the report and your details are stored securely and kept for at least three years, and are not shared '
       + 'outside our business except as the law requires or you ask. Software, including artificial intelligence, '
       + 'may read the photographs to help draft the report; a licensed technician checks and approves every '
@@ -106,7 +108,7 @@ export function agreementFrom({ sections, address, scheduledAt }) {
     version: AGREEMENT_VERSION,
     address: str(address),
     scheduledAt: Number(scheduledAt) || null,
-    terms: AGREEMENT_TERMS.map((t) => ({ heading: t.heading, text: t.text })),
+    terms: AGREEMENT_TERMS.map((t) => (t.small ? { heading: t.heading, text: t.text, small: true } : { heading: t.heading, text: t.text })),
     accessLimitations: str(agreement.agreedAccessLimitations).slice(0, 2000) || null,
   };
 }

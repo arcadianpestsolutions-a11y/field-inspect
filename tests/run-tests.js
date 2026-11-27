@@ -14286,16 +14286,19 @@
     await win.DB.deleteJob(job.id).catch(() => {});
   });
 
-  test('Assurance: the pre-inspection agreement asks consent for photos, video, a drone, storage and AI, in step with the report terms', async () => {
+  test('Assurance: the pre-inspection agreement asks consent for photos, video, storage and AI, in small print, in step with the report terms', async () => {
     const A = await Agree();
     const term = A.AGREEMENT_TERMS.find((t) => t.heading === 'Photos, video and your information');
     assert(term, 'the consent paragraph is in the agreement');
     const report = window.ReportPrint ? window.ReportPrint.PHOTO_CONSENT_TEXT : frame.contentWindow.ReportPrint.PHOTO_CONSENT_TEXT;
-    for (const needle of ['photographs', 'video', 'drone', 'stored securely', 'at least three years', 'artificial intelligence', 'licensed technician checks and approves every finding']) {
+    for (const needle of ['photographs', 'video', 'stored securely', 'at least three years', 'artificial intelligence', 'licensed technician checks and approves every finding']) {
       assert(term.text.includes(needle), 'agreement says: ' + needle);
       assert(report.includes(needle), 'report terms say: ' + needle);
     }
-    assertEqual(A.AGREEMENT_VERSION, 'tpi-agreement-2026-11-27', 'new wording, new version, so earlier signatures keep what they agreed to');
+    assert(!/drone/i.test(term.text) && !/drone/i.test(report), 'no drone (Tal, 27 Nov)');
+    assert(term.small, 'small print on the portal');
+    assert(A.agreementFrom({ sections: {} }).terms.some((x) => x.small && x.heading === term.heading), 'and the page is told so');
+    assertEqual(A.AGREEMENT_VERSION, 'tpi-agreement-2026-11-27b', 'new wording, new version, so earlier signatures keep what they agreed to');
   });
 
   test('Agreement: only a timber pest inspection asks for it, and the app and server agree on which', async () => {
