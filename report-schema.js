@@ -163,7 +163,7 @@ const REPORT_SCHEMA = [
         type: 'textarea',
         showIf: { field: 'agreementStatus', notEquals: 'No client agreement' },
       },
-      { id: 'agreementSignature', label: 'Client signature — agreement to scope and limitations', type: 'signature', required: true, showIf: { field: 'agreementStatus', notEquals: 'No client agreement' } },
+      { id: 'agreementSignature', label: 'Client signature — agreement to scope and limitations, and to photos, records and software (terms clause 6)', type: 'signature', required: true, showIf: { field: 'agreementStatus', notEquals: 'No client agreement' } },
     ],
   },
   {

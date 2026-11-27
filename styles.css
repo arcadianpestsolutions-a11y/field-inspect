@@ -813,6 +813,12 @@ input:focus, textarea:focus {
   font-size: 1rem; /* 16px minimum, or iOS Safari zooms the page on focus */
 }
 .app-dialog-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* v183: the technician's sign-off tick. */
+.app-dialog-tick {
+  display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 14px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; line-height: 1.4; cursor: pointer;
+}
+.app-dialog-tick-box { width: 22px; height: 22px; flex: 0 0 auto; margin-top: 1px; accent-color: var(--accent); }
 textarea.app-dialog-input { min-height: 90px; resize: vertical; }
 /* Pinned to the bottom of the card: a long message (the amendment reason
    names every field being changed) scrolls the card, and on a phone in

@@ -14191,6 +14191,113 @@
     return __agree;
   }
 
+  // ---------- Report assurance (v183, report-assurance.js) ----------
+  test('Assurance: every inspection report says what a visual inspection cannot see, and lists this job\'s blocked areas', () => {
+    const RA = window.ReportAssurance;
+    const blank = RA.limitationsNotice({ documentType: 'timber_pest_inspection', sections: {} }, { jobType: 'termite' });
+    assert(/wall cavities/.test(blank.general) && /furniture/.test(blank.general), 'the general limits are always there');
+    assertEqual(blank.areas.length, 0);
+    assert(/still apply/.test(blank.none), 'and with nothing blocked it says so, rather than nothing');
+    const n = RA.limitationsNotice({ documentType: 'timber_pest_inspection', sections: {
+      access: { hinderedObstructions: 'Yes', hinderedAreas: ['The Interior', 'Outbuildings'], interiorObstructions: ['Furniture', 'Fixtures'],
+        roofVoidObstructions: ['Insulation'], restrictedAccess: 'Yes',
+        restrictedAccessDetails: 'Subfloor: could not be accessed at the time of inspection. Provide safe access.' },
+      agreement: { agreedAccessLimitations: 'Granny flat locked.' },
+    } }, { jobType: 'termite' });
+    const all = n.areas.join(' | ');
+    assert(/Inside: furniture, fixtures/.test(all), 'inside obstructions: ' + all);
+    assert(/Roof void: insulation/.test(all), 'roof void obstructions');
+    assert(/Partly blocked: outbuildings/.test(all) && !/interior/i.test(all.replace('Inside', '')), 'a ticked area with no detail is named once, the interior not twice');
+    assert(/Subfloor: could not be accessed/.test(all), 'restricted areas');
+    assert(/Granny flat locked/.test(all), 'and what was agreed before the visit');
+    assertEqual(RA.limitationsNotice({ documentType: 'general_pest', sections: {} }, { jobType: 'pest_treatment' }), null, 'not on a treatment record');
+  });
+
+  test('Assurance: the AI line is printed only when software helped, and names the licensed technician', () => {
+    const RA = window.ReportAssurance;
+    const insp = { inspectorName: 'Tal Tech', inspectorLicence: 'PMT-77' };
+    assert(!RA.aiAssisted({ sections: { inspector: insp } }), 'a report typed by hand');
+    assertEqual(RA.aiDisclosure({ sections: { inspector: insp } }), '', 'gets no AI line');
+    const drafted = { aiDraft: { runs: [{ model: 'm' }] }, sections: { inspector: insp } };
+    assert(RA.aiAssisted(drafted), 'an AI draft counts');
+    assert(/Tal Tech, licence PMT-77/.test(RA.aiDisclosure(drafted)) && /checked and approved on site/.test(RA.aiDisclosure(drafted)), 'and the line names who approved it');
+    assert(RA.aiAssisted({ sections: { walkthrough: { results: { slabEdge: { r: 'ok', ai: 'ok' } } } } }), 'so does an AI reading of a walk photo');
+    assert(/inspected the areas/.test(RA.signOffStatement({ documentType: 'timber_pest_inspection' }, { jobType: 'termite' })), 'an inspection is signed off as inspected');
+    assert(/carried out/.test(RA.signOffStatement({ documentType: 'general_pest' }, { jobType: 'pest_treatment' })), 'a treatment as carried out');
+  });
+
+  test('Assurance: the printed report carries the limits box and the AI line, and never the internal sign-off', async () => {
+    const win = frame.contentWindow;
+    const job = await win.DB.addJob({ name: 'Assurance Print', address: '8 Limits Ln', jobType: 'termite' });
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    sections.access = { ...sections.access, hinderedObstructions: 'Yes', interiorObstructions: ['Furniture'] };
+    sections.inspector = { ...sections.inspector, inspectorName: 'Print Tech', inspectorLicence: 'L-1' };
+    const report = { jobId: job.id, documentType: 'timber_pest_inspection', sections, finalizedAt: null, auditLog: [],
+      signOff: { statement: 'INTERNAL STATEMENT' } };
+    let html = win.ReportPrint.buildBodyHtml(job, report);
+    assert(html.includes('What this inspection could not see') && html.includes('Inside: furniture'), 'the limits box, with this job\'s areas');
+    assert(!html.includes('prepared with the help of software'), 'no AI line when no AI was used');
+    assert(html.includes('6. Photographs, records and software'), 'the consent clause is in the terms');
+    assert(!html.includes('INTERNAL STATEMENT'), 'the sign-off is never printed');
+    report.aiDraft = { runs: [{ model: 'm' }] };
+    html = win.ReportPrint.buildBodyHtml(job, report);
+    assert(html.includes('prepared with the help of software') && html.includes('Print Tech, licence L-1'), 'the AI line once AI drafted it');
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Assurance: Sign and finish needs the technician\'s tick, and records it in the audit log', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    // The real dialog: OK does nothing until the box is ticked.
+    const asked = win.__realDialog.confirm('Sign?', { title: 'Sign and finish this report?', okLabel: 'Sign and finish', requireTick: 'I checked it.' });
+    const card = doc.querySelector('body > .app-dialog');
+    const ok = Array.from(card.querySelectorAll('button')).find((b) => b.textContent === 'Sign and finish');
+    assert(ok.disabled, 'OK is off until the tick');
+    ok.click();
+    assert(doc.querySelector('body > .app-dialog'), 'and tapping it anyway does nothing');
+    const box = card.querySelector('.app-dialog-tick-box');
+    box.click();
+    assert(!ok.disabled, 'the tick turns it on');
+    ok.click();
+    assertEqual(await asked, true, 'and then it signs');
+
+    // Through the screen: the statement is asked, kept and logged.
+    const job = await win.DB.addJob({ name: 'Sign Off Job', address: '2 Tick St' });
+    const sections = fillRequired(win, win.REPORT_SCHEMA);
+    sections.inspector = { ...sections.inspector, inspectorName: 'Tick Tech', inspectorLicence: 'L-2' };
+    await win.DB.saveReport({ jobId: job.id, documentType: 'timber_pest_inspection', sections, finalizedAt: null });
+    await win.ReportUI.openReview(job.id);
+    await wait(200);
+    const real = win.Dialog.confirm;
+    let opts = null;
+    win.Dialog.confirm = (m, o) => { opts = o; return Promise.resolve(true); };
+    try {
+      doc.getElementById('finalize-report-btn').click();
+      await waitFor(async () => !!(await win.DB.getReport(job.id)).finalizedAt, 'signed');
+    } finally {
+      win.Dialog.confirm = real;
+    }
+    assert(opts && /personally inspected/.test(opts.requireTick || ''), 'the sign-off statement is the tick asked for');
+    const saved = await win.DB.getReport(job.id);
+    assertEqual(saved.signOff.name, 'Tick Tech', 'kept with who signed');
+    assert(/personally inspected/.test(saved.signOff.statement));
+    const logged = saved.auditLog.find((e) => e.event === 'signed-off');
+    assert(logged && /personally inspected/.test(logged.statement), 'and in the audit log, which syncs');
+    await win.DB.deleteJob(job.id).catch(() => {});
+  });
+
+  test('Assurance: the pre-inspection agreement asks consent for photos, video, a drone, storage and AI, in step with the report terms', async () => {
+    const A = await Agree();
+    const term = A.AGREEMENT_TERMS.find((t) => t.heading === 'Photos, video and your information');
+    assert(term, 'the consent paragraph is in the agreement');
+    const report = window.ReportPrint ? window.ReportPrint.PHOTO_CONSENT_TEXT : frame.contentWindow.ReportPrint.PHOTO_CONSENT_TEXT;
+    for (const needle of ['photographs', 'video', 'drone', 'stored securely', 'at least three years', 'artificial intelligence', 'licensed technician checks and approves every finding']) {
+      assert(term.text.includes(needle), 'agreement says: ' + needle);
+      assert(report.includes(needle), 'report terms say: ' + needle);
+    }
+    assertEqual(A.AGREEMENT_VERSION, 'tpi-agreement-2026-11-27', 'new wording, new version, so earlier signatures keep what they agreed to');
+  });
+
   test('Agreement: only a timber pest inspection asks for it, and the app and server agree on which', async () => {
     const A = await Agree();
     const win = frame.contentWindow;

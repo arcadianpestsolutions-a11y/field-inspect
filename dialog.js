@@ -125,16 +125,36 @@
       }
       addMessage(card, message);
 
+      // v183: `requireTick` is a statement the person must tick before OK
+      // works (the technician's sign-off). OK stays disabled until it is.
+      let tick = null;
+      if (opts.requireTick) {
+        const label = document.createElement('label');
+        label.className = 'app-dialog-tick';
+        tick = document.createElement('input');
+        tick.type = 'checkbox';
+        tick.className = 'app-dialog-tick-box';
+        const words = document.createElement('span');
+        words.textContent = opts.requireTick;
+        label.appendChild(tick);
+        label.appendChild(words);
+        card.appendChild(label);
+      }
+
       const row = addButtonRow(card);
       const cancelBtn = makeButton(opts.cancelLabel || 'Cancel', 'btn-secondary');
       const okBtn = makeButton(opts.okLabel || 'OK', opts.danger ? 'btn-danger' : 'btn-primary');
       row.appendChild(cancelBtn);
       row.appendChild(okBtn);
+      if (tick) {
+        okBtn.disabled = true;
+        tick.addEventListener('change', () => { okBtn.disabled = !tick.checked; });
+      }
 
       const finish = (value) => { dismiss(); resolve(value); };
-      const dismiss = present(overlay, { onCancel: () => finish(false), initialFocus: okBtn });
+      const dismiss = present(overlay, { onCancel: () => finish(false), initialFocus: tick || okBtn });
       cancelBtn.addEventListener('click', () => finish(false));
-      okBtn.addEventListener('click', () => finish(true));
+      okBtn.addEventListener('click', () => { if (!tick || tick.checked) finish(true); });
     });
   }
 

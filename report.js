@@ -2057,6 +2057,7 @@
     const when = fmtAuditTime(entry.at);
     if (entry.event === 'created') return `<strong>Report created</strong> — ${when} by ${who}`;
     if (entry.event === 'finalized') return `<strong>Report finalized</strong> — ${when} by ${who}`;
+    if (entry.event === 'signed-off') return `<strong>Technician sign-off ticked</strong> — ${when} by ${who}: "${escapeHtml(entry.statement || '')}"`;
     // A subcontractor's report (v166): sent back by the business, or checked.
     if (entry.event === 'returned') {
       return `<strong>Sent back to the subcontractor</strong> — ${when} by ${who}`
@@ -2906,13 +2907,30 @@
       renderWalkTodo();
       return;
     }
+    // v183: the technician ticks that they inspected it and checked every
+    // finding before it can be signed. Kept on the report and in the audit
+    // log as the business's record of its process; never printed or shown
+    // to the client (report-assurance.js).
+    const statement = window.ReportAssurance
+      ? window.ReportAssurance.signOffStatement(currentReport, currentJob) : '';
     if (!await askConfirm(
       asSub
         ? `This signs the report as yours and gives it to ${subHost} to review and send to the client. You will not be able to change it after this unless they send it back to you.`
         : 'You can still reopen sections to make corrections afterwards — each correction is recorded in the audit trail with a reason.',
       asSub
-        ? { title: `Sign and submit to ${subHost}?`, okLabel: 'Sign and submit' }
-        : { title: 'Sign and finish this report?', okLabel: 'Sign and finish' })) return;
+        ? { title: `Sign and submit to ${subHost}?`, okLabel: 'Sign and submit', requireTick: statement || undefined }
+        : { title: 'Sign and finish this report?', okLabel: 'Sign and finish', requireTick: statement || undefined })) return;
+    if (statement) {
+      const insp = (currentReport.sections && currentReport.sections.inspector) || {};
+      currentReport.signOff = {
+        statement,
+        name: insp.inspectorName || '',
+        licence: insp.inspectorLicence || '',
+        at: Date.now(),
+        ...auditActor(),
+      };
+      appendAudit(currentReport, { event: 'signed-off', statement });
+    }
     // Recorded before finalizedAt is set, so the event itself is correctly
     // stamped afterFinalize: false — this is the moment of sign-off, not an
     // amendment to an already-signed document.

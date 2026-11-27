@@ -16,7 +16,7 @@
 //
 // Not legal advice. Have a solicitor read it before relying on it.
 
-export const AGREEMENT_VERSION = 'tpi-agreement-2026-11-16';
+export const AGREEMENT_VERSION = 'tpi-agreement-2026-11-27';
 
 export const str = (v) => (v == null ? '' : String(v)).trim();
 
@@ -56,6 +56,18 @@ export const AGREEMENT_TERMS = [
     heading: 'The report',
     text: 'The report is for you, the client, and nobody else may rely on it. We keep records of the '
       + 'inspection, including photographs and the report, for at least three years (AS 3660.2-2017).',
+  },
+  // v183: consent to photos, video, a drone, storing the records and software
+  // reading the photos, given before the visit. The report's terms say the
+  // same in clause 6 (PHOTO_CONSENT_TEXT in report-print.js).
+  {
+    heading: 'Photos, video and your information',
+    text: 'By signing, you agree that we take photographs (and, where it helps, video) of the property during '
+      + 'the inspection, and that we may use a drone to view the roof where that is safe and lawful. Photographs, '
+      + 'the report and your details are stored securely and kept for at least three years, and are not shared '
+      + 'outside our business except as the law requires or you ask. Software, including artificial intelligence, '
+      + 'may read the photographs to help draft the report; a licensed technician checks and approves every '
+      + 'finding before the report is issued.',
   },
   {
     heading: 'Your rights',
