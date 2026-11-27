@@ -307,6 +307,12 @@
     // minutes so that Issue can claim it instead of asking for another.
     let loose = null;
     const LOOSE_MS = 5 * 60 * 1000;
+    // v182, Tal on 27 Nov 2026: "quickly cycle and switch between what you
+    // actually find as you are going". A photo taken with no item open asks
+    // "What's in this photo?" with every item from every area, the area you
+    // are in first. One tap marks that item and files the photo(s) under it,
+    // so finding something at the back never means walking the list first.
+    let picking = false;
 
     function say(text) {
       banner = text;
@@ -321,14 +327,119 @@
       if (Date.now() - loose.at > LOOSE_MS || loose.area !== step.area) { loose = null; return false; }
       const mine = loose;
       loose = null;
+      picking = false;
       let ok = false;
-      try { ok = await refile(mine.id, item.label); } catch (e) { ok = false; }
+      try { ok = await refileAll(mine.ids, item.label); } catch (e) { ok = false; }
       if (!ok) return false;
       say('✓ Your last photo is now filed under ' + item.label + '.');
       const res = state.results[item.id];
       if (res && res.r === 'issue') askTip(item, mine.blob);
       render();
       return true;
+    }
+
+    async function refileAll(ids, label) {
+      let any = false;
+      for (const id of ids) { if (await refile(id, label)) any = true; }
+      return any;
+    }
+
+    // What can be picked for a photo: every item in an area that exists and
+    // was entered, in the same split buildSteps uses (inside ticks are
+    // `tick`, the rest are not). The area you are in comes first.
+    function pickableAreas(currentArea) {
+      const order = AREAS.slice().sort((a, b) => (a.id === currentArea ? -1 : b.id === currentArea ? 1 : 0));
+      const out = [];
+      for (const area of order) {
+        const ans = state.answers[area.id];
+        if (area.ask && (ans === 'no' || ans === 'blocked')) continue;
+        const list = items.filter((i) => i.area === area.id && !i.hidden && i.id !== 'frontElevation' && (area.notes ? i.tick : !i.tick));
+        if (list.length) out.push({ area, list });
+      }
+      return out;
+    }
+
+    // The technician said what the photo shows.
+    async function pick(item) {
+      if (saving || !loose) return;
+      const mine = loose;
+      saving = true;
+      const area = AREAS.find((a) => a.id === item.area);
+      // A photo of something under the floor means there is a subfloor and
+      // you got in: answer the question rather than ask it after.
+      if (area && area.ask && !state.answers[area.id]) {
+        let ok = true;
+        if (saveAnswer) { try { ok = await saveAnswer(area.id, 'yes'); } catch (e) { ok = false; } }
+        if (!ok) { saving = false; render(); return; }
+        state.answers[area.id] = 'yes';
+        persist();
+        rebuild();
+      }
+      let filed = false;
+      try { filed = await refileAll(mine.ids, item.label); } catch (e) { filed = false; }
+      saving = false;
+      loose = null;
+      picking = false;
+      if (!filed) { say('That photo could not be filed. Tap Issue on the item instead.'); render(); return; }
+      const r = item.photoWhen === 'ok' ? 'ok' : 'issue';
+      const before = state.results[item.id];
+      setResult(item.id, r, before && before.r === r ? before.note : '', before && before.r === r ? before.kinds : null);
+      commitDraft();
+      const at = steps.findIndex((s) => s.kind === 'checks' && s.items.some((i) => i.id === item.id));
+      if (at !== -1) index = at;
+      noteOpenFor = item.id;
+      draft = null;
+      setZone(item.label);
+      if (r === 'issue') askTip(item, mine.blob);
+      say(r === 'issue'
+        ? '✓ ' + item.label + ': marked Issue, photo filed. Say what is wrong, or tap Done.'
+        : '✓ ' + item.label + ': photo filed.');
+      render();
+    }
+
+    function renderPicker() {
+      const step = steps[index];
+      const here = step && step.area;
+      container.appendChild(el('div', 'walk-title', 'What’s in this photo?'));
+      container.appendChild(el('div', 'walk-hint', mine()));
+      const groups = pickableAreas(here);
+      // Outside alone is a long list: these jump straight to the others.
+      const heads = {};
+      if (groups.length > 1) {
+        const jump = el('div', 'walk-pick-jump');
+        for (const { area } of groups) {
+          const j = btn(area.title, 'walk-area', () => { if (heads[area.id]) heads[area.id].scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+          j.dataset.jump = area.id;
+          jump.appendChild(j);
+        }
+        container.appendChild(jump);
+      }
+      for (const { area, list } of groups) {
+        heads[area.id] = container.appendChild(el('div', 'walk-pick-area', area.title));
+        const row = el('div', 'walk-pick');
+        for (const item of list) {
+          const res = state.results[item.id];
+          const flagged = res && res.r === 'issue';
+          const b = btn((flagged ? '⚠ ' : '') + item.label, 'walk-pick-item' + (flagged ? ' walk-pick-flagged' : ''), () => pick(item));
+          b.dataset.pick = item.id;
+          row.appendChild(b);
+        }
+        container.appendChild(row);
+      }
+      const actions = el('div', 'walk-actions');
+      const general = btn('Just a general photo', 'walk-secondary', () => {
+        loose = null;
+        picking = false;
+        say('Kept as a general photo.');
+        render();
+      });
+      general.dataset.action = 'pick-general';
+      actions.appendChild(general);
+      container.appendChild(actions);
+      function mine() {
+        const n = loose ? loose.ids.length : 1;
+        return 'Tap what ' + (n > 1 ? 'these ' + n + ' photos show' : 'it shows') + '. It is marked as an Issue and the photo is filed under it.';
+      }
     }
 
     function askTip(item, blob) {
@@ -519,6 +630,7 @@
       const pos = countable.indexOf(step);
 
       if (banner) container.appendChild(el('div', 'walk-banner', banner));
+      if (picking && loose && refile) { renderPicker(); return; }
       container.appendChild(renderAreas(step, doneSet));
       const meta = step.kind === 'done' ? 'All areas' : `${step.areaTitle} · ${pos + 1} of ${countable.length}`;
       container.appendChild(el('div', 'walk-meta', meta));
@@ -802,9 +914,11 @@
         // or it is the "why I could not get in" photo of a blocked area.
         // On a tick list (v151) the photo is of the open Issue: ask the AI to
         // describe it. A photo also makes a typed "can't photograph" moot.
-        if (step && step.kind === 'checks' && !noteOpenFor && captureId) {
-          loose = { id: captureId, blob, at: Date.now(), area: step.area };
-          say('Photo saved. Tap Issue on the item it shows and it will be filed there.');
+        if (step && step.kind !== 'photo' && !noteOpenFor && captureId) {
+          const fresh = loose && Date.now() - loose.at <= LOOSE_MS && picking;
+          loose = { ids: fresh ? loose.ids.concat(captureId) : [captureId], blob, at: Date.now(), area: step.area };
+          picking = !!refile;
+          if (!picking) say('Photo saved. Tap Issue on the item it shows and it will be filed there.');
         }
         if (step && step.kind === 'checks' && noteOpenFor) {
           const item = step.items.find((i) => i.id === noteOpenFor);
@@ -855,7 +969,7 @@
       current() { return steps[index]; },
       state() { return cleanState(state); },
       // Finishing the inspection with an issue box open keeps what was typed.
-      destroy() { commitDraft(); clearTimeout(bannerTimer); loose = null; container.innerHTML = ''; container.classList.add('hidden'); },
+      destroy() { commitDraft(); clearTimeout(bannerTimer); loose = null; picking = false; container.innerHTML = ''; container.classList.add('hidden'); },
     };
   }
 

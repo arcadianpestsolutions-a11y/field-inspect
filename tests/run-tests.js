@@ -4859,14 +4859,15 @@
       assertEqual(saved.results.fences.note, 'Rotten sleeper at the back', 'jumping to another area keeps the note');
       box.querySelector('[data-area="outside"]').click();
 
-      // Photo first, then Issue: the photo is moved, not asked for again.
+      // Photo first, then say what it is (v182): the photo is moved, not asked for again.
       walk.photoSaved({ fake: 'photo' }, 'cap-1');
-      assert(/Tap Issue on the item it shows/.test(box.textContent), 'a photo with no item open says how to file it');
-      row('weepHoles').querySelector('[data-result="issue"]').click();
+      assert(/What’s in this photo/.test(box.textContent), 'a photo with no item open asks what it shows');
+      box.querySelector('[data-pick="weepHoles"]').click();
       await settle();
-      assertEqual(refiled.join(','), 'cap-1>Weep Holes', 'tapping Issue files that photo under the item');
+      assertEqual(refiled.join(','), 'cap-1>Weep Holes', 'picking the item files that photo under it');
+      assertEqual(saved.results.weepHoles.r, 'issue', 'and marks it an Issue');
       assert(!row('weepHoles').querySelector('[data-need="photo"]'), 'so it does not ask for another');
-      assert(/now filed under Weep Holes/.test(box.textContent), 'and says where it went');
+      assert(/Weep Holes: marked Issue/.test(box.textContent), 'and says where it went');
       box.querySelector('[data-action="close-issue"]').click();
 
       // It is used once only, and not for an OK.
@@ -4876,9 +4877,10 @@
       assert(row('slabEdge').querySelector('[data-need="photo"]'), 'it asks for its own');
       box.querySelector('[data-action="close-issue"]').click();
       walk.photoSaved({ fake: 'photo' }, 'cap-2');
+      box.querySelector('[data-action="pick-general"]').click();
       row('hotWater').querySelector('[data-result="ok"]').click();
       await settle();
-      assertEqual(refiled.length, 1, 'an OK never takes a loose photo');
+      assertEqual(refiled.length, 1, 'a general photo stays general, and an OK never takes it');
 
       // Finishing with a box open keeps what was typed in it.
       row('airCon').querySelector('[data-result="issue"]').click();
@@ -4891,6 +4893,64 @@
       walk.destroy();
       box.remove();
       try { win.localStorage.removeItem('scope-photo-walk:' + jobId); } catch (e) { /* nothing to clean */ }
+    }
+  });
+
+  test('Photo walk: a photo of something in another area is filed there in one tap, answering the subfloor question on the way (v182)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const items = win.PhotoChecklists.forJob({ jobType: 'termite' }, null, 'timber_pest_inspection').filter((i) => i.id !== 'frontElevation');
+    const box = doc.createElement('div');
+    doc.body.appendChild(box);
+    const jobId = 'pick-test-' + Date.now();
+    const done = new Set();
+    let saved = null;
+    const refiled = [];
+    const answers = [];
+    const walk = win.PhotoWalk.mount({
+      container: box, jobId, items, done: () => done, setZone: () => {},
+      saveNotes: async () => true, saveAnswer: async (a, v) => { answers.push(a + '=' + v); return true; },
+      saveResults: (st) => { saved = st; },
+      refile: async (id, label) => { refiled.push(id + '>' + label); done.add(label); return true; },
+    });
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+    try {
+      walk.start();
+      assertEqual(walk.current().area, 'outside', 'standing outside');
+      // Two shots of the same thing, then one tap.
+      walk.photoSaved({ fake: 'a' }, 'cap-a');
+      walk.photoSaved({ fake: 'b' }, 'cap-b');
+      assert(/these 2 photos/.test(box.textContent), 'both photos wait for the one answer');
+      const areaOrder = Array.from(box.querySelectorAll('.walk-pick-area')).map((e) => e.textContent);
+      assertEqual(areaOrder[0], 'Outside', 'the area you are in comes first');
+      assert(areaOrder.includes('Subfloor') && areaOrder.includes('Roof void') && areaOrder.includes('Inside'), 'every other area is offered');
+      const subItem = items.find((i) => i.area === 'subfloor' && !i.tick && !i.hidden);
+      box.querySelector(`[data-pick="${subItem.id}"]`).click();
+      await settle();
+      assertEqual(answers.join(','), 'subfloor=yes', 'a photo under the floor answers "is there a subfloor"');
+      assertEqual(refiled.join(','), `cap-a>${subItem.label},cap-b>${subItem.label}`, 'both photos are filed under the item');
+      assertEqual(saved.results[subItem.id].r, 'issue', 'marked an Issue');
+      assertEqual(walk.current().area, 'subfloor', 'the walk is now on that item, ready for a note');
+      assert(box.querySelector(`[data-box="${subItem.id}"]`), 'with its issue box open');
+
+      // An area answered "No" is not offered.
+      const walk2Box = doc.createElement('div');
+      doc.body.appendChild(walk2Box);
+      const walk2 = win.PhotoWalk.mount({
+        container: walk2Box, jobId: jobId + '-2', items, done: () => new Set(), setZone: () => {},
+        saveNotes: async () => true, saveAnswer: async () => true, refile: async () => true,
+        remote: { answers: { roof: 'no' }, results: {}, skipped: [] },
+      });
+      walk2.start();
+      walk2.photoSaved({ fake: 'c' }, 'cap-c');
+      const offered = Array.from(walk2Box.querySelectorAll('.walk-pick-area')).map((e) => e.textContent);
+      assert(!offered.includes('Roof void'), 'no roof void, no roof items');
+      walk2.destroy();
+      walk2Box.remove();
+    } finally {
+      walk.destroy();
+      box.remove();
+      try { win.localStorage.removeItem('scope-photo-walk:' + jobId); win.localStorage.removeItem('scope-photo-walk:' + jobId + '-2'); } catch (e) { /* nothing to clean */ }
     }
   });
 
@@ -14960,10 +15020,11 @@
       row('outsideTaps').querySelector('[data-result="nothere"]').click();
       assertEqual(opened, 2, 'nor has N/A');
 
-      // Photo first, then Issue: that photo is the item's, so no second one is asked for.
+      // Photo first, then say what it shows (v182): that photo is the item's, so no second one is asked for.
       await snap(win, doc); // Take photo itself is one more opening of the camera
       assertEqual(opened, 3, 'the Take photo button still opens it');
-      row('hotWater').querySelector('[data-result="issue"]').click();
+      await waitFor(() => doc.querySelector('#inspection-walk [data-pick="hotWater"]'), 'it asks what the photo shows');
+      doc.querySelector('#inspection-walk [data-pick="hotWater"]').click();
       await waitFor(() => row('hotWater') && !row('hotWater').querySelector('[data-need="photo"]'), 'the photo taken first is filed under the item');
       assertEqual(opened, 3, 'so the camera is not opened again');
       row('hotWater').querySelector('[data-result="issue"]').click();

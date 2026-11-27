@@ -3415,6 +3415,12 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .walk-tip-use { align-self: flex-start; min-height: 36px; }
 .walk-mini.chosen-ok { background: #3dff88; border-color: #3dff88; color: #032012; }
 .walk-mini.chosen-issue { background: #fbbf24; border-color: #fbbf24; color: #2b1a00; }
+/* v182: "What's in this photo?" — every item, one tap. */
+.walk-pick-area { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(226, 232, 240, 0.7); margin: 8px 0 4px; }
+.walk-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.walk-pick-jump { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.walk-pick-item { min-height: 42px; padding: 0 12px; font-size: 0.84rem; flex: 0 1 auto; }
+.walk-pick-flagged { border-color: #fbbf24; }
 .walk-todo { display: flex; flex-direction: column; gap: 6px; }
 .walk-todo-item { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; padding: 6px 12px; line-height: 1.25; }
 .walk-todo-need { font-size: 0.72rem; font-weight: 400; color: rgba(226, 232, 240, 0.7); }
