@@ -18,7 +18,9 @@
 //                      never printed and never shown to the client.
 //
 // EXPOSES: window.ReportAssurance = { limitationsNotice, aiAssisted,
-//   aiDisclosure, signOffStatement, isInspection, LIMITS_GENERAL }
+//   aiDisclosure, signOffStatement, isInspection, LIMITS_GENERAL, retention,
+//   KEEP_YEARS }   retention: how long a signed report holds its job back
+//   from deletion (3 years; see the function).
 (() => {
   'use strict';
 
@@ -108,5 +110,37 @@
       + 'Anything the software suggested, I confirmed or corrected.';
   }
 
-  window.ReportAssurance = { limitationsNotice, aiAssisted, aiDisclosure, signOffStatement, isInspection, LIMITS_GENERAL };
+  // How long a signed report must be kept before its job can be deleted
+  // (Tal, 27 Nov 2026). Every report's terms and the agreement the client
+  // signs promise the records are kept for at least three years, so a signed
+  // report is held for three years from signing. One with chemicals on it is
+  // held by the chemical register's own rule (chem-register.js), with no
+  // exceptions.
+  //
+  // The way out for a report signed by mistake: within a day of signing, and
+  // only while it has not been emailed to anyone, it can still be deleted
+  // (after a plain warning). After that nobody has relied on it yet.
+  //
+  // Returns null when nothing holds the report, otherwise
+  //   { until, chemical, grace }   grace = deletable now, with the warning.
+  const KEEP_YEARS = 3;
+  const GRACE_MS = 24 * 60 * 60 * 1000;
+  function retention(report, job, nowMs) {
+    if (!report || !report.finalizedAt) return null;
+    const now = typeof nowMs === 'number' ? nowMs : Date.now();
+    const CR = window.ChemRegister;
+    if (CR && CR.isRetained(report, job, now)) {
+      return { until: CR.retainedUntil(report, job), chemical: true, grace: false };
+    }
+    const d = new Date(report.finalizedAt);
+    const until = new Date(d.getFullYear() + KEEP_YEARS, d.getMonth(), d.getDate()).getTime();
+    if (now >= until) return null;
+    const grace = !report.emailedAt && now - report.finalizedAt < GRACE_MS;
+    return { until, chemical: false, grace };
+  }
+
+  window.ReportAssurance = {
+    limitationsNotice, aiAssisted, aiDisclosure, signOffStatement, isInspection, LIMITS_GENERAL,
+    retention, KEEP_YEARS,
+  };
 })();

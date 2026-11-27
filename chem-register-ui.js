@@ -217,7 +217,15 @@
     refresh();
   });
   for (const el of [fromEl, toEl]) {
-    el.addEventListener('change', () => { periodEl.value = 'custom'; refresh(); });
+    el.addEventListener('change', () => {
+      periodEl.value = 'custom';
+      // Dates picked the wrong way round mean the same days: swap them,
+      // rather than show "No chemicals recorded" for a range that cannot exist.
+      if (fromEl.value && toEl.value && fromEl.value > toEl.value) {
+        const a = fromEl.value; fromEl.value = toEl.value; toEl.value = a;
+      }
+      refresh();
+    });
   }
   csvBtn.addEventListener('click', downloadCsv);
   printBtn.addEventListener('click', printRegister);

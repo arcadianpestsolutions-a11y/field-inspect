@@ -1725,22 +1725,30 @@
     // delete then ran with no id. See hasKey in db.js for what that cost.
     const jobId = currentJobId;
     if (!jobId) return;
-    // A signed report with chemicals on it is the pesticide-use record the
-    // law says to keep for 3 years (chem-register.js). Deleting the job
-    // would delete it, here and in the cloud.
-    if (window.ChemRegister) {
+    // A signed report is a record the business has promised to keep for 3
+    // years, and one with chemicals on it is the pesticide-use record the law
+    // says to keep (ReportAssurance.retention, chem-register.js). Deleting
+    // the job would delete it, here and in the cloud.
+    let keep = null;
+    if (window.ReportAssurance && window.ReportAssurance.retention) {
       const [held, heldJob] = await Promise.all([DB.getReport(jobId), DB.getJob(jobId)]);
-      if (window.ChemRegister.isRetained(held, heldJob)) {
-        const until = new Date(window.ChemRegister.retainedUntil(held, heldJob))
-          .toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
-        const msg = `This job can't be deleted until ${until}. Its signed report records chemicals applied, and NSW law says that record must be kept for ${window.ChemRegister.RETENTION_YEARS} years.`;
-        if (window.Dialog && window.Dialog.alert) await window.Dialog.alert(msg, { title: 'Kept for the chemical register' });
-        else toast(msg);
-        return;
-      }
+      keep = window.ReportAssurance.retention(held, heldJob);
     }
-    if (!await askConfirm('Delete this job and all its photos and voice memos?',
-      { title: 'Delete job', okLabel: 'Delete', danger: true })) return;
+    if (keep && !keep.grace) {
+      const until = new Date(keep.until).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+      const msg = keep.chemical
+        ? `This job can't be deleted until ${until}. Its signed report records chemicals applied, and NSW law says that record must be kept for ${window.ChemRegister.RETENTION_YEARS} years.`
+        : `This job can't be deleted until ${until}. Its report is signed, and signed reports are kept for ${window.ReportAssurance.KEEP_YEARS} years: the terms on every report and the agreement clients sign both say so.`;
+      const title = keep.chemical ? 'Kept for the chemical register' : 'Signed reports are kept';
+      if (window.Dialog && window.Dialog.alert) await window.Dialog.alert(msg, { title });
+      else toast(msg);
+      return;
+    }
+    const question = keep && keep.grace
+      ? 'This job has a report signed in the last day that has not been sent. Delete it only if it was signed by mistake: after a day, or once it is sent, a signed report is kept for 3 years.'
+      : 'Delete this job and all its photos and voice memos?';
+    if (!await askConfirm(question,
+      { title: keep && keep.grace ? 'Delete a signed report?' : 'Delete job', okLabel: 'Delete', danger: true })) return;
     const doomed = await DB.getJob(jobId);
     const label = (doomed && (doomed.name || doomed.address)) || 'Job';
     // Held back for a few seconds with an Undo (undo-delete.js): nothing is really

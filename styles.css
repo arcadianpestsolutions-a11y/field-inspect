@@ -774,11 +774,13 @@ input:focus, textarea:focus {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  /* Above the bottom sheets (.tester-feedback, 3000) since v164: Change time
-     asked "Already booked at that time?" UNDER its own sheet, so Save looked
-     frozen until Cancel uncovered the question. */
-  z-index: 3500;
 }
+/* Above the bottom sheets (.tester-feedback, 3000): Change time asked
+   "Already booked at that time?" UNDER its own sheet, so Save looked frozen
+   until Cancel uncovered the question. Two classes, because the dialog is
+   also a .modal and the .modal rule further down (z-index 50) came later and
+   won: the v164 fix never took effect until v185. */
+.modal.app-dialog { z-index: 3500; }
 .app-dialog-card {
   background: var(--card);
   border: 1px solid var(--border);

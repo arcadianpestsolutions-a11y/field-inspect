@@ -6373,14 +6373,28 @@
     assert(kept, 'the job is kept');
     assert(/cancelled .*: customer rang/.test(kept.notes), 'and says when and why it was cancelled');
 
-    // Dialogs sit above sheets, so a clash question is never hidden.
-    const css = await (await fetch('../styles.css', { cache: 'reload' })).text();
-    const zOf = (sel) => {
-      const at = css.indexOf(sel + ' {');
-      const rule = at < 0 ? '' : css.slice(at, css.indexOf('}', at));
-      return Number((rule.match(/z-index: (\d+)/) || [])[1]);
-    };
-    assert(zOf('.app-dialog') > zOf('.tester-feedback'), 'a question is drawn above the sheet that asked it');
+    // Dialogs sit above sheets, so a clash question is never hidden. Measured
+    // on the real things as drawn: reading the stylesheet's text passed for a
+    // year while a later .modal rule kept every dialog at 50, under the sheet.
+    const sheetEl = doc.createElement('div');
+    sheetEl.className = 'tester-feedback booking-edit';
+    doc.body.appendChild(sheetEl);
+    const asking = win.__realDialog.confirm('Probe', { title: 'Already booked at that time', okLabel: 'Book anyway' });
+    await wait(100);
+    const dlgEl = doc.querySelector('body > .app-dialog');
+    try {
+      assert(dlgEl, 'the question is up');
+      assert(Number(win.getComputedStyle(dlgEl).zIndex) > Number(win.getComputedStyle(sheetEl).zIndex),
+        'a question is drawn above the sheet that asked it (' + win.getComputedStyle(dlgEl).zIndex + ' over ' + win.getComputedStyle(sheetEl).zIndex + ')');
+      const okBtn = Array.from(dlgEl.querySelectorAll('button')).find((b) => /Book anyway/.test(b.textContent));
+      const r = okBtn.getBoundingClientRect();
+      assert(dlgEl.contains(doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)), 'and a finger on Book anyway lands on it');
+    } finally {
+      const cancelBtn = dlgEl && Array.from(dlgEl.querySelectorAll('button')).find((b) => /Cancel/.test(b.textContent));
+      if (cancelBtn) cancelBtn.click();
+      await asking;
+      sheetEl.remove();
+    }
 
     // A new number in Clients reaches the job still to come, not the finished one.
     const client = await win.DB.addClient({ name: 'Contact Probe', phone: '0400 000 111', email: 'old@example.test' });
@@ -15314,6 +15328,19 @@
       const html = win.ChemRegisterUI.buildPrintHtml();
       assert(html.includes('5 Register Rd') && html.includes('Biflex Ultra') && html.includes('NOT SIGNED'), 'the printed page carries the rows');
 
+      // Dates picked the wrong way round are swapped, not shown as an empty range.
+      const fromEl = doc.getElementById('chem-from');
+      const toEl = doc.getElementById('chem-to');
+      const later = win.ChemRegister.isoDay(Date.now() + 86400000);
+      const earlier = win.ChemRegister.isoDay(Date.now() - 2 * 86400000);
+      toEl.value = earlier; toEl.dispatchEvent(new win.Event('change'));
+      assertEqual(toEl.value, earlier, 'an end date after the start is left alone');
+      fromEl.value = later; fromEl.dispatchEvent(new win.Event('change'));
+      await waitFor(() => fromEl.value === earlier && toEl.value === later, 'the two dates swap round');
+      await waitFor(() => doc.querySelectorAll('.chem-row[data-job="' + signedJob.id + '"]').length === 1, 'and today\'s application still shows');
+      period.value = 'last-3-years';
+      period.dispatchEvent(new win.Event('change'));
+
       // Tapping a row opens its job; Delete is refused for the signed one.
       doc.querySelector('.chem-row[data-job="' + signedJob.id + '"]').click();
       await waitFor(() => !doc.getElementById('view-job').classList.contains('hidden'), 'the row opens the job');
@@ -15327,6 +15354,60 @@
       win.alert = realAlert;
       await win.DB.deleteJob(signedJob.id);
       await win.DB.deleteJob(draftJob.id);
+      win.showJobListView();
+    }
+  });
+
+  test('Keeping records: a signed report holds its job for 3 years, with a one-day way out for a report signed by mistake and never sent', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const RA = win.ReportAssurance;
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    assertEqual(RA.retention(null, null), null, 'no report, nothing held');
+    assertEqual(RA.retention({ finalizedAt: null, sections: {} }, {}), null, 'a draft is not held');
+    const fresh = RA.retention({ finalizedAt: now - 1000, sections: {} }, {}, now);
+    assert(fresh && fresh.grace && !fresh.chemical, 'signed a moment ago and never sent: the way out is open');
+    const old = RA.retention({ finalizedAt: now - 2 * day, sections: {} }, {}, now);
+    assert(old && !old.grace, 'two days after signing it is held');
+    const years = (old.until - (now - 2 * day)) / (365 * day);
+    assert(years > 2.99 && years < 3.01, 'for three years from signing (' + years.toFixed(2) + ')');
+    assert(!RA.retention({ finalizedAt: now - 1000, emailedAt: now, sections: {} }, {}, now).grace, 'once emailed, no way out even on the day');
+    assertEqual(RA.retention({ finalizedAt: now - 4 * 365 * day, sections: {} }, {}, now), null, 'after three years it can go');
+    const chem = RA.retention({ finalizedAt: now - 1000, documentType: 'general_pest', sections: {
+      clientDetails: {}, chemicals: { products: [{ productName: 'Biflex Ultra' }] } } }, { jobType: 'pest_treatment' }, now);
+    assert(chem && chem.chemical && !chem.grace, 'a chemical record has no way out, even on the day');
+
+    const heldJob = await win.DB.addJob({ name: 'Held Inspection', address: '7 Keep St' });
+    const graceJob = await win.DB.addJob({ name: 'Mistake Inspection', address: '8 Keep St' });
+    await win.DB.saveReport({ jobId: heldJob.id, documentType: 'timber_pest_inspection', finalizedAt: now - 2 * day, auditLog: [], sections: {} });
+    await win.DB.saveReport({ jobId: graceJob.id, documentType: 'timber_pest_inspection', finalizedAt: now - 1000, auditLog: [], sections: {} });
+    const realAlert = win.alert;
+    const realConfirm = win.confirm;
+    let alerted = '';
+    let asked = '';
+    win.alert = (m) => { alerted = String(m); };
+    win.confirm = (m) => { asked = String(m); return false; };
+    try {
+      await win.showJobViewById(heldJob.id);
+      await wait(300);
+      doc.getElementById('delete-job-btn').click();
+      await waitFor(() => /can't be deleted until/.test(alerted), 'deleting a signed report is refused, with the date');
+      assert(/kept for 3 years/.test(alerted), 'and the reason');
+      assertEqual(asked, '', 'it never gets as far as asking');
+      assert(await win.DB.getJob(heldJob.id), 'the job is still there');
+
+      await win.showJobViewById(graceJob.id);
+      await wait(300);
+      doc.getElementById('delete-job-btn').click();
+      await waitFor(() => /signed by mistake/.test(asked), 'a report signed today and never sent can still go, after a warning');
+      await wait(300);
+      assert(await win.DB.getJob(graceJob.id), 'saying no keeps it');
+    } finally {
+      win.alert = realAlert;
+      win.confirm = realConfirm;
+      await win.DB.deleteJob(heldJob.id);
+      await win.DB.deleteJob(graceJob.id);
       win.showJobListView();
     }
   });

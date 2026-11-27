@@ -86,6 +86,12 @@
     await home(); await window.showJobViewById(job.id); await sleep(450);
     await tapVisible($('view-report-btn'), 'Open Report'); await sleep(700);
     must(viewId() === 'view-report', 'Open Report did not open the report; showing ' + viewId());
+    // Since v173 the list of every section sits behind "Show the whole
+    // document"; a person wanting a section taps that first.
+    const toggle = $('report-sections-toggle');
+    if (toggle && $('report-section-list').classList.contains('hidden')) {
+      await tapVisible(toggle, 'Show the whole document'); await sleep(300);
+    }
   }
   // A camera that answers after a delay, and keeps count of what is still on.
   function trackedCamera(delayMs) {
