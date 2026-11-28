@@ -176,8 +176,8 @@
     }
     // One chip above a date or time box that fills in the moment it is
     // tapped. Local time, the way the box itself reads it.
-    const pad2 = (n) => String(n).padStart(2, '0');
-    const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+    const { pad2 } = window.Common;
+    const localToday =() => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
     const localNow = () => { const d = new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
     function stampChip(field, input, label, make) {
       const picks = document.createElement('div');
@@ -497,8 +497,8 @@
         input.value = values[field.id] || '';
         input.addEventListener('input', () => setValue(field, input.value));
         // "Today" as one tap (overnight run, 28 Nov 2026), except on a date
-        // that is in the future by its nature: a due date, a valid-until.
-        if (!/due|until|next/i.test(field.id)) row.appendChild(stampChip(field, input, 'Today', localToday));
+        // the schema marks `future: true` (a due date, a valid-until).
+        if (!field.future) row.appendChild(stampChip(field, input, 'Today', localToday));
         row.appendChild(input);
       } else if (field.type === 'time') {
         const input = document.createElement('input');

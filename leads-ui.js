@@ -210,6 +210,14 @@
   // Saving the fields and the stage together, because they are edited
   // together and two save buttons on one screen is one too many.
   async function persist(extra) {
+    // "-5" was kept as $5.00 with the sign quietly dropped (overnight run,
+    // 29 Nov 2026). A quote below zero is a typing slip; it is not kept.
+    if (/-/.test(String(values.quotedText || ''))) {
+      toast('A quoted amount cannot be below zero. It was not kept.');
+      values.quotedText = '';
+      const box = fieldsEl.querySelector('[data-field-row="quotedText"] input');
+      if (box) box.value = '';
+    }
     const cents = Math.round(parseFloat(String(values.quotedText || '').replace(/[^0-9.]/g, '')) * 100);
     current = await DB.saveLead(Object.assign({}, current, {
       name: values.name || '',
@@ -231,6 +239,12 @@
 
   async function setStage(stage) {
     if (current.stage === stage) return;
+    // An enquiry that became a job is the job's story now: moving it to
+    // Lost left a live job behind and opened the way to a second one.
+    if (current.convertedJobId && await DB.getJob(current.convertedJobId).catch(() => null)) {
+      toast('This enquiry became a job. Change the job instead.');
+      return;
+    }
     const extra = { stage, stageChangedAt: Date.now() };
     // Moving it forward counts as having done something, which is what the
     // follow-up clock measures. Without this, quoting somebody would leave
@@ -257,6 +271,22 @@
     if (!String(values.name || current.name || '').trim()) {
       toast('Give this enquiry a name before booking it as a job.');
       return;
+    }
+    // Once is enough (overnight run, 29 Nov 2026): moved to Lost and back,
+    // the button made a second job for the same person.
+    if (current.convertedJobId) {
+      const job = await DB.getJob(current.convertedJobId).catch(() => null);
+      if (job) {
+        toast('This enquiry is already a job.');
+        if (window.showJobViewById) await window.showJobViewById(job.id);
+        return;
+      }
+    }
+    // The same phone and email checks as the New Job form, which refused
+    // what this button copied across without a word.
+    if (window.JobDetails && window.JobDetails.validate) {
+      const problem = window.JobDetails.validate({ name: values.name || current.name, phone: values.phone, email: values.email });
+      if (problem) { toast(problem); return; }
     }
     const ok = await askConfirm(
       `${String(values.name || current.name || '').trim() || 'This enquiry'} becomes a job, and the enquiry is kept against it.`,

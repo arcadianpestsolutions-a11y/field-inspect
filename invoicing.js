@@ -183,8 +183,14 @@
     };
   }
 
+  // Paid: marked so by hand, or Xero says so. The one rule, read by the
+  // invoice screen (lock), the delete warning, referrals and the business
+  // figures; it used to be written out in each of them.
+  const isPaid = (inv) => !!inv && (!!inv.paidAt || String(inv.xeroStatus || '').toUpperCase() === 'PAID');
+
   window.Invoicing = {
     GST_RATE,
+    isPaid,
     MAX_QUANTITY,
     MAX_UNIT_CENTS,
     centsFromInput,

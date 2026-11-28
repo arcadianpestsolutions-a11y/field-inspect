@@ -287,6 +287,14 @@
     // Admin-only server-side (see migration 022's policy); this only decides
     // whether to bother asking.
     async save(changes) {
+      if (window.IS_DEMO) {
+        // The demo keeps a change for the session, on this screen only, and
+        // never writes the real cached profile (see the read above). It used
+        // to answer "Business details are not loaded yet." to every Save.
+        org = { ...org, ...changes };
+        document.dispatchEvent(new Event('scope-org'));
+        return { ...org };
+      }
       const client = window.supabaseClient;
       if (!client || !org.id) throw new Error('Business details are not loaded yet.');
       const row = {

@@ -17,7 +17,8 @@
 // Dialog by dialog.js. Loaded straight after html-safe.js and dialog.js.
 //
 // EXPOSES: window.Common = { toast, askConfirm, askPrompt, el, escapeHtml,
-//   fmtDay, money, pad2, adminOnlyDelete, wirePrint, limitReached, pdfSheet }
+//   fmtDay, money, pad2, adminOnlyDelete, wirePrint, pdfSheet, settled,
+//   loadScript, ensureHtml2pdf }
 // Also listens for input across the page and says when a box is full.
 
 (() => {
@@ -25,7 +26,7 @@
 
   // A message at the bottom of the screen; the console when the app shell
   // that draws it is not there (the test page, a print window).
-  const toast = (msg) => (window.appToast ? window.appToast(msg) : console.log(msg));
+  const toast = (msg, opts) => (window.appToast ? window.appToast(msg, opts) : console.log(msg));
 
   // In-app confirm and prompt. The native ones return immediately with
   // nothing on screen in an installed iOS home-screen app (see dialog.js), so
@@ -110,5 +111,41 @@
     return overlay;
   }
 
-  window.Common = { toast, askConfirm, askPrompt, el, escapeHtml, fmtDay, money, pad2, adminOnlyDelete, wirePrint, limitReached, pdfSheet };
+  // Every <img> under root loaded and two frames painted: what html2canvas
+  // captures is whatever is drawn at that instant, so a still-loading photo
+  // came out blank. Called by all three PDF builders.
+  async function settled(root) {
+    await Promise.all(Array.from(root.querySelectorAll('img')).map((img) => (img.complete ? null : new Promise((resolve) => {
+      img.addEventListener('load', resolve, { once: true });
+      img.addEventListener('error', resolve, { once: true });
+    }))));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
+
+  // A script fetched when it is first needed, not at start. Same origin, so
+  // the Content-Security-Policy allows it; still in the offline shell
+  // (sw.js), so it is there with no signal.
+  const scriptLoads = new Map();
+  function loadScript(src) {
+    if (!scriptLoads.has(src)) {
+      scriptLoads.set(src, new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = () => resolve();
+        s.onerror = () => { scriptLoads.delete(src); reject(new Error('could not load ' + src)); };
+        document.head.appendChild(s);
+      }));
+    }
+    return scriptLoads.get(src);
+  }
+  // html2pdf is 885 KB, the largest file in the app, and a PDF is made once
+  // a day at most; it used to be parsed on every start (overnight run,
+  // 29 Nov 2026). Every PDF builder calls this first.
+  async function ensureHtml2pdf() {
+    if (!window.html2pdf) await loadScript('vendor/html2pdf.bundle.min.js');
+    if (!window.html2pdf) throw new Error('PDF library not loaded');
+    return window.html2pdf;
+  }
+
+  window.Common = { toast, askConfirm, askPrompt, el, escapeHtml, fmtDay, money, pad2, adminOnlyDelete, wirePrint, pdfSheet, settled, loadScript, ensureHtml2pdf };
 })();

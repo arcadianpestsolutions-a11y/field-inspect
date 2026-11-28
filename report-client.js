@@ -642,14 +642,6 @@
       + `<div class="cr-root">${bar}<div class="sheet">${buildHtml(job, report, { captions: opts.captions })}</div></div></body></html>`;
   }
 
-  // The Print button is wired from here, not with onclick="": the window
-  // opened from the app inherits its Content-Security-Policy, which refuses
-  // inline script (v186), so an onclick button silently did nothing.
-  function wirePrintButton(win) {
-    const btn = win.document.querySelector('[data-print]');
-    if (btn) btn.addEventListener('click', () => win.print());
-  }
-
   // Opens the report in its own window, the way Export does. Opened first,
   // filled second: a window opened after an await is treated as a pop-up.
   async function open(job, report, o) {
@@ -659,7 +651,7 @@
     const captions = await captionsFor(job.id);
     win.document.write(pageHtml(job, report, { captions, preview: opts.preview }));
     win.document.close();
-    wirePrintButton(win);
+    window.Common.wirePrint(win);
     return win;
   }
 
@@ -673,7 +665,7 @@
   const PDF_WIDTH = 700;
 
   async function generatePdfBlob(job, report) {
-    if (!window.html2pdf) throw new Error('PDF library not loaded');
+    await window.Common.ensureHtml2pdf();
     const trackedUrls = [];
     const captions = await captionsFor(job.id);
     const overlay = window.Common.pdfSheet();
@@ -686,11 +678,7 @@
     overlay.append(style, root);
     document.body.appendChild(overlay);
     try {
-      await Promise.all(Array.from(root.querySelectorAll('img')).map((img) => (img.complete ? null : new Promise((resolve) => {
-        img.addEventListener('load', resolve, { once: true });
-        img.addEventListener('error', resolve, { once: true });
-      }))));
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await window.Common.settled(root);
       // The summary has a page to itself only when it fits on one: one that
       // ran onto page 2 left the rest of page 2 empty before "What we found".
       const pagePx = PDF_WIDTH * ((297 - 12 - 16) / (210 - 12 - 12));
@@ -780,6 +768,6 @@
 
   window.ReportClient = {
     supports, isLive, LIVE, glance, actions, cleared, conduciveFound, buildHtml, pageHtml, open, generatePdfBlob,
-    renderPreviewButton, wirePrintButton, fmtDate, fmtTime, dueBy, SAID, STYLE,
+    renderPreviewButton, fmtDate, fmtTime, dueBy, SAID, STYLE,
   };
 })();

@@ -79,7 +79,7 @@
     const soonest = new Date(now); soonest.setFullYear(soonest.getFullYear() - 1);
     const latest = new Date(now); latest.setFullYear(latest.getFullYear() + 3);
     if (when < soonest.getTime() || when > latest.getTime()) {
-      return { refuse: `${d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })} does not look right. Check the year.` };
+      return { refuse: `${window.Common.fmtDay(when)} does not look right. Check the year.` };
     }
     const today = new Date(now); today.setHours(0, 0, 0, 0);
     if (when < today.getTime()) return { ask: 'That day has already gone. Book it in the past anyway (for a visit that already happened)?' };
@@ -156,8 +156,8 @@
       const m = Number(time.value);
       const when = new Date(y, mo - 1, d, Math.floor(m / 60), m % 60, 0, 0).getTime();
       const mins = Number(len.value) || 60;
-      if (!(await confirmWhen(when))) return;
-      if (!Number.isFinite(when)) { err.textContent = 'That day does not look right.'; return; }
+      // The day's sanity (confirmWhen) is asked inside Scheduler.confirmNoOverlap,
+      // which every onSave goes through (noClash), so it is not asked here too.
       save.disabled = true;
       try {
         if (await onSave(when, mins)) close('saved');

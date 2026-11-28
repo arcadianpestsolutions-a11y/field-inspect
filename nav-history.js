@@ -130,7 +130,11 @@
       }
       const sheetOpen = openSheet();
       if (sheetOpen) {
-        const cancel = sheetOpen.querySelector('[data-action$="-cancel"]') || sheetOpen.querySelector('.btn-secondary');
+        // The sheet's own way out, never a guess at a button: on the paid-by
+        // sheet the first .btn-secondary was "Cash" (overnight run, 29 Nov
+        // 2026), so Back would have marked the invoice paid.
+        const byText = Array.from(sheetOpen.querySelectorAll('button')).find((b) => /^(cancel|close|not now|stay)$/i.test((b.textContent || '').trim()));
+        const cancel = sheetOpen.querySelector('[data-cancel]') || sheetOpen.querySelector('[data-action$="-cancel"]') || byText;
         if (cancel) cancel.click(); else sheetOpen.remove();
         return 'closed a sheet';
       }

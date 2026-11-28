@@ -885,8 +885,11 @@
         // Before anything is recorded: a signed report being kept (3 years) is not removed from this
         // phone by a marker, whoever wrote it. The server refuses such
         // markers since migration 050; this covers any written before.
-        if ((row.table_name === 'jobs' || row.table_name === 'reports') && await isKeptLocally(row.record_id)) continue;
         const known = await DB.isDeleted(row.table_name, row.record_id);
+        // A marker already applied here has nothing left to protect, so the
+        // (two-read) retention check runs only for new ones: tombstones are
+        // never pruned, and every sync reads them all.
+        if (!known && (row.table_name === 'jobs' || row.table_name === 'reports') && await isKeptLocally(row.record_id)) continue;
         await DB.recordRemoteDeletion(row.table_name, row.record_id, row.deleted_at);
         if (known) continue;
         const remove = LOCAL_DELETERS[row.table_name];

@@ -103,7 +103,7 @@
   // Paid is Xero's word, or "Mark as paid" for money that never went through
   // Xero (v121). Before v157 only Xero counted here, so cash marked paid by
   // hand sat in Outstanding and Overdue for ever.
-  const isPaid = (inv) => String(inv.xeroStatus || '').toUpperCase() === 'PAID' || !!inv.paidAt;
+  const isPaid = (inv) => window.Invoicing.isPaid(inv);
   // Sent means the client has been asked for the money, or it is in Xero. An
   // invoice emailed straight from Scope kept status 'draft' until v157, so for
   // a business without Xero nothing ever reached Outstanding.

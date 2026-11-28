@@ -3512,9 +3512,9 @@
   // (break-it run, 28 Nov 2026): it stayed up for its few seconds after Next,
   // so it read as a complaint about the new question nobody had touched yet,
   // and after the answer was given it still said it was missing.
+  const FINISH_WARNING_TAG = 'finish-needs-answer';
   function clearFinishWarning() {
-    const t = document.getElementById('toast');
-    if (t && /Or tap Skip\.$/.test(t.textContent || '')) t.classList.add('hidden');
+    if (window.hideToast) window.hideToast(FINISH_WARNING_TAG);
   }
   if (viewReportSection) {
     const onAnswer = () => { if (finishRun) clearFinishWarning(); };
@@ -3544,7 +3544,7 @@
     if (errors.length && !skip) {
       finishRun.busy = false;
       toast(String(errors[0].message).replace(/[.\s]+$/, '')
-        + (errors.length > 1 ? `, and ${errors.length - 1} more on this screen` : '') + '. Or tap Skip.');
+        + (errors.length > 1 ? `, and ${errors.length - 1} more on this screen` : '') + '. Or tap Skip.', { tag: FINISH_WARNING_TAG });
       return;
     }
     let saved = null;
@@ -4026,9 +4026,17 @@
     allClearBtn.className = 'btn btn-secondary flex1';
     allClearBtn.textContent = 'All checked, no activity';
     allClearBtn.addEventListener('click', async () => {
-      const count = Number(await askPrompt('How many stations are on this property?', String(stations.length || 8),
-        { title: 'All checked, no activity', okLabel: 'Add stations', inputType: 'number' }));
-      if (!Number.isFinite(count) || count < 1 || count > 100) return;
+      // Stations already entered are asked about before they are replaced
+      // (overnight run, 29 Nov 2026: a station marked Missing vanished under
+      // a fresh "all clear" list with no word said).
+      if (stations.length && !(await askConfirm(
+        `The ${stations.length === 1 ? 'station' : `${stations.length} stations`} already entered will be replaced by a fresh list with no activity.`,
+        { title: 'Start the list again?', okLabel: 'Replace them', cancelLabel: 'Keep them' }))) return;
+      const raw = await askPrompt('How many stations are on this property?', String(stations.length || 8),
+        { title: 'All checked, no activity', okLabel: 'Add stations', inputType: 'number' });
+      if (raw === null) return;
+      const count = Number(raw);
+      if (!Number.isFinite(count) || count < 1 || count > 100) { toast('Enter how many stations there are, from 1 to 100.'); return; }
       stations.length = 0;
       for (let i = 1; i <= count; i++) {
         stations.push({ id: DB.uid(), assetId: DB.uid(), stationNumber: String(i), status: 'No activity', action: 'Nothing required' });

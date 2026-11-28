@@ -174,6 +174,10 @@
     // shouldDraw=false when restoring an already-saved sketch: the footprint
     // is still worth fetching so a later redraw has it, but the canvas must
     // not be touched — it already shows the technician's saved work.
+    // What the hint says about tracing only matters while the pad is blank:
+    // once a sketch is on it (restored, or last visit's), the address and
+    // outline messages below would talk over the note about that sketch.
+    const sayHint = (cls, text) => { if (hasFreehandWork) return; hint.className = cls; hint.textContent = text; };
     async function loadFootprintData(shouldDraw) {
       if (!(window.Geo && job())) return;
       // Jobs created by typing the address rather than tapping a suggestion
@@ -185,12 +189,11 @@
         // the sketch "doesn't work" — it comes up blank with an explanation
         // nobody reads, because it looks exactly like the ordinary
         // instructions above it.
-        hint.className = 'empty-hint sketch-needs-address';
-        hint.textContent = (job() && job().address)
+        sayHint('empty-hint sketch-needs-address', (job() && job().address)
           ? `No map location found for “${job().address}”, so there is no aerial photo to trace. `
             + 'Check the address on the job — re-pick it from the suggestions — or draw the outline by hand.'
           : 'This job has no address, so there is no aerial photo to trace. '
-            + 'Add the property address to the job, or draw the outline by hand.';
+            + 'Add the property address to the job, or draw the outline by hand.');
         return;
       }
       try {
@@ -200,10 +203,10 @@
 
         if (footprint.source === 'osm' && usable) {
           buildingPolygon = polygon;
-          hint.textContent = 'Outline loaded from map data. Adjust Corners to correct it, or draw over it.';
+          sayHint('empty-hint', 'Outline loaded from map data. Adjust Corners to correct it, or draw over it.');
         } else if (footprint.source === 'cadastre' && usable) {
           sitePolygon = polygon;
-          if (footprint.lotId) hint.textContent = `Site boundary shown for ${footprint.lotId}. Trace the building inside it.`;
+          if (footprint.lotId) sayHint('empty-hint', `Site boundary shown for ${footprint.lotId}. Trace the building inside it.`);
         } else if (footprint.source === 'satellite' && footprint.imageUrl) {
           if (!(await setBackdropImage(footprint.imageUrl))) return;
         } else {

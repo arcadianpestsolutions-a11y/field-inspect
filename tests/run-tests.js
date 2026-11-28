@@ -1407,6 +1407,9 @@
   // ---------- QR scanning ----------
   test('QR: a sticker this app printed is a sticker this app can read', async () => {
     const win = frame.contentWindow;
+    // The decoder is vendored (iOS Safari has no BarcodeDetector) and fetched
+    // the first time a sticker is read, the way qr-scan.js does it.
+    await win.Common.loadScript('vendor/jsqr.min.js');
     assert(win.jsQR, 'the decoder is vendored, because iOS Safari has no BarcodeDetector');
     assert(win.QRCode, 'and so is the encoder');
 
@@ -3374,7 +3377,7 @@
 
     // A fixed day far ahead. "The 10th of this month" failed every 10th after
     // 11am, because free slots in the past are rightly not offered.
-    const day = new Date(2031, 2, 10, 9, 0, 0, 0);
+    const day = new Date(2028, 2, 10, 9, 0, 0, 0);
     const job = await win.DB.addJob({ name: 'Agent Slot Job', address: '1 Agent St' });
     await win.DB.updateJob(job.id, { scheduledAt: day.getTime(), scheduledDurationMins: 120 });
 
@@ -7007,7 +7010,7 @@
 
   test('Overlap: two jobs booked into the same window are detected', async () => {
     const win = frame.contentWindow;
-    const base = Date.parse('2031-10-12T09:00:00');
+    const base = Date.parse('2028-10-12T09:00:00');
     const a = await win.DB.addJob({ name: 'Overlap A', scheduledAt: base, scheduledDurationMins: 120 });
     const b = await win.DB.addJob({ name: 'Overlap B' });
     const clashes = await win.DB.getOverlappingJobs(base + 60 * 60000, 60, b.id);
@@ -7020,7 +7023,7 @@
     // — the boundary itself must not count as overlapping, or a technician
     // could never book two jobs back to back without a false warning.
     const win = frame.contentWindow;
-    const base = Date.parse('2031-10-13T09:00:00');
+    const base = Date.parse('2028-10-13T09:00:00');
     const a = await win.DB.addJob({ name: 'Back-to-back A', scheduledAt: base, scheduledDurationMins: 60 });
     const clashes = await win.DB.getOverlappingJobs(base + 60 * 60000, 60, null);
     assertEqual(clashes.length, 0, 'a job starting exactly when another ends is not a clash');
@@ -7028,7 +7031,7 @@
 
   test('Overlap: a job never clashes with itself', async () => {
     const win = frame.contentWindow;
-    const base = Date.parse('2031-10-14T09:00:00');
+    const base = Date.parse('2028-10-14T09:00:00');
     const a = await win.DB.addJob({ name: 'Self Job', scheduledAt: base, scheduledDurationMins: 90 });
     const clashes = await win.DB.getOverlappingJobs(base, 90, a.id);
     assertEqual(clashes.length, 0, 'moving a job or re-saving it at the same time must not flag against itself');
@@ -7045,16 +7048,16 @@
     // tapped hour as free. A 3pm job that runs 3 hours reaches 6pm even
     // though 3pm itself was clear.
     const win = frame.contentWindow;
-    const base = Date.parse('2031-10-15T17:00:00'); // 5pm
+    const base = Date.parse('2028-10-15T17:00:00'); // 5pm
     const later = await win.DB.addJob({ name: 'Late Job', scheduledAt: base, scheduledDurationMins: 60 });
-    const candidateStart = Date.parse('2031-10-15T15:00:00'); // 3pm, itself free
+    const candidateStart = Date.parse('2028-10-15T15:00:00'); // 3pm, itself free
     const clashes = await win.DB.getOverlappingJobs(candidateStart, 180, null); // runs to 6pm
     assertEqual(clashes.length, 1, 'the 5pm job is caught even though 3pm itself was empty');
   });
 
   test('Overlap: the confirm prompt names the job it clashes with', async () => {
     const win = frame.contentWindow;
-    const base = Date.parse('2031-10-16T10:00:00');
+    const base = Date.parse('2028-10-16T10:00:00');
     await win.DB.addJob({ name: 'Existing Slot Job', scheduledAt: base, scheduledDurationMins: 60 });
     const mover = await win.DB.addJob({ name: 'Mover Job' });
 
@@ -7341,6 +7344,18 @@
   // "the app calls a function that no longer shows anything on iOS".
 
   function dialogCard(doc) { return doc.querySelector('.app-dialog .app-dialog-card'); }
+  // Answers the next in-app question whichever dialog is in place: the
+  // suite's double (installDialogDouble routes it to window.confirm, which
+  // would block a headless run) or the real one in a ?only= run. Call it
+  // BEFORE the tap that asks, then await what it returns after the tap.
+  function expectQuestion(win, doc, buttonLabel, yes) {
+    if (win.__realDialog) {
+      const real = win.confirm;
+      win.confirm = () => yes;
+      return async () => { await wait(50); win.confirm = real; };
+    }
+    return async () => { await waitFor(() => dialogButton(doc, buttonLabel), `asked: ${buttonLabel}`); dialogButton(doc, buttonLabel).click(); };
+  }
   function dialogButton(doc, label) {
     return Array.from(doc.querySelectorAll('.app-dialog .app-dialog-actions button'))
       .find((b) => b.textContent.trim() === label);
@@ -7496,6 +7511,9 @@
     await wait(350);
     const amount = () => doc.querySelector('#invoice-lines .invoice-line input[inputmode=decimal]');
     assert(amount() && !amount().disabled, 'a draft can be changed');
+    // Whole first: paid needs a name and a priced line (v192).
+    setTextInput(win, doc.getElementById('invoice-client-name'), 'Paid Lock Client');
+    setTextInput(win, amount(), '120');
     doc.getElementById('invoice-paid-btn').click();
     await waitFor(() => doc.querySelector('.paid-method-choice[data-method="Cash"]'), 'asked how it was paid');
     doc.querySelector('.paid-method-choice[data-method="Cash"]').click();
@@ -7895,7 +7913,7 @@
     // it must never be the thing that stops a real booking being made.
     // A fixed future date: "the 13th of this month" was in the past from the
     // 14th on, and a past booking is (rightly) questioned for other reasons.
-    const day = new Date(2031, 2, 13, 9, 0, 0, 0);
+    const day = new Date(2028, 2, 13, 9, 0, 0, 0);
     const clear = await win.Scheduler.confirmNoOverlap(null, day.getTime(), 60);
     assertEqual(clear, true, 'no job yet means nothing to estimate from, so nothing to warn about');
   });
@@ -11591,6 +11609,35 @@
     } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
   });
 
+  test('Back button: on the "How was it paid?" sheet it cancels, it never picks "Cash"', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Back Paid Job', address: '9 Back St' });
+    await win.DB.updateJob(job.id, { status: 'completed' });
+    const rec = historyRecorder();
+    win.NavHistory.setHistory(rec);
+    try {
+      await win.InvoiceUI.open(job.id);
+      await waitFor(() => !doc.getElementById('view-invoice').classList.contains('hidden') && doc.querySelector('#invoice-lines .invoice-line'), 'the invoice is open');
+      // A whole invoice, or Mark as paid refuses before the sheet (v192).
+      setTextInput(win, doc.getElementById('invoice-client-name'), 'Back Paid Client');
+      setTextInput(win, doc.querySelector('#invoice-lines .invoice-line input[inputmode=decimal]'), '150');
+      doc.getElementById('invoice-paid-btn').click();
+      await waitFor(() => doc.querySelector('body > .tester-feedback.paid-method'), 'the paid-by sheet is up');
+      const first = doc.querySelector('.paid-method .btn-secondary');
+      assertEqual(first && first.textContent, 'Cash', 'the first secondary button on that sheet is a payment method, which is what this test guards against');
+      assertEqual(win.NavHistory.handleBack(), 'closed a sheet');
+      await waitFor(() => !doc.querySelector('.paid-method'), 'the sheet is gone');
+      await wait(200);
+      const inv = (await win.DB.getInvoicesForJob(job.id))[0];
+      assert(inv && !inv.paidAt, 'and the invoice was not marked paid');
+    } finally {
+      await atJobList(win, doc);
+      win.NavHistory.setHistory(null);
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
   test('Back button: a press at the job list does nothing and traps nothing', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
@@ -11687,7 +11734,178 @@
       const after = await win.DB.getJob(job.id);
       assert(after.status !== 'review', 'the job is NOT moved to report review: ' + after.status);
       await waitFor(() => navView(doc) === 'view-job', 'back on the job');
+      // The dialog said how to carry on; the job page has to offer it.
+      await waitFor(() => doc.getElementById('resume-inspection-btn') && !doc.getElementById('resume-inspection-btn').classList.contains('hidden'), 'the job offers the way back on');
+      assert(/Continue inspection/.test(doc.getElementById('resume-inspection-btn').textContent), 'as "Continue inspection"');
     } finally { win.confirm = realConfirm; }
+  });
+
+  test('Enquiries: a Won enquiry stays a job, a bad phone is refused at Won, and a quote below zero is not kept', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const toastEl = doc.getElementById('toast');
+    const lead = await win.DB.addLead({ name: 'Won Twice', phone: 'abc', source: 'Google' });
+    const other = await win.DB.addLead({ name: 'Quote Minus', source: 'Google' });
+    try {
+      await win.LeadsUI.openLead(lead.id);
+      await waitFor(() => !doc.getElementById('view-lead').classList.contains('hidden') && doc.querySelector('[data-field-row="phone"] input'), 'the enquiry is open');
+      toastEl.textContent = '';
+      doc.getElementById('lead-convert-btn').click();
+      await waitFor(() => /phone number looks too short/.test(toastEl.textContent), 'the phone is checked the way the New Job form checks it');
+      assert(!doc.querySelector('.app-dialog'), 'and nothing is asked');
+      setTextInput(win, doc.querySelector('[data-field-row="phone"] input'), '0400 000 000');
+      const answered = expectQuestion(win, doc, 'Create the job', true);
+      doc.getElementById('lead-convert-btn').click();
+      await answered();
+      await waitFor(async () => (await win.DB.getLead(lead.id)).stage === 'won', 'won');
+      assertEqual((await win.DB.getJobs()).filter((j) => j.name === 'Won Twice').length, 1, 'one job');
+      await win.LeadsUI.openLead(lead.id);
+      await waitFor(() => !doc.getElementById('view-lead').classList.contains('hidden') && doc.querySelector('#lead-stages .stage-btn'), 'open again');
+      toastEl.textContent = '';
+      Array.from(doc.querySelectorAll('#lead-stages .stage-btn')).find((b) => b.textContent === 'Lost').click();
+      await waitFor(() => /became a job/.test(toastEl.textContent), 'Lost is refused while the job lives');
+      assertEqual((await win.DB.getLead(lead.id)).stage, 'won', 'still won, so there is no way to a second job');
+      // A quote below zero, on an enquiry that is still open.
+      await win.LeadsUI.openLead(other.id);
+      await waitFor(() => doc.querySelector('[data-field-row="quotedText"] input'), 'the other enquiry is open');
+      setTextInput(win, doc.querySelector('[data-field-row="quotedText"] input'), '-5');
+      toastEl.textContent = '';
+      Array.from(doc.querySelectorAll('#lead-stages .stage-btn')).find((b) => b.textContent === 'Contacted').click();
+      await waitFor(() => /cannot be below zero/.test(toastEl.textContent), 'the minus is not dropped in silence');
+      await waitFor(async () => (await win.DB.getLead(other.id)).stage === 'contacted', 'the stage still moved');
+      assertEqual((await win.DB.getLead(other.id)).quotedCents, null, 'and no amount was kept');
+    } finally {
+      // Leave by the screen's own Back, so nothing is left half-open for the next test.
+      // The board draws itself a moment after Back; leaving before it had
+      // shown put a second view on screen under the next test.
+      const back = doc.getElementById('lead-back-btn');
+      if (back && !doc.getElementById('view-lead').classList.contains('hidden')) {
+        back.click();
+        await waitFor(() => !doc.getElementById('view-leads').classList.contains('hidden'), 'back on the board', 3000).catch(() => {});
+        await wait(200);
+      }
+      win.showJobListView();
+      await wait(250);
+      for (const j of (await win.DB.getJobs()).filter((x) => x.name === 'Won Twice')) await win.DB.deleteJob(j.id);
+      await win.DB.deleteLead(lead.id).catch(() => {});
+      await win.DB.deleteLead(other.id).catch(() => {});
+    }
+  });
+
+  test('Clients: a client cannot be saved without a name', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const client = await win.DB.saveClient({ id: win.DB.uid(), name: 'Nameless Soon', phone: '0411 111 111' });
+    try {
+      await win.ClientsUI.openClient(client.id);
+      await waitFor(() => doc.querySelector('#view-client [data-field-row="name"] input'), 'the client is open');
+      setTextInput(win, doc.querySelector('#view-client [data-field-row="name"] input'), '  ');
+      const toastEl = doc.getElementById('toast');
+      toastEl.textContent = '';
+      doc.getElementById('client-save-btn').click();
+      await waitFor(() => /Enter the client/.test(toastEl.textContent), 'it says a name is needed');
+      assertEqual((await win.DB.getClient(client.id)).name, 'Nameless Soon', 'and the name was not blanked');
+    } finally {
+      const back = doc.getElementById('client-back-btn');
+      if (back && !doc.getElementById('view-client').classList.contains('hidden')) { back.click(); await wait(150); }
+      win.hideAllAppViews();
+      await win.DB.deleteClient(client.id).catch(() => {});
+    }
+  });
+
+  test('Settings: the demo keeps a change for the session instead of refusing every Save', async () => {
+    const win = frame.contentWindow;
+    const wasDemo = win.IS_DEMO;
+    const key = Object.keys(win.localStorage).find((k) => /org/i.test(k)) || '';
+    const before = key ? win.localStorage.getItem(key) : null;
+    try {
+      win.IS_DEMO = true;
+      const out = await win.Org.save({ name: 'Demo Pest Co' });
+      assertEqual(out.name, 'Demo Pest Co', 'the change is taken');
+      if (key) assertEqual(win.localStorage.getItem(key), before, 'and the real cached profile is untouched');
+    } finally { win.IS_DEMO = wasDemo; }
+  });
+
+  test('Invoice: Save says what is missing, paid needs it whole, and a quantity below zero is shown as what was kept', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const toastEl = doc.getElementById('toast');
+    const job = await win.DB.addJob({ name: 'Invoice Sanity Job', address: '42 Sane St' });
+    await win.DB.updateJob(job.id, { status: 'completed' });
+    try {
+      await win.InvoiceUI.open(job.id);
+      await waitFor(() => !doc.getElementById('view-invoice').classList.contains('hidden') && doc.querySelector('#invoice-lines .invoice-line'), 'the invoice is open');
+      const name = doc.getElementById('invoice-client-name');
+      setTextInput(win, name, '');
+      toastEl.textContent = '';
+      doc.getElementById('invoice-save-btn').click();
+      await waitFor(() => /Kept as a draft\. Enter who the invoice is to\./.test(toastEl.textContent), `a blank Bill to is named: "${toastEl.textContent}"`);
+      setTextInput(win, name, 'A Client');
+      const issued = doc.getElementById('invoice-issue-date');
+      setTextInput(win, issued, '1901-01-01');
+      toastEl.textContent = '';
+      doc.getElementById('invoice-save-btn').click();
+      await waitFor(() => /Check the issue date/.test(toastEl.textContent), 'a 1901 issue date is named');
+      setTextInput(win, issued, '2026-11-20');
+      setTextInput(win, doc.getElementById('invoice-due-date'), '2026-11-01');
+      toastEl.textContent = '';
+      doc.getElementById('invoice-save-btn').click();
+      await waitFor(() => /due date is before the issue date/.test(toastEl.textContent), 'a due date before the issue date is named');
+      setTextInput(win, doc.getElementById('invoice-due-date'), '2026-12-04');
+      const qty = doc.querySelector('#invoice-lines .invoice-line input[type="number"]');
+      setTextInput(win, qty, '-5');
+      qty.dispatchEvent(new win.Event('blur'));
+      assertEqual(qty.value, '0', 'a quantity below zero is shown as the 0 that was kept');
+      toastEl.textContent = '';
+      doc.getElementById('invoice-paid-btn').click();
+      await waitFor(() => /Add a priced line before marking it paid/.test(toastEl.textContent), 'paid needs a priced line');
+      assert(!doc.querySelector('.paid-method'), 'and the how-was-it-paid sheet does not open');
+      setTextInput(win, qty, '1');
+      const amt = doc.querySelector('#invoice-lines .invoice-line input[inputmode=decimal]');
+      setTextInput(win, amt, '-300');
+      toastEl.textContent = '';
+      doc.getElementById('invoice-save-btn').click();
+      await waitFor(() => /total is below zero/.test(toastEl.textContent), 'a total below zero is named');
+      setTextInput(win, amt, '300');
+      toastEl.textContent = '';
+      doc.getElementById('invoice-save-btn').click();
+      await waitFor(() => toastEl.textContent === 'Invoice saved', `whole, it is simply saved: "${toastEl.textContent}"`);
+    } finally {
+      const back = doc.getElementById('invoice-back-btn');
+      if (back && !doc.getElementById('view-invoice').classList.contains('hidden')) { back.click(); await wait(250); }
+      win.hideAllAppViews();
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
+  test('Monitoring: "All checked, no activity" asks before replacing stations already entered', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Station Keep Job', jobType: 'termite' });
+    try {
+      await win.ReportUI.openReview(job.id, 'termite_monitoring');
+      await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the monitoring report is open');
+      openReportSection(doc, 'The Stations');
+      await waitFor(() => Array.from(doc.querySelectorAll('button')).some((b) => b.textContent === '+ Add Station'), 'the stations screen is up');
+      const button = (text) => Array.from(doc.querySelectorAll('button')).find((b) => b.textContent === text);
+      button('+ Add Station').click();
+      await wait(100);
+      const cards = () => doc.querySelectorAll('.station-chip-row').length;
+      const before = cards();
+      assert(before > 0, 'one station is entered');
+      const kept = expectQuestion(win, doc, 'Keep them', false);
+      button('All checked, no activity').click();
+      await kept();
+      await wait(150);
+      assertEqual(cards(), before, 'Keep them keeps them');
+      assert(!doc.querySelector('.app-dialog'), 'and nothing else is asked');
+      // Saved, so no half-edited section is left for the next test's Back press to ask about.
+      doc.getElementById('section-save-btn').click();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+    } finally {
+      win.hideAllAppViews();
+      await win.DB.deleteJob(job.id);
+    }
   });
 
   test('Back button: a Forward press onto the stale entry does not cost a second Back to leave', async () => {
@@ -11717,10 +11935,40 @@
       await win.ReportUI.openReview(job.id);
       await waitFor(() => navView(doc) === 'view-report' && win.NavHistory.hasSentinel(), 'on the report');
       // Faster than the screens can settle: the second must find an entry to remove.
-      win.NavHistory.onPop();
-      win.NavHistory.onPop();
-      await waitFor(() => navView(doc) === 'view-joblist', 'two presses from the report reach the job list');
+      const r1 = win.NavHistory.onPop();
+      const r2 = win.NavHistory.onPop();
+      try {
+        await waitFor(() => navView(doc) === 'view-joblist', 'two presses from the report reach the job list');
+      } catch (e) {
+        // Says where the presses went, so a failure here can be read.
+        const open = Array.from(doc.querySelectorAll('section.view')).filter((v) => !v.classList.contains('hidden')).map((v) => v.id).join(',');
+        throw new Error(`${e.message} [first: ${r1}; second: ${r2}; on screen: ${open}; sentinel: ${win.NavHistory.hasSentinel()}; dialogs: ${doc.querySelectorAll('.app-dialog').length}; sheets: ${doc.querySelectorAll('body > .tester-feedback').length}]`);
+      }
     } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
+  });
+
+  test('Job screen: Back returns to where the job was opened from, and a stale origin is not remembered', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Origin Job', address: '1 Origin St' });
+    try {
+      await win.LeadsUI.open();
+      await waitFor(() => !doc.getElementById('view-leads').classList.contains('hidden'), 'on the enquiries board');
+      await win.showJobViewById(job.id);
+      await waitFor(() => navView(doc) === 'view-job', 'the job is open from the board');
+      // Left some other way than Back, as a tab tap does; then opened with no
+      // screen under it at all. The old origin must not be the answer.
+      win.hideAllAppViews();
+      await win.showJobViewById(job.id);
+      await waitFor(() => navView(doc) === 'view-job', 'the job is open again');
+      doc.getElementById('back-btn').click();
+      await waitFor(() => navView(doc) === 'view-joblist', 'Back goes to the job list, not to the board it was once opened from');
+    } finally {
+      win.hideAllAppViews();
+      win.showJobListView();
+      await wait(150);
+      await win.DB.deleteJob(job.id);
+    }
   });
 
   test('Back button: every screen has a Back of its own for it to press, so nobody is stranded', async () => {
@@ -12021,6 +12269,48 @@
     assert(/inputMode: 'tel', maxLength: 20/.test(fr), 'the enquiry phone gets the number keyboard and a limit');
   });
 
+  test('New job: a problem names its box, and a tagged toast comes down by its tag', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const J = win.JobDetails;
+    assertEqual(J.validateField({ name: ' ' }).field, 'name', 'no name: the name box');
+    assertEqual(J.validateField({ name: 'A', phone: '12' }).field, 'phone', 'a short phone: the phone box');
+    assertEqual(J.validateField({ name: 'A', email: 'nope' }).field, 'email', 'a bad email: the email box');
+    assertEqual(J.validateField({ name: 'A' }), null, 'nothing wrong: nothing');
+    assertEqual(J.validate({ name: 'A', phone: '12' }), J.validateField({ name: 'A', phone: '12' }).message, 'validate still returns the words');
+    const toastEl = doc.getElementById('toast');
+    win.appToast('Tagged message', { tag: 'test-tag' });
+    assert(!toastEl.classList.contains('hidden'), 'shown');
+    win.hideToast('other-tag');
+    assert(!toastEl.classList.contains('hidden'), 'another tag does not take it down');
+    win.hideToast('test-tag');
+    assert(toastEl.classList.contains('hidden'), 'its own tag does');
+    win.appToast('Plain message');
+    assertEqual(toastEl.dataset.tag, '', 'an untagged toast clears the tag');
+    toastEl.classList.add('hidden');
+  });
+
+  test('New job: two fast taps on Create Job make one job, and the form closes', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(150);
+    doc.getElementById('new-job-btn').click();
+    await wait(200);
+    setTextInput(win, doc.getElementById('job-name'), 'Double Tap Job');
+    const create = doc.getElementById('job-form-save') || doc.getElementById('job-form-create') || doc.querySelector('#job-form .btn-primary');
+    assert(create, 'the Create button is there');
+    create.click();
+    create.click();
+    await waitFor(async () => (await win.DB.getJobs()).some((j) => j.name === 'Double Tap Job'), 'a job is made', 4000);
+    await wait(400);
+    const made = (await win.DB.getJobs()).filter((j) => j.name === 'Double Tap Job');
+    assertEqual(made.length, 1, 'exactly one');
+    assert(doc.getElementById('job-form').classList.contains('hidden') || !doc.getElementById('view-joblist').offsetParent || navView(doc) === 'view-job', 'and the form is not left open');
+    win.hideAllAppViews();
+    for (const j of made) await win.DB.deleteJob(j.id);
+  });
+
   test('Inputs: a box that is full says so instead of cutting the text in silence', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
@@ -12067,6 +12357,21 @@
       win.fetch = realFetch;
       await win.DB.deleteJob(job.id);
     }
+  });
+
+  test('Start-up: the PDF library is fetched when a PDF is first made, not on every start', async () => {
+    const win = frame.contentWindow;
+    const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
+    assert(!/<script src="vendor\/html2pdf/.test(idx), 'index.html no longer loads 885 KB of PDF library at start');
+    assert(!/<script src="vendor\/jsqr/.test(idx), 'nor the QR decoder');
+    assert(sw.includes("'./vendor/html2pdf.bundle.min.js'") && sw.includes("'./vendor/jsqr.min.js'"), 'but the offline shell still holds both, so they work with no signal');
+    const qr = await (await fetch('../qr-scan.js', { cache: 'reload' })).text();
+    assert(/loadScript\('vendor\/jsqr\.min\.js'\)/.test(qr), 'the scanner fetches the decoder before falling back to it');
+    const lib = await win.Common.ensureHtml2pdf();
+    assertEqual(typeof lib, 'function', 'asking for it loads it');
+    assert(win.document.querySelector('script[src$="vendor/html2pdf.bundle.min.js"]'), 'by a script tag of its own');
+    assertEqual(await win.Common.ensureHtml2pdf(), lib, 'and a second ask is the same library, not a second fetch');
   });
 
   test('Registration: job-details.js is in the page and the offline shell', async () => {
@@ -15910,6 +16215,23 @@
     return job;
   }
   const carriedNote = (doc) => doc.getElementById('carried-note');
+
+  test('Booking: every path that books a time checks the day first, in the one shared place', async () => {
+    const win = frame.contentWindow;
+    const app = await (await fetch('../app.js', { cache: 'reload' })).text();
+    const sheet = await (await fetch('../booking-edit.js', { cache: 'reload' })).text();
+    assert(!/BookingEdit\.confirmWhen/.test(app), 'the new-job form no longer bolts the date check on after the clash question');
+    assert(!/await confirmWhen\(when\)/.test(sheet), 'nor does the booking sheet ask it a second time');
+    const D = win.Dialog;
+    const realAlert = D.alert;
+    let alerted = '';
+    D.alert = async (msg) => { alerted = String(msg); };
+    try {
+      const ok = await win.Scheduler.confirmNoOverlap(null, new win.Date(1901, 0, 1, 9).getTime(), 60);
+      assertEqual(ok, false, 'a 1901 booking is refused by the shared clash check, whichever path asked');
+      assert(/Check the year/.test(alerted), `and it says what to check: ${alerted}`);
+    } finally { D.alert = realAlert; }
+  });
 
   test('Carry forward: a re-inspection opens with last visit\'s description of the property, and nothing else', async () => {
     const win = frame.contentWindow;

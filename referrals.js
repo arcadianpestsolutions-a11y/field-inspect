@@ -21,7 +21,8 @@
   const STATUSES = ['pending', 'earned', 'credited', 'void'];
   const GST_RATE = 0.10;
 
-  const isPaid = (inv) => !!inv && (String(inv.xeroStatus || '').toUpperCase() === 'PAID' || !!inv.paidAt);
+  // One rule for "paid", in invoicing.js.
+  const isPaid = (inv) => window.Invoicing.isPaid(inv);
 
   // Every job that belongs to the referred person: the job an enquiry was
   // booked as, any job for the referred client, and a job named directly.

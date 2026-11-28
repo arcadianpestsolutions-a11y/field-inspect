@@ -257,6 +257,9 @@
   }
 
   async function save() {
+    // The form marks the name required; it was saved blank and the list then
+    // showed the phone number as the name (overnight run, 29 Nov 2026).
+    if (!String(typed().name || '').trim()) { toast('Enter the client\'s name.'); return; }
     const before = Object.assign({}, current);
     current = await DB.saveClient(Object.assign({}, current, typed()));
     const updated = await carryContactToOpenJobs(before, current);

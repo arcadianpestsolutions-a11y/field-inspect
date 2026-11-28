@@ -8,7 +8,8 @@
 //           could be tapped to ring the client or open the map. A mistyped
 //           phone number meant reminders going to a stranger, with no fix
 //           except deleting the job.
-// EXPOSES   window.JobDetails = { LIMITS, clean, validate, changesFor, telHref,
+// EXPOSES   window.JobDetails = { LIMITS, clean, validate, validateField,
+//           changesFor, clientUpdateFor, offerClientUpdate, telHref,
 //           directionsUrl, render }
 // DEPENDS   DB (updateJob), HtmlSafe (not needed: all text uses textContent).
 // TOUCHES   IndexedDB jobs store through DB.updateJob only.
@@ -41,16 +42,21 @@
   // job site is better served by being warned about an obvious slip than by
   // being blocked by a strict rule, and the server re-validates before any
   // message is sent.
-  function validate(values) {
+  // The first problem, and which box it is in: { field, message }, or null.
+  function validateField(values) {
     const v = clean(values);
-    if (!v.name) return 'Enter a job name.';
+    if (!v.name) return { field: 'name', message: 'Enter a job name.' };
     if (v.phone && v.phone.replace(/\D/g, '').length < 6) {
-      return 'That phone number looks too short. Check it, or clear it.';
+      return { field: 'phone', message: 'That phone number looks too short. Check it, or clear it.' };
     }
     if (v.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email)) {
-      return 'That email address does not look right. Check it, or clear it.';
+      return { field: 'email', message: 'That email address does not look right. Check it, or clear it.' };
     }
     return null;
+  }
+  function validate(values) {
+    const problem = validateField(values);
+    return problem ? problem.message : null;
   }
 
   // What to write to the job. A changed address clears the saved map position:
@@ -83,7 +89,7 @@
     if (!client) return null;
     const C = window.Clients;
     const phoneKey = (p) => (C ? C.normalisePhone(p) : str(p).replace(/\D/g, ''));
-    const emailKey = (e) => str(e).trim().toLowerCase();
+    const emailKey = (e) => (C && C.normaliseEmail ? C.normaliseEmail(e) : str(e).trim().toLowerCase());
     const b = before || {};
     const a = after || {};
     const out = {};
@@ -267,5 +273,5 @@
     if (anchor) host.insertBefore(card, anchor); else host.insertBefore(card, host.firstChild);
   }
 
-  window.JobDetails = { LIMITS, clean, validate, changesFor, clientUpdateFor, offerClientUpdate, telHref, directionsUrl, render };
+  window.JobDetails = { LIMITS, clean, validate, validateField, changesFor, clientUpdateFor, offerClientUpdate, telHref, directionsUrl, render };
 })();

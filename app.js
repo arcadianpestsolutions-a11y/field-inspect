@@ -250,7 +250,7 @@
   const toastMs = (msg) => Math.min(9000, Math.max(2200, String(msg || '').length * 55));
   window.toastDurationFor = toastMs;
 
-  function toast(msg) {
+  function toast(msg, opts) {
     // A polite live region, so a screen reader reads "Report saved" too
     // (audit, 28 Nov). Set here as well as in index.html, for a device
     // still holding an older cached page. Shown before the text changes:
@@ -261,10 +261,16 @@
     }
     toastEl.classList.remove('hidden');
     toastEl.textContent = msg;
+    // A tag names the message, so the screen it was about can take it down
+    // (hideToast) without matching its words.
+    toastEl.dataset.tag = (opts && opts.tag) || '';
     clearTimeout(toast._t);
     toast._t = setTimeout(() => toastEl.classList.add('hidden'), toastMs(msg));
   }
   window.appToast = toast;
+  window.hideToast = (tag) => {
+    if (tag && toastEl.dataset.tag === tag) toastEl.classList.add('hidden');
+  };
 
   // dialog.js replaces the native dialogs, which on an installed iOS
   // home-screen app return instantly with nothing on screen — taking every
@@ -582,7 +588,11 @@
       jobReturn = id ? () => window.ClientsUI.openClient(id) : null;
       return;
     }
-    if (JOB_RETURNS[from]) jobReturn = JOB_RETURNS[from];
+    // Only a known origin is remembered. Anything else (the report, no view
+    // at all) used to leave the LAST origin in place, so a job opened later
+    // from the list went Back to an enquiries board it had never come from
+    // (overnight run, 29 Nov 2026).
+    jobReturn = JOB_RETURNS[from] || null;
   }
   async function leaveJob() {
     const go = jobReturn;
@@ -1073,7 +1083,10 @@
     // report is still the next step, so this one is the quieter button.
     const resume = resumeInspectionButton();
     if (resume) {
-      const canResume = !isRecording && job.status === 'review';
+      // In progress with no live inspection on this device is where "Leave
+      // for now" lands (overnight run, 29 Nov 2026): the way back on is
+      // offered here too, beside Recover.
+      const canResume = !isRecording && (job.status === 'review' || job.status === 'in_progress');
       resume.classList.toggle('hidden', !canResume);
       if (canResume) resume.textContent = job.jobType === 'pest_treatment' ? '📷 Add more photos' : '▶ Continue inspection';
     }
@@ -1447,26 +1460,25 @@
     // The same phone and email check as Edit details (break-it run, 28 Nov
     // 2026): this form saved "not-an-email" without a word, and Edit details
     // then refused it.
-    if (window.JobDetails && window.JobDetails.validate) {
-      const problem = window.JobDetails.validate({
+    if (window.JobDetails && window.JobDetails.validateField) {
+      const problem = window.JobDetails.validateField({
         name, phone: jobPhoneInput.value, email: isSubUser() ? '' : jobEmailInput.value,
       });
       if (problem) {
-        toast(problem);
-        (/email/i.test(problem) ? jobEmailInput : jobPhoneInput).focus();
+        toast(problem.message);
+        ({ name: jobNameInput, email: jobEmailInput, phone: jobPhoneInput })[problem.field].focus();
         return;
       }
     }
     const newScheduledAt = readScheduledAtFromForm();
     // How long, from the form (v163); an hour if the page has no such box.
     const newLength = window.BookingEdit ? window.BookingEdit.readNewJobLength() : 60;
+    // The day's sanity (v186) and the clash question, for every booking path
+    // in one place (scheduler.js confirmNoOverlap).
     if (newScheduledAt && window.Scheduler && window.Scheduler.confirmNoOverlap) {
       const clear = await window.Scheduler.confirmNoOverlap(null, newScheduledAt, newLength);
       if (!clear) return;
     }
-    // After the clash question: a day in the past or an impossible year (v186).
-    if (newScheduledAt && window.BookingEdit && window.BookingEdit.confirmWhen
-      && !(await window.BookingEdit.confirmWhen(newScheduledAt))) return;
     // A subcontractor starting a job for the business (v166): no client email
     // (the box is hidden, and the server would not keep one), no client
     // record, and nothing is sent to the client. The business sees the job
@@ -1783,7 +1795,7 @@
     let paidNote = '';
     try {
       const invs = DB.getInvoicesForJob ? await DB.getInvoicesForJob(jobId) : [];
-      const paid = invs.filter((i) => i.paidAt || String(i.xeroStatus || '').toUpperCase() === 'PAID');
+      const paid = invs.filter((i) => window.Invoicing.isPaid(i));
       if (paid.length) {
         paidNote = ` It has ${paid.length === 1 ? 'a paid invoice' : `${paid.length} paid invoices`} (${paid.map((i) => i.number).filter(Boolean).join(', ') || 'no number'}), which will be deleted too.`;
       }
@@ -2525,12 +2537,7 @@
     }, 45000);
 
     try {
-      clearInterval(inspectionTimerInterval);
-      inspectionActiveJobId = null;
-      pendingShot = null;
-      showLastPhoto(null);
-      endPhotoWalk();
-      hide(inspectionModal);
+      closeInspectionModal();
 
       setStage('updating the job');
       try {
@@ -2640,8 +2647,8 @@
   // to Report review. Leaving keeps every photo and answer (the walk saves as
   // it goes); Start inspection on the job carries on from the same step.
   // Built here, not in index.html, so a stale cached page still gets it.
-  let inspectionLeaveBtn = document.getElementById('inspection-leave-btn');
-  if (!inspectionLeaveBtn && inspectionModal) {
+  let inspectionLeaveBtn = null;
+  if (inspectionModal) {
     inspectionLeaveBtn = document.createElement('button');
     inspectionLeaveBtn.id = 'inspection-leave-btn';
     inspectionLeaveBtn.type = 'button';
@@ -2655,23 +2662,28 @@
     leavingInspection = true;
     try {
       const ok = await askConfirm(
-        'The photos and answers so far are kept. Tap Start inspection on the job to carry on from this step.',
+        'The photos and answers so far are kept. Tap Continue inspection on the job to carry on from this step.',
         { title: 'Leave the inspection for now?', okLabel: 'Leave for now', cancelLabel: 'Stay' },
       );
       if (!ok || inspectionModal.classList.contains('hidden')) return false;
       const jobId = inspectionActiveJobId || currentJobId;
-      clearInterval(inspectionTimerInterval);
-      inspectionActiveJobId = null;
-      pendingShot = null;
-      showLastPhoto(null);
-      endPhotoWalk();
-      hide(inspectionModal);
+      closeInspectionModal();
       if (jobId) await showJobView(jobId);
       toast('Inspection left for now. Your photos are kept.');
       return true;
     } finally {
       leavingInspection = false;
     }
+  }
+  // Both ways out of the inspection screen (Finish, Leave for now) clear
+  // the same things; one place, so the next piece of state is cleared on both.
+  function closeInspectionModal() {
+    clearInterval(inspectionTimerInterval);
+    inspectionActiveJobId = null;
+    pendingShot = null;
+    showLastPhoto(null);
+    endPhotoWalk();
+    hide(inspectionModal);
   }
   window.leaveInspection = leaveInspection;
   if (inspectionLeaveBtn) inspectionLeaveBtn.addEventListener('click', () => leaveInspection());

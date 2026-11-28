@@ -479,8 +479,7 @@
     printWin.document.close();
     // Wired from here (v188): the window inherits the app's CSP, which
     // refuses an onclick="" attribute, so the button did nothing.
-    const btn = printWin.document.querySelector('[data-print]');
-    if (btn) btn.addEventListener('click', () => printWin.print());
+    window.Common.wirePrint(printWin);
   }
 
   // Renders the report and rasterizes it into a real PDF Blob via
@@ -496,7 +495,7 @@
   // the reliable pattern for this, not a cosmetic choice.
   async function generateReportPdfBlob(job, report) {
     if (clientLayoutFor(job, report)) return window.ReportClient.generatePdfBlob(job, report);
-    if (!window.html2pdf) throw new Error('PDF library not loaded');
+    await window.Common.ensureHtml2pdf();
     const trackedUrls = [];
     const overlay = window.Common.pdfSheet();
     const container = document.createElement('div');
@@ -512,16 +511,10 @@
     document.body.appendChild(overlay);
 
     try {
-      // Let every <img> (photos, signature, sketch) actually finish loading
-      // before rasterizing — html2canvas captures whatever's rendered at
-      // that instant, so a still-loading image would just come out blank.
-      const images = Array.from(container.querySelectorAll('img'));
-      await Promise.all(images.map((img) => img.complete ? Promise.resolve() : new Promise((resolve) => {
-        img.addEventListener('load', resolve, { once: true });
-        img.addEventListener('error', resolve, { once: true });
-      })));
-      // One extra frame so layout/paint has genuinely settled before capture.
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      // Every <img> (photos, signature, sketch) loaded and the layout settled
+      // before rasterizing: html2canvas captures whatever is drawn at that
+      // instant, so a still-loading image would come out blank.
+      await window.Common.settled(container);
 
       const blob = await window.html2pdf()
         .set({ margin: 10, filename: 'report.pdf', html2canvas: { scale: 2 }, jsPDF: { unit: 'pt', format: 'a4' } })

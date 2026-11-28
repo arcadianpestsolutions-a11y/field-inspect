@@ -138,6 +138,11 @@
     } catch (e) {
       // Fall through to jsQR, which reads what the native one sometimes won't.
     }
+    // The decoder (128 KB) is fetched the first time a sticker is read, not
+    // on every start (v192). It stays in the offline shell.
+    if (!window.jsQR && window.Common) {
+      try { await window.Common.loadScript('vendor/jsqr.min.js'); } catch (e) { /* decodeWithJsQr returns null without it */ }
+    }
     try { return decodeWithJsQr(img); } catch (e) {
       if (window.ErrorLog) window.ErrorLog.note(e, 'QR scan: read the photo');
       return null;

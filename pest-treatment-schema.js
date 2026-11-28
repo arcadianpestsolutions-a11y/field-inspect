@@ -396,7 +396,7 @@ const PEST_TREATMENT_SCHEMA = [
           'Screen weep holes', 'Repair damaged roof tiles or eaves'],
       },
       { id: 'followUpRequired', label: 'Follow-up treatment required?', type: 'yesno', required: true },
-      { id: 'followUpDate', label: 'Recommended Follow-up Date', type: 'date', required: true, showIf: { field: 'followUpRequired', equals: 'Yes' } },
+      { id: 'followUpDate', label: 'Recommended Follow-up Date', type: 'date', required: true, future: true, showIf: { field: 'followUpRequired', equals: 'Yes' } },
       { id: 'treatmentLimitations', label: 'Treatment limitations / warranty conditions', type: 'textarea' },
       { id: 'generalRecommendations', label: 'Anything else the client should know', type: 'textarea', aiFillable: true },
       { id: 'additionalNotes', label: 'Internal notes (not shown to the client)', type: 'textarea' },

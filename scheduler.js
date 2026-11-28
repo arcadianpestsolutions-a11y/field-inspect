@@ -810,6 +810,11 @@
   // happens; the point is that nobody books over another job without seeing
   // it first.
   async function confirmNoOverlap(jobId, scheduledAt, durationMins) {
+    // First the day itself: a year typed as 1901, or a day already gone
+    // (booking-edit.js checkWhen, v186). Here, so every path that books a
+    // time gets it: the new-job form, the booking sheet, a drag in the
+    // diary, the assistant's proposal. It was on two of the seven.
+    if (window.BookingEdit && window.BookingEdit.confirmWhen && !(await window.BookingEdit.confirmWhen(scheduledAt))) return false;
     const clashes = await DB.getOverlappingJobs(scheduledAt, durationMins, jobId);
     if (clashes.length) {
       const names = clashes.map((j) => `${j.name} at ${fmtTime(j.scheduledAt)}`).join(', ');

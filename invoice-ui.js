@@ -117,6 +117,8 @@
         showLineTotal();
         renderTotals();
       });
+      // The box shows what was kept: "-5" was held at 0 while the box still read -5.
+      qty.addEventListener('blur', () => { if (String(qty.value) !== String(line.quantity)) qty.value = line.quantity; });
       qtyWrap.appendChild(qty);
       numRow.appendChild(qtyWrap);
 
@@ -249,7 +251,7 @@
   // every field stayed editable after Mark as paid, so the amount on a paid
   // invoice could be changed with nothing to show it ever said otherwise.
   // Paid locks it; "Undo: not paid" unlocks it, which is a deliberate step.
-  const isLocked = (inv) => !!(inv && (inv.paidAt || String(inv.xeroStatus || '').toUpperCase() === 'PAID'));
+  const isLocked = (inv) => window.Invoicing.isPaid(inv);
 
   function applyLock() {
     if (!current) return;
@@ -338,6 +340,7 @@
       // highlighted thing on the sheet, so it read as the answer.
       cancel.className = 'link-btn full';
       cancel.dataset.method = '';
+      cancel.dataset.cancel = ''; // what the Back button presses (nav-history.js)
       cancel.textContent = 'Cancel';
       cancel.style.marginTop = '12px';
       cancel.addEventListener('click', () => done(''));
@@ -354,6 +357,8 @@
     paidBtn.addEventListener('click', async () => {
       if (!current) return;
       if (!current.paidAt) {
+        const problems = invoiceProblems(current, true);
+        if (problems.length) { toast(problems[0]); return; }
         // How it was paid (v163): the usability test found nowhere to say
         // "cash", and a question worded only around Xero.
         const method = await askPaidMethod(current);
@@ -504,9 +509,33 @@
     if (autosaveTimer) { clearInterval(autosaveTimer); autosaveTimer = null; }
   }
 
+  // What stops an invoice being called finished (overnight run, 29 Nov 2026:
+  // the tester saved one with no name, a 1901 issue date, a due date before
+  // it and a -$99,999 line, then marked it paid). A draft with gaps is still
+  // kept, it is just not called "saved" as if it were done; paid needs it whole.
+  function invoiceProblems(inv, forPaid) {
+    const out = [];
+    if (!String(inv.clientName || '').trim()) out.push('Enter who the invoice is to.');
+    const email = String(inv.clientEmail || '').trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) out.push('That email address does not look right.');
+    const issued = Date.parse(inv.issueDate || '');
+    const issuedYear = Number.isFinite(issued) ? new Date(issued).getFullYear() : 0;
+    const thisYear = new Date().getFullYear();
+    if (issuedYear < 2000 || issuedYear > thisYear + 1) out.push('Check the issue date.');
+    else {
+      const due = Date.parse(inv.dueDate || '');
+      if (inv.dueDate && Number.isFinite(due) && due < issued) out.push('The due date is before the issue date.');
+    }
+    if ((inv.lineItems || []).some((l) => Number(l.quantity) < 0)) out.push('A quantity cannot be below zero.');
+    if (I.computeTotals(inv).totalCents < 0) out.push('The total is below zero: a discount cannot be more than the invoice.');
+    if (forPaid && !(inv.lineItems || []).some((l) => Number(l.quantity) > 0 && l.unitAmountCents > 0)) out.push('Add a priced line before marking it paid.');
+    return out;
+  }
+
   saveBtn.addEventListener('click', async () => {
     await save();
-    toast('Invoice saved');
+    const problems = invoiceProblems(current);
+    toast(problems.length ? `Kept as a draft. ${problems[0]}` : 'Invoice saved');
   });
 
   backBtn.addEventListener('click', async () => {
@@ -554,6 +583,8 @@
     if (!window.EmailService) { toast('Email sending is not set up.'); return; }
     const to = (current.clientEmail || '').trim();
     if (!to) { toast('Add the client email address first.'); return; }
+    const problems = invoiceProblems(current, true);
+    if (problems.length) { toast(problems[0]); return; }
     const totals = I.computeTotals(current);
     if (!await askConfirm(`Email ${current.number} for ${I.formatMoney(totals.totalCents)} to ${to}?`,
       { title: 'Send this invoice?', okLabel: 'Send' })) return;
@@ -678,9 +709,8 @@
   // Same on-screen-overlay approach report.js uses — html2canvas captures from
   // real viewport position, so an off-screen element rasterizes blank.
   async function generateInvoicePdfBlob() {
-    if (!window.html2pdf) throw new Error('PDF library not loaded');
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;overflow:auto;';
+    await window.Common.ensureHtml2pdf();
+    const overlay = window.Common.pdfSheet();
     const container = document.createElement('div');
     container.style.width = '800px';
     container.style.margin = '0 auto';
@@ -693,7 +723,7 @@
     overlay.appendChild(container);
     document.body.appendChild(overlay);
     try {
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await window.Common.settled(container);
       return await window.html2pdf()
         .set({ margin: 10, filename: current.number + '.pdf', html2canvas: { scale: 2 }, jsPDF: { unit: 'pt', format: 'a4' } })
         .from(container)

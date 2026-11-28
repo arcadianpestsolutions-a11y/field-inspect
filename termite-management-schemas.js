@@ -291,7 +291,7 @@
           options: ['3 months', '6 months', '12 months'], default: '12 months',
         },
         { id: 'quotedAmount', label: 'Quoted amount (inc GST)', type: 'text', required: true },
-        { id: 'quoteValidUntil', label: 'Quote valid until', type: 'date' },
+        { id: 'quoteValidUntil', label: 'Quote valid until', type: 'date', future: true },
       ],
     },
     {
@@ -516,7 +516,8 @@
           id: 'reinspectionInterval', label: 'Inspection interval required to maintain the warranty',
           type: 'select', required: true, options: ['3 months', '6 months', '12 months'], default: '12 months',
         },
-        { id: 'nextInspectionDue', label: 'Next inspection due', type: 'date', required: true },
+        // `future: true` (v192): a date that is ahead by nature gets no "Today" chip.
+        { id: 'nextInspectionDue', label: 'Next inspection due', type: 'date', required: true, future: true },
         // v9, cl 5.9 (e) and (g): the scope of future inspections (not only
         // how often), and advice for maintaining the system.
         {
@@ -659,7 +660,7 @@
           options: ['Monthly — termites feeding', 'Every 6 weeks', 'Every 2 months', 'Every 3 months (the maximum)'],
           default: 'Every 3 months (the maximum)',
         },
-        { id: 'nextServiceDue', label: 'Next monitoring visit due', type: 'date', required: true },
+        { id: 'nextServiceDue', label: 'Next monitoring visit due', type: 'date', required: true, future: true },
         { id: 'serviceNotes', label: 'Notes', type: 'textarea', aiFillable: true },
       ],
     },

@@ -1002,11 +1002,12 @@
 <!-- Vendored, not CDN-loaded. These are render-blocking scripts that run before
      any app code, so an unreachable or slow CDN at a job site means a blank
      screen, not a degraded one. Serving them from the same origin also lets the
-     service worker cache them, which is what makes PDF export work offline. -->
+     service worker cache them, which is what makes PDF export work offline.
+     vendor/html2pdf.bundle.min.js (885 KB) and vendor/jsqr.min.js (128 KB) are
+     not here: Common.ensureHtml2pdf and qr-scan.js fetch them the first time a
+     PDF is made or a sticker is read (v192). Both stay in sw.js. -->
 <script src="vendor/supabase.min.js"></script>
-<script src="vendor/html2pdf.bundle.min.js"></script>
 <script src="vendor/qrcode.min.js"></script>
-<script src="vendor/jsqr.min.js"></script>
 <script src="supabase-config.js"></script>
 <!-- Before every module that asks the technician a question: on an
      installed iOS home-screen app, native confirm/prompt never appear. -->

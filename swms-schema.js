@@ -450,7 +450,7 @@ const SWMS_SCHEMA = [
       // there to give.
       { id: 'siteContactName', label: 'Site contact / principal contractor name', type: 'text' },
       { id: 'siteContactSignature', label: 'Site contact signature', type: 'signature' },
-      { id: 'reviewDate', label: 'Review due', type: 'date' },
+      { id: 'reviewDate', label: 'Review due', type: 'date', future: true },
     ],
   },
 ];
