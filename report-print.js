@@ -498,8 +498,7 @@
     if (clientLayoutFor(job, report)) return window.ReportClient.generatePdfBlob(job, report);
     if (!window.html2pdf) throw new Error('PDF library not loaded');
     const trackedUrls = [];
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;overflow:auto;';
+    const overlay = window.Common.pdfSheet();
     const container = document.createElement('div');
     container.style.width = '800px';
     container.style.margin = '0 auto';

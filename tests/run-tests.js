@@ -3570,10 +3570,13 @@
       // the zone box only matters from the second shot on.
       assert(!doc.getElementById('inspection-prompt').classList.contains('hidden'),
         'the front-of-property prompt is showing');
+      // The stage hint overprinted the prompt on short phones; while the
+      // prompt is up, the prompt is the only text on the stage.
+      const stageHint = doc.getElementById('inspection-stage-hint');
+      assertEqual(win.getComputedStyle(stageHint).display, 'none', 'the stage hint stays out of the way of the prompt');
       await snap(win, doc);
       assert(doc.getElementById('inspection-prompt').classList.contains('hidden'),
         'and it clears once that photo is taken');
-
       // Then photograph two subjects, tagging the zone for each.
       setValue(zoneInput, 'Subfloor');
       await snap(win, doc);
@@ -12014,6 +12017,54 @@
     assert(/inputMode: 'tel', maxLength: 20/.test(fr), 'the enquiry phone gets the number keyboard and a limit');
   });
 
+  test('Inputs: a box that is full says so instead of cutting the text in silence', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const toastEl = doc.getElementById('toast');
+    const name = doc.getElementById('job-name');
+    const type = (value) => { name.value = value; name.dispatchEvent(new win.Event('input', { bubbles: true })); };
+    toastEl.textContent = '';
+    type('a'.repeat(119));
+    assert(!/as much as this box holds/.test(toastEl.textContent), 'one short of the limit says nothing');
+    type('a'.repeat(120));
+    assert(/as much as this box holds \(120 characters\)/.test(toastEl.textContent), `at the limit it says so: "${toastEl.textContent}"`);
+    toastEl.textContent = '';
+    type('a'.repeat(120));
+    assert(!/as much as this box holds/.test(toastEl.textContent), 'and says it once, not on every keystroke');
+    type('a'.repeat(10));
+    type('a'.repeat(120));
+    assert(/as much as this box holds/.test(toastEl.textContent), 'a fresh filling is told again');
+    type('');
+    toastEl.textContent = '';
+  });
+
+  test('Demo mode: the address lookup never leaves the phone', async () => {
+    const win = frame.contentWindow;
+    const realFetch = win.fetch;
+    const wasDemo = win.IS_DEMO;
+    let calls = 0;
+    win.fetch = async (...args) => { calls++; return realFetch.apply(win, args); };
+    const job = await win.DB.addJob({ name: 'Demo Lookup Job', address: '14 Wattle Grove, Ingleburn NSW 2565', addressLat: -33.9989, addressLng: 150.8671 });
+    try {
+      win.IS_DEMO = true;
+      const hits = await win.Geo.searchAddressCandidates('wattle grove');
+      assertEqual(calls, 0, 'nothing was fetched');
+      assertEqual(hits.length, 1, 'the demo job is offered');
+      assertEqual(hits[0].display_name, '14 Wattle Grove, Ingleburn NSW 2565', 'by its address');
+      assertEqual(parseFloat(hits[0].lat), -33.9989, 'with its map position');
+      const none = await win.Geo.searchAddressCandidates('99 Nowhere Lane');
+      assertEqual(none.length, 0, 'an unknown address finds nothing, and still nothing was fetched');
+      assertEqual(calls, 0, 'no network at all');
+      const coords = await win.Geo.geocodeAddress('14 Wattle Grove, Ingleburn');
+      assertEqual(coords && coords.lat, -33.9989, 'geocoding goes the same local way');
+      assertEqual(calls, 0, 'still no network');
+    } finally {
+      win.IS_DEMO = wasDemo;
+      win.fetch = realFetch;
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
   test('Registration: job-details.js is in the page and the offline shell', async () => {
     const idx = await (await fetch('../index.html', { cache: 'reload' })).text();
     const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
@@ -16829,7 +16880,11 @@
       clientDetails: { propertyAddress: '3 Paper St, Camden NSW 2570', inspectionDate: '2026-11-12' },
       findings: { liveTermitesFound: 'No', workingsFound: 'No' },
     });
-    const blob = await win.ReportClient.generatePdfBlob(job, report);
+    const making = win.ReportClient.generatePdfBlob(job, report);
+    await wait(30);
+    const banner = win.document.querySelector('.pdf-sheet-banner');
+    assert(banner && /Making the PDF/.test(banner.textContent), 'while it is drawn, the sheet over the app says what is happening');
+    const blob = await making;
     const head = await blob.slice(0, 5).text();
     assertEqual(head, '%PDF-', 'it is a PDF');
     assert(blob.size > 5000, `with something in it (${blob.size} bytes)`);

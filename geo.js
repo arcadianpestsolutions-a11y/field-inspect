@@ -451,9 +451,33 @@
   // Every address lookup in the app goes through here — the New Job
   // autocomplete and geocodeAddress() below both call this, so the NSW
   // fallback only has to be written once.
+  // The demo never sends what somebody types to a geocoder (break-it run,
+  // 28 Nov 2026). The public demo is for trying the app out, and an address
+  // typed into it is still somebody's address. Suggestions come from the
+  // demo's own fictional jobs instead, which carry coordinates, so the map
+  // and the sketch backdrop still work for them. Anything else gets
+  // "No matches found", which is the truth.
+  async function demoCandidates(query) {
+    const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length || !window.DB) return [];
+    const seen = new Set();
+    const out = [];
+    for (const job of await window.DB.getJobs()) {
+      const address = String(job.address || '').trim();
+      if (!address || seen.has(address) || typeof job.addressLat !== 'number' || typeof job.addressLng !== 'number') continue;
+      seen.add(address);
+      const lower = address.toLowerCase();
+      const score = words.filter((w) => lower.includes(w)).length;
+      if (!score) continue;
+      out.push({ score, display_name: address, lat: String(job.addressLat), lon: String(job.addressLng), address: { house_number: (address.match(/^\d+/) || [''])[0] }, source: 'demo' });
+    }
+    return out.sort((a, b) => b.score - a.score).slice(0, 6);
+  }
+
   async function searchAddressCandidates(query, opts) {
+    if (window.IS_DEMO) return demoCandidates(query);
     const signal = opts && opts.signal;
-    const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=au,nz&limit=6&q='
+    const url ='https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=au,nz&limit=6&q='
       + encodeURIComponent(query);
     const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error('address lookup failed');

@@ -676,8 +676,7 @@
     if (!window.html2pdf) throw new Error('PDF library not loaded');
     const trackedUrls = [];
     const captions = await captionsFor(job.id);
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;overflow:auto;';
+    const overlay = window.Common.pdfSheet();
     const style = document.createElement('style');
     style.textContent = STYLE;
     const root = document.createElement('div');

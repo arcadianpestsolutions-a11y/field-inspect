@@ -1035,6 +1035,9 @@ body.dialog-open { overflow: hidden; }
 /* ---------- Small screens ---------- */
 @media (max-width: 340px) {
   .gallery { grid-template-columns: repeat(2, 1fr); }
+  /* Two date boxes side by side cut the year off ("22/11/202") on a 320px
+     phone, so they stack (overnight run, 28 Nov 2026). */
+  .row.gap:has(> .field-row > input[type="date"]) { flex-direction: column; }
 }
 
 /* ---------- Extra buttons / layout utilities ---------- */
@@ -2060,6 +2063,11 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   pointer-events: none;
 }
+/* While the front photo is asked for, the prompt card is the instruction.
+   The stage's own hint sat centred underneath it and the two overprinted
+   each other on any phone shorter than about 700px (overnight run, 28 Nov
+   2026). The hint comes back once the prompt has gone. */
+#inspection-modal.front-pending .inspection-stage-hint { display: none; }
 .inspection-prompt-title { font-size: 1rem; font-weight: 650; color: #f8fafc; }
 .inspection-prompt-sub { font-size: 0.8rem; line-height: 1.35; color: rgba(226, 232, 240, 0.82); }
 
