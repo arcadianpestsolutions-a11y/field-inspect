@@ -187,9 +187,10 @@
     if (!w) { if (window.appToast) window.appToast('Allow pop-ups to print the register'); return; }
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(fileStem())}</title>
       <style>${PRINT_STYLE}</style></head><body>
-      <p class="no-print"><button onclick="window.print()">Print / Save as PDF</button></p>
+      <p class="no-print"><button type="button" data-print>Print / Save as PDF</button></p>
       ${buildPrintHtml()}</body></html>`);
     w.document.close();
+    window.Common.wirePrint(w);
   }
 
   async function open() {

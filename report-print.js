@@ -16,8 +16,9 @@
 //
 // SECURITY: every piece of text goes through escapeHtml; stored images
 // (signature, sketch) go through HtmlSafe.imageSrc, which only accepts a
-// base64 png/jpeg/webp data URL. The print window uses document.write and an
-// inline onclick="window.print()", confined to that window.
+// base64 png/jpeg/webp data URL. The print window uses document.write; its
+// Print button is wired with addEventListener, because the window inherits
+// the app's CSP and an inline onclick is refused.
 //
 // EXPOSES: window.ReportPrint
 // ===========================================================================
@@ -458,18 +459,28 @@
       </div>`;
   }
 
+  // The client layout (report-client.js) takes over a document once it is
+  // switched on for it. Until then, and for every document it does not set
+  // out yet, this file prints it as it always has.
+  const clientLayoutFor = (job, report) => !!(window.ReportClient && window.ReportClient.isLive && window.ReportClient.isLive(job, report));
+
   function openPrintWindow(job, report) {
+    if (clientLayoutFor(job, report)) return window.ReportClient.open(job, report);
     const printWin = window.open('', '_blank');
     if (!printWin) { toast('Allow pop-ups to export the PDF'); return; }
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(reportTitleFor(job && job.jobType, report))}</title>
       <style>${REPORT_PDF_STYLE}</style></head><body>
-      <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>
+      <p><button type="button" class="no-print" data-print>Print / Save as PDF</button></p>
       ${buildReportBodyHtml(job, report)}
       </body></html>`;
 
     printWin.document.write(html);
     printWin.document.close();
+    // Wired from here (v188): the window inherits the app's CSP, which
+    // refuses an onclick="" attribute, so the button did nothing.
+    const btn = printWin.document.querySelector('[data-print]');
+    if (btn) btn.addEventListener('click', () => printWin.print());
   }
 
   // Renders the report and rasterizes it into a real PDF Blob via
@@ -484,6 +495,7 @@
   // "Generating…" backdrop, since it's only up for well under a second) —
   // the reliable pattern for this, not a cosmetic choice.
   async function generateReportPdfBlob(job, report) {
+    if (clientLayoutFor(job, report)) return window.ReportClient.generatePdfBlob(job, report);
     if (!window.html2pdf) throw new Error('PDF library not loaded');
     const trackedUrls = [];
     const overlay = document.createElement('div');

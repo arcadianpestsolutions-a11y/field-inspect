@@ -669,9 +669,10 @@
     if (!w) { toast('Allow pop-ups to print the invoice'); return; }
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(current.number)}</title>
       <style>${INVOICE_STYLE}</style></head><body>
-      <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>
+      <p><button type="button" class="no-print" data-print>Print / Save as PDF</button></p>
       ${buildInvoiceHtml()}</body></html>`);
     w.document.close();
+    window.Common.wirePrint(w);
   });
 
   // Same on-screen-overlay approach report.js uses — html2canvas captures from

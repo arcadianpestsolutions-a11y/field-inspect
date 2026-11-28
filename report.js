@@ -30,9 +30,10 @@
 // STORAGE: IndexedDB through DB.* (reports, section drafts, captures, jobs).
 // SECURITY: all interpolated text goes through HtmlSafe.escape; stored images
 //   (signature, sketch) go through HtmlSafe.imageSrc, which only accepts a
-//   base64 png/jpeg/webp data URL. The print window uses document.write and an
-//   inline onclick="window.print()" - both confined to that window, which
-//   contains only markup built here.
+//   base64 png/jpeg/webp data URL. The print window uses document.write,
+//   confined to that window, which contains only markup built here; its
+//   Print button is wired with addEventListener (the window inherits the
+//   app's CSP, which refuses an inline onclick).
 // TESTS: tests/run-tests.js (report, gate, schema, print groups).
 // KNOWN DEBT: still 3,600 lines in one closure. The print view
 //   (report-print.js, v127) and the site sketch pad (report-sketch.js, v128)

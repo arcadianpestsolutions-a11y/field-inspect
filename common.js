@@ -68,5 +68,14 @@
     return false;
   }
 
-  window.Common = { toast, askConfirm, askPrompt, el, escapeHtml, fmtDay, money, pad2, adminOnlyDelete };
+  // The "Print / Save as PDF" button in a print window (a report, an invoice,
+  // the chemical register, an SOP). Wired from here: the window inherits the
+  // app's Content-Security-Policy, which refuses onclick="" (v186), and the
+  // buttons silently did nothing until v188.
+  function wirePrint(win) {
+    if (!win || !win.document) return;
+    for (const btn of win.document.querySelectorAll('[data-print]')) btn.addEventListener('click', () => win.print());
+  }
+
+  window.Common = { toast, askConfirm, askPrompt, el, escapeHtml, fmtDay, money, pad2, adminOnlyDelete, wirePrint };
 })();

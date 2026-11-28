@@ -16745,10 +16745,95 @@
       await win.DB.deleteJob(pest.id);
       await win.showJobListView();
     }
-    const print = await (await fetch('../report-print.js', { cache: 'reload' })).text();
-    assert(!print.includes('ReportClient'), 'the current print, email and client page do not use the new layout yet');
+    // v188: wired, and switched off until Tal approves the wording.
+    assertEqual(win.ReportClient.LIVE, false, 'the new layout is not switched on: the print, email and client page use the current one');
+    assert(!win.ReportClient.isLive({ jobType: 'termite' }, { documentType: 'timber_pest_inspection', sections: {} }), 'so it is never live for an inspection');
     const sw = await (await fetch('../sw.js', { cache: 'reload' })).text();
     assert(sw.includes("'./report-client.js'"), 'the new file is cached for a start with no signal');
+  });
+
+  test('Client report: once switched on, Export and the emailed PDF use it; until then they do not', async () => {
+    const win = frame.contentWindow;
+    const R = win.ReportClient;
+    const P = win.ReportPrint;
+    const job = { id: 'cr-route', jobType: 'termite', name: 'Route House' };
+    const report = clientReport({ findings: { liveTermitesFound: 'No' } });
+    const real = { isLive: R.isLive, gen: R.generatePdfBlob, open: R.open };
+    const calls = [];
+    try {
+      R.generatePdfBlob = async () => { calls.push('client pdf'); return new win.Blob(['%PDF-client']); };
+      R.open = () => { calls.push('client window'); return null; };
+      R.isLive = () => true;
+      const blob = await P.generatePdfBlob(job, report);
+      assertEqual(await blob.text(), '%PDF-client', 'switched on: the emailed PDF (and the client page copy) is the new layout');
+      P.openPrintWindow(job, report);
+      assertEqual(calls.join(), 'client pdf,client window', 'and Export opens it');
+      R.isLive = () => false;
+      calls.length = 0;
+      const realOpen = win.open;
+      win.open = () => null; // the current print asks for pop-ups; nothing opens here
+      try { P.openPrintWindow(job, report); } finally { win.open = realOpen; }
+      assertEqual(calls.length, 0, 'switched off: the current print is used');
+    } finally {
+      R.isLive = real.isLive; R.generatePdfBlob = real.gen; R.open = real.open;
+    }
+  });
+
+  test('Client report: its styles stay inside the report, so making the PDF cannot restyle the app', () => {
+    const win = frame.contentWindow;
+    const css = win.ReportClient.STYLE.replace(/\/\*[\s\S]*?\*\//g, '');
+    const selectors = css.split('}').map((r) => r.split('{')[0].trim()).filter(Boolean);
+    assert(selectors.length > 30, `the stylesheet is read (${selectors.length} rules)`);
+    const loose = [];
+    for (const group of selectors) for (const s of group.split(',')) if (!s.trim().startsWith('.cr-root')) loose.push(s.trim());
+    assertEqual(loose.join(' | '), '', 'every rule is under .cr-root (body and h2 used to apply to the whole app)');
+  });
+
+  test('Client report: one-line conditions share a list; ones with words or photos keep their own box', () => {
+    const win = frame.contentWindow;
+    const job = { id: 'cr-conds', jobType: 'termite', name: 'Conditions House' };
+    const report = clientReport({
+      conducive: { ventilation: 'Inadequate', weepHolesClear: 'No', siteDrainage: 'Inadequate', gardenBedsAgainstWall: 'Yes', gardenBedsDetails: 'Mulch against the east wall.' },
+    });
+    const html = win.ReportClient.buildHtml(job, report, {});
+    const part = html.slice(html.indexOf('<h2>Conditions that attract termites</h2>'), html.indexOf('<h2>What we could not inspect</h2>'));
+    assert(/<h3>Garden beds against the walls<\/h3>[\s\S]*Mulch against the east wall\./.test(part), 'a condition with the inspector’s words has its own box');
+    assert(part.includes('<h3>Also found (3)</h3>') && (part.match(/<li><strong>/g) || []).length === 3, 'the three one-liners share one list');
+    assert(part.includes('Weep holes are not clear and visible.'), 'each still with its full sentence');
+  });
+
+  test('Print windows: the Print button is wired without inline script, which the app’s CSP refuses', async () => {
+    const win = frame.contentWindow;
+    for (const file of ['report-print.js', 'report-client.js', 'invoice-ui.js', 'chem-register-ui.js', 'sops-ui.js']) {
+      const src = await (await fetch('../' + file, { cache: 'reload' })).text();
+      const code = src.replace(/\/\/.*$/gm, '');
+      assert(!/onclick\s*=/.test(code), `${file}: no onclick="" (it silently did nothing since v186)`);
+    }
+    const f = win.document.createElement('iframe');
+    win.document.body.appendChild(f);
+    try {
+      const d = f.contentDocument;
+      d.open(); d.write('<!DOCTYPE html><html><body><button data-print>Print</button></body></html>'); d.close();
+      let printed = 0;
+      f.contentWindow.print = () => { printed++; };
+      win.Common.wirePrint(f.contentWindow);
+      d.querySelector('[data-print]').click();
+      assertEqual(printed, 1, 'the button prints');
+    } finally { f.remove(); }
+  });
+
+  test('Client report: the PDF is a real, numbered A4 document', async () => {
+    const win = frame.contentWindow;
+    const job = { id: 'cr-pdf', jobType: 'termite', name: 'PDF House', address: '3 Paper St, Camden NSW 2570' };
+    const report = clientReport({
+      clientDetails: { propertyAddress: '3 Paper St, Camden NSW 2570', inspectionDate: '2026-11-12' },
+      findings: { liveTermitesFound: 'No', workingsFound: 'No' },
+    });
+    const blob = await win.ReportClient.generatePdfBlob(job, report);
+    const head = await blob.slice(0, 5).text();
+    assertEqual(head, '%PDF-', 'it is a PDF');
+    assert(blob.size > 5000, `with something in it (${blob.size} bytes)`);
+    assert(!win.document.querySelector('.cr-root'), 'and nothing is left on the app screen afterwards');
   });
 
   async function runAll() {

@@ -310,8 +310,9 @@
     const w = window.open('', '_blank');
     if (!w) { toast('Allow pop-ups to print'); return; }
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PRINT_STYLE}</style></head><body>
-      <p><button class="no-print" onclick="window.print()">Print / Save as PDF</button></p>${html}</body></html>`);
+      <p><button type="button" class="no-print" data-print>Print / Save as PDF</button></p>${html}</body></html>`);
     w.document.close();
+    window.Common.wirePrint(w);
   }
 
   function printSop(s, { superseded } = {}) {

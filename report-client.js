@@ -7,8 +7,11 @@
 // inspected, then the detail, the agreement and the terms.
 //
 // NOTHING SENDS THIS YET. Export, email and the client page still use
-// report-print.js. This is offered beside them on the report screen so the
-// two can be compared on a real report before one replaces the other.
+// report-print.js. This is offered beside them on the report screen (a
+// preview, and the PDF exactly as it would be emailed) so the two can be
+// compared on a real report before one replaces the other. Everything is
+// wired (v188): setting LIVE to true below switches all three over for the
+// documents supports() names, once Tal has approved the wording.
 //
 // WORDING. Every sentence about a finding is written out in full below, taken
 // from the question on the form, and keeps the "found at the time of
@@ -278,53 +281,70 @@
   }
 
   // ---------- The document ----------
+  // Every rule is under .cr-root (v188), because the emailed PDF is drawn
+  // inside the app's own page: unscoped, "body" and "h2" here restyled the
+  // app behind it for as long as the PDF took to make.
   const STYLE = `
-    *{box-sizing:border-box;}
-    body{margin:0;background:#eef1ee;color:#1c2a23;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14.5px;line-height:1.5;}
-    .sheet{max-width:820px;margin:0 auto;background:#fff;padding:28px 32px 40px;}
-    .bar{max-width:820px;margin:0 auto;padding:10px 32px;background:#fff8e1;border-bottom:1px solid #e6d9a8;font-size:13px;display:flex;gap:12px;align-items:center;justify-content:space-between;}
-    .bar button{font:inherit;font-weight:600;padding:8px 14px;border-radius:8px;border:1px solid #b9c2bc;background:#fff;cursor:pointer;}
-    .cr-head{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid #0a6b37;}
-    .cr-logo{max-height:64px;max-width:200px;}
-    .cr-biz{font-weight:700;font-size:18px;line-height:1.2;}
-    .cr-kind{color:#5d6d63;font-size:13px;}
-    .cr-cover{display:block;width:100%;max-height:300px;object-fit:cover;border-radius:8px;margin:16px 0 4px;}
-    h1{font-size:24px;line-height:1.25;margin:14px 0 2px;}
-    .cr-when{color:#5d6d63;margin:0 0 2px;}
-    h2{font-size:17px;margin:26px 0 8px;padding-bottom:4px;border-bottom:1px solid #dfe4e0;page-break-after:avoid;}
-    h3{font-size:15px;margin:0 0 4px;}
-    p{margin:0 0 8px;}
-    .glance{list-style:none;margin:0;padding:0;}
-    .glance li{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #eef1ee;page-break-inside:avoid;}
-    .glance strong{display:block;}
-    .dot{flex:none;width:12px;height:12px;border-radius:50%;margin-top:5px;}
-    .dot-good{background:#1f8a4c;} .dot-warn{background:#d98a00;} .dot-bad{background:#c0392b;}
-    .todo{margin:0;padding-left:22px;} .todo li{margin:0 0 6px;}
-    .note{color:#5d6d63;font-size:12.5px;}
-    .finding{border:1px solid #dfe4e0;border-left:4px solid #c0392b;border-radius:8px;padding:12px 14px;margin:0 0 12px;}
-    .finding.warn{border-left-color:#d98a00;} .finding.info{border-left-color:#8a968f;}
-    .said{white-space:pre-wrap;overflow-wrap:anywhere;}
-    .photos{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;}
-    .photos figure{margin:0;page-break-inside:avoid;}
-    .photos img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px;border:1px solid #dfe4e0;}
-    figcaption{font-size:12px;color:#5d6d63;margin-top:3px;}
-    .clear{margin:0;padding-left:22px;} .clear li{margin:0 0 3px;}
-    .facts{width:100%;border-collapse:collapse;font-size:13.5px;}
-    .facts th{width:38%;text-align:left;font-weight:600;color:#5d6d63;vertical-align:top;padding:5px 10px 5px 0;}
-    .facts td{padding:5px 0;white-space:pre-wrap;overflow-wrap:anywhere;}
-    .facts tr{border-bottom:1px solid #eef1ee;}
-    .sig{display:block;max-width:260px;border:1px solid #dfe4e0;margin-top:6px;}
-    .sketch{display:block;max-width:100%;border:1px solid #dfe4e0;border-radius:6px;}
-    .terms{font-size:12px;color:#33413a;}
-    .break{page-break-before:always;}
+    .cr-root,.cr-root *{box-sizing:border-box;}
+    .cr-root{color:#1c2a23;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14.5px;line-height:1.5;text-align:left;}
+    .cr-root .sheet{max-width:820px;margin:0 auto;background:#fff;padding:28px 32px 40px;}
+    .cr-root.cr-pdf .sheet{max-width:none;padding:0;}
+    .cr-root .bar{max-width:820px;margin:0 auto;padding:10px 32px;background:#fff8e1;border-bottom:1px solid #e6d9a8;font-size:13px;display:flex;gap:12px;align-items:center;justify-content:space-between;}
+    .cr-root .bar button{font:inherit;font-weight:600;padding:8px 14px;border-radius:8px;border:1px solid #b9c2bc;background:#fff;cursor:pointer;}
+    .cr-root .cr-head{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid #0a6b37;}
+    .cr-root .cr-logo{max-height:64px;max-width:200px;}
+    .cr-root .cr-biz{font-weight:700;font-size:18px;line-height:1.2;}
+    .cr-root .cr-kind{color:#5d6d63;font-size:13px;}
+    .cr-root .cr-cover{display:block;width:100%;max-height:300px;object-fit:cover;border-radius:8px;margin:16px 0 4px;}
+    .cr-root h1{font-size:24px;line-height:1.25;margin:14px 0 2px;color:inherit;}
+    .cr-root .cr-when{color:#5d6d63;margin:0 0 2px;}
+    .cr-root h2{font-size:17px;margin:26px 0 8px;padding-bottom:4px;border-bottom:1px solid #dfe4e0;page-break-after:avoid;color:inherit;}
+    .cr-root h3{font-size:15px;margin:0 0 4px;color:inherit;}
+    .cr-root p{margin:0 0 8px;}
+    .cr-root .glance{list-style:none;margin:0;padding:0;}
+    .cr-root .glance li{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #eef1ee;page-break-inside:avoid;}
+    .cr-root .glance strong{display:block;}
+    .cr-root .dot{flex:none;width:12px;height:12px;border-radius:50%;margin-top:5px;}
+    .cr-root .dot-good{background:#1f8a4c;} .cr-root .dot-warn{background:#d98a00;} .cr-root .dot-bad{background:#c0392b;}
+    .cr-root .todo{margin:0;padding-left:22px;} .cr-root .todo li{margin:0 0 6px;}
+    .cr-root .note{color:#5d6d63;font-size:12.5px;}
+    .cr-root .finding{border:1px solid #dfe4e0;border-left:4px solid #c0392b;border-radius:8px;padding:12px 14px;margin:0 0 12px;}
+    .cr-root .finding.warn{border-left-color:#d98a00;} .cr-root .finding.info{border-left-color:#8a968f;}
+    .cr-root .conds{list-style:none;margin:0;padding:0;}
+    .cr-root .conds li{padding:6px 0;border-bottom:1px solid #eef1ee;page-break-inside:avoid;}
+    .cr-root .conds li:last-child{border-bottom:none;padding-bottom:0;}
+    .cr-root .conds strong{display:block;}
+    .cr-root .said{white-space:pre-wrap;overflow-wrap:anywhere;}
+    .cr-root .photos{margin-top:10px;}
+    .cr-root .photo-row{display:flex;gap:10px;margin-bottom:10px;page-break-inside:avoid;}
+    .cr-root .photo-row:last-child{margin-bottom:0;}
+    .cr-root .photos figure{margin:0;flex:0 0 calc(50% - 5px);min-width:0;}
+    .cr-root.cr-pdf .cr-cover{max-height:230px;}
+    .cr-root .photos img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px;border:1px solid #dfe4e0;}
+    .cr-root figcaption{font-size:12px;color:#5d6d63;margin-top:3px;}
+    .cr-root .clear{margin:0;padding-left:22px;} .cr-root .clear li{margin:0 0 3px;}
+    .cr-root .facts{width:100%;border-collapse:collapse;font-size:13.5px;}
+    .cr-root .facts th{width:38%;text-align:left;font-weight:600;color:#5d6d63;vertical-align:top;padding:5px 10px 5px 0;}
+    .cr-root .facts td{padding:5px 0;white-space:pre-wrap;overflow-wrap:anywhere;}
+    .cr-root .facts tr{border-bottom:1px solid #eef1ee;page-break-inside:avoid;}
+    .cr-root .sig{display:block;max-width:260px;border:1px solid #dfe4e0;margin-top:6px;}
+    .cr-root .sig-label{font-size:12px;color:#5d6d63;margin:8px 0 0;}
+    .cr-root .sketch{display:block;max-width:100%;border:1px solid #dfe4e0;border-radius:6px;}
+    .cr-root .terms{font-size:12px;color:#33413a;}
+    .cr-root .terms .empty-hint{display:none;}
+    .cr-root .break{page-break-before:always;}
     /* Sections that come from report-print.js (the walk, the amendments). */
-    .section{margin:0 0 12px;} .section-head{background:none !important;padding:0;}
-    .section-head h2{color:inherit;}
-    .field{padding:6px 0;} .field-label{font-weight:600;font-size:13px;color:#5d6d63;} .field-value{font-size:13.5px;}
-    .product-pdf-table,.amendments-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;}
-    .product-pdf-table th,.product-pdf-table td,.amendments-table th,.amendments-table td{border:1px solid #dfe4e0;padding:5px 7px;text-align:left;vertical-align:top;}
-    .product-pdf-table th,.amendments-table th{background:#f4f6f4;}
-    @media print{body{background:#fff;} .sheet{max-width:none;padding:0;} .no-print{display:none !important;}}
+    .cr-root .section{margin:0 0 12px;} .cr-root .section-head{background:none !important;padding:0;}
+    .cr-root .section-head h2{color:inherit;}
+    .cr-root .field{padding:6px 0;} .cr-root .field-label{font-weight:600;font-size:13px;color:#5d6d63;} .cr-root .field-value{font-size:13.5px;}
+    .cr-root .product-pdf-table,.cr-root .amendments-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;}
+    .cr-root .product-pdf-table th,.cr-root .product-pdf-table td,.cr-root .amendments-table th,.cr-root .amendments-table td{border:1px solid #dfe4e0;padding:5px 7px;text-align:left;vertical-align:top;}
+    .cr-root .product-pdf-table th,.cr-root .amendments-table th{background:#f4f6f4;}
+  `;
+  // Only in the report's own window, never inside the app.
+  const PAGE_STYLE = `
+    body{margin:0;background:#eef1ee;}
+    @media print{body{background:#fff;} .cr-root .sheet{max-width:none;padding:0;} .no-print{display:none !important;}}
   `;
 
   // The words printed at the foot of every page, where the browser can do it.
@@ -357,12 +377,17 @@
     const figures = (photos, fallback) => {
       const usable = (Array.isArray(photos) ? photos : []).filter((p) => p && p.blob);
       if (!usable.length) return '';
-      return `<div class="photos">${usable.map((p) => {
+      const one = (p) => {
         const url = URL.createObjectURL(p.blob);
         urls.push(url);
         const cap = captions.get(p.sourceId) || captions.get(p.id) || fallback || '';
         return `<figure><img src="${url}" alt="">${cap ? `<figcaption>${e(cap)}</figcaption>` : ''}</figure>`;
-      }).join('')}</div>`;
+      };
+      // In pairs (v188): a pair is what the PDF keeps together on a page. One
+      // photograph kept whole inside a grid left a hole beside it.
+      let rows = '';
+      for (let i = 0; i < usable.length; i += 2) rows += `<div class="photo-row">${usable.slice(i, i + 2).map(one).join('')}</div>`;
+      return `<div class="photos">${rows}</div>`;
     };
     const para = (text) => (str(text) ? `<p class="said">${e(str(text))}</p>` : '');
     const facts = (rows) => {
@@ -370,7 +395,12 @@
       if (!kept.length) return '';
       return `<table class="facts">${kept.map(([k, v]) => `<tr><th>${e(k)}</th><td>${e(Array.isArray(v) ? v.join(', ') : str(v))}</td></tr>`).join('')}</table>`;
     };
-    const image = (cls, dataUrl) => { const src = window.HtmlSafe.imageSrc(dataUrl); return src ? `<img class="${cls}" src="${src}" alt="">` : ''; };
+    const image = (cls, dataUrl, label) => {
+      const src = window.HtmlSafe.imageSrc(dataUrl);
+      if (!src) return '';
+      // Label and picture are one unit, so a page never ends between them.
+      return `<div class="cr-keep">${label ? `<p class="sig-label">${e(label)}</p>` : ''}<img class="${cls}" src="${src}" alt="${e(label || '')}"></div>`;
+    };
 
     const address = str(client.propertyAddress) || str(job && job.address);
     const when = [fmtDate(client.inspectionDate), fmtTime(client.inspectionTime)].filter(Boolean);
@@ -390,10 +420,10 @@
 
     const lines = glance(report);
     if (lines.length) {
-      html += `<h2>At a glance</h2><ul class="glance">${lines.map((l) => `<li><span class="dot dot-${l.tone}"></span><span><strong>${e(l.title)}</strong>${e(l.text)}</span></li>`).join('')}</ul>`;
+      html += `<div class="cr-keep"><h2>At a glance</h2><ul class="glance">${lines.map((l) => `<li><span class="dot dot-${l.tone}"></span><span><strong>${e(l.title)}</strong>${e(l.text)}</span></li>`).join('')}</ul></div>`;
     }
     const todo = actions(report);
-    if (todo.length) html += `<h2>What to do now</h2><ol class="todo">${todo.map((t) => `<li class="said">${e(t)}</li>`).join('')}</ol>`;
+    if (todo.length) html += `<div class="cr-keep"><h2>What to do now</h2><ol class="todo">${todo.map((t) => `<li class="said">${e(t)}</li>`).join('')}</ol></div>`;
     html += `<p class="note" style="margin-top:14px">This page is a summary. The full report follows, with its terms and conditions, and should be read with it.</p>`;
     if (str(insp.inspectorName)) {
       html += `<p class="note">Inspector: ${e(str(insp.inspectorName))}${str(insp.inspectorLicence) ? `, licence ${e(str(insp.inspectorLicence))}` : ''}${org.providerName ? `, for ${e(org.providerName)}` : ''}.</p>`;
@@ -401,7 +431,13 @@
 
     // ---- what we found ----
     let found = '';
-    const block = (tone, heading, body) => { found += `<div class="finding${tone === 'bad' ? '' : ` ${tone}`}"><h3>${e(heading)}</h3>${body}</div>`; };
+    // A finding with no photographs is kept whole on one page (v188); one
+    // with photographs breaks between its pairs of pictures.
+    const findingBox = (tone, heading, body) => {
+      const keep = body.includes('class="photos"') ? '' : ' cr-keep';
+      return `<div class="finding${tone === 'bad' ? '' : ` ${tone}`}${keep}"><h3>${e(heading)}</h3>${body}</div>`;
+    };
+    const block = (tone, heading, body) => { found += findingBox(tone, heading, body); };
     if (f.liveTermitesFound === 'Yes') {
       block('bad', 'Live termites', `<p>${e(SAID.live.yes + where(f.liveTermitesAreas))}</p>`
         + facts([['Species', f.termiteSpecies], ['Potential for associated damage', f.riskOfAssociatedDamage]])
@@ -436,20 +472,30 @@
     }
     const general = figures(f.findingsPhotos, '');
     const none = cleared(report);
-    html += `<h2 class="break">What we found</h2>${found || '<p>No findings were recorded that need your attention.</p>'}${general}`;
+    html += `<h2 class="break cr-found">What we found</h2>${found || '<p>No findings were recorded that need your attention.</p>'}${general}`;
     if (none.length) html += `<h3 style="margin-top:14px">Looked for and not found</h3><ul class="clear">${none.map((s) => `<li>${e(s)}</li>`).join('')}</ul>`;
 
     // ---- conditions ----
     const conds = conduciveFound(report);
     html += `<h2>Conditions that attract termites</h2>`;
     if (conds.length) {
-      html += conds.map((x) => `<div class="finding warn"><h3>${e(x.name)}</h3><p>${e(x.said)}</p>${para(x.details)}${x.photos ? figures(c[x.photos], x.name) : ''}</div>`).join('');
+      // One with photographs or the inspector's own words gets a box of its
+      // own; the rest, a single sentence each, share one list (v188: ten
+      // one-line boxes filled two pages).
+      const hasPhotos = (x) => x.photos && Array.isArray(c[x.photos]) && c[x.photos].some((p) => p && p.blob);
+      const full = conds.filter((x) => str(x.details) || hasPhotos(x));
+      const brief = conds.filter((x) => !full.includes(x));
+      html += full.map((x) => findingBox('warn', x.name, `<p>${e(x.said)}</p>${para(x.details)}${x.photos ? figures(c[x.photos], x.name) : ''}`)).join('');
+      if (brief.length) {
+        html += `<div class="finding warn cr-keep">${full.length ? `<h3>${brief.length === 1 ? 'Also found' : `Also found (${brief.length})`}</h3>` : ''}`
+          + `<ul class="conds">${brief.map((x) => `<li><strong>${e(x.name)}</strong>${e(x.said)}</li>`).join('')}</ul></div>`;
+      }
     } else {
       html += `<p>None were recorded.</p>`;
     }
     const treeFigures = figures(c.treePhotos, 'Trees near the property');
     if (str(c.treeAssessmentNotes) || treeFigures) {
-      html += `<div class="finding info"><h3>Trees near the property</h3>${para(c.treeAssessmentNotes)}${treeFigures}</div>`;
+      html += findingBox('info', 'Trees near the property', `${para(c.treeAssessmentNotes)}${treeFigures}`);
     }
     html += figures(c.conducivePhotos, '');
 
@@ -532,7 +578,7 @@
       ['Accepted by', agr.agreementAcceptedBy],
       ['Date agreed', fmtDate(agr.agreementAcceptedAt)],
       ['Access limitations agreed beforehand', agr.agreedAccessLimitations],
-    ]) + image('sig', agr.agreementSignature);
+    ]) + image('sig', agr.agreementSignature, "Client's signature on the agreement");
 
     if (P && P.termsHtmlFor) html += `<h2>Terms and conditions</h2><div class="terms">${P.termsHtmlFor(report)}</div>`;
 
@@ -542,14 +588,14 @@
       ['Phone', insp.inspectorPhone],
       ['Signed on behalf of', org.signedOnBehalfOf],
       ['Date', fmtDate(insp.signatureDate)],
-    ]) + image('sig', insp.inspectorSignature);
+    ]) + image('sig', insp.inspectorSignature, "Inspector's signature");
     const ackFacts = facts([
       ['Client acknowledgement', ack.ackStatus],
       ['Note', ack.ackStatus === 'Client not on site' ? ack.ackNotSignedNote : ''],
       ['Client', ack.clientAckName],
       ['Date', fmtDate(ack.clientAckDate)],
     ]);
-    if (ackFacts) html += ackFacts + image('sig', ack.clientSignature);
+    if (ackFacts) html += ackFacts + image('sig', ack.clientSignature, "Client's signature");
 
     if (P && P.buildAmendmentsAppendixHtml) html += P.buildAmendmentsAppendixHtml(report);
     return html;
@@ -567,24 +613,117 @@
     return map;
   }
 
-  // Opens the preview in its own window, the way Export does. Opened first,
-  // filled second: a window opened after an await is treated as a pop-up.
-  async function open(job, report) {
-    const win = window.open('', '_blank');
-    if (!win) { toast('Allow pop-ups to see the preview'); return null; }
-    const captions = await captionsFor(job.id);
-    const client = sec(report, 'clientDetails');
-    const address = str(client.propertyAddress) || str(job.address);
+  // ---------- Switched on? ----------
+  // LIVE stays false until Tal has read and approved the fixed sentences
+  // above (SAID, actions(), glance(), conduciveFound()). While it is false,
+  // Export, the emailed PDF and the copy on the client's page all use
+  // report-print.js, and this layout is only the preview on the report
+  // screen. Flipping it is the whole switch-over: report-print.js asks
+  // isLive() before printing anything.
+  const LIVE = false;
+  function isLive(job, report) { return LIVE && supports(job, report); }
+
+  const titleFor = (report) => {
     const U = window.ReportSchemaUtils;
-    const title = (U && U.inspectionStandard) ? U.inspectionStandard(report).title : 'Termite Inspection Report';
-    win.document.write(`<!DOCTYPE html><html lang="en-AU"><head><meta charset="utf-8">`
+    return (U && U.inspectionStandard) ? U.inspectionStandard(report).title : 'Termite Inspection Report';
+  };
+  const addressFor = (job, report) => str(sec(report, 'clientDetails').propertyAddress) || str(job && job.address);
+
+  // The whole document for its own window. `preview` adds the yellow bar
+  // saying it is not what clients get yet.
+  function pageHtml(job, report, o) {
+    const opts = o || {};
+    const client = sec(report, 'clientDetails');
+    const bar = `<div class="bar no-print">${opts.preview ? '<span>Preview of the new client layout. Reports are still sent in the current layout.</span>' : '<span></span>'}`
+      + `<button type="button" data-print>Print / Save as PDF</button></div>`;
+    return `<!DOCTYPE html><html lang="en-AU"><head><meta charset="utf-8">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
-      + `<title>${escapeHtml(title)}</title><style>${STYLE}${pageRule(address, fmtDate(client.inspectionDate))}</style></head><body>`
-      + `<div class="bar no-print"><span>Preview of the new client layout. Reports are still sent in the current layout.</span>`
-      + `<button onclick="window.print()">Print / Save as PDF</button></div>`
-      + `<div class="sheet">${buildHtml(job, report, { captions })}</div></body></html>`);
+      + `<title>${escapeHtml(titleFor(report))}</title><style>${STYLE}${PAGE_STYLE}${pageRule(addressFor(job, report), fmtDate(client.inspectionDate))}</style></head><body>`
+      + `<div class="cr-root">${bar}<div class="sheet">${buildHtml(job, report, { captions: opts.captions })}</div></div></body></html>`;
+  }
+
+  // The Print button is wired from here, not with onclick="": the window
+  // opened from the app inherits its Content-Security-Policy, which refuses
+  // inline script (v186), so an onclick button silently did nothing.
+  function wirePrintButton(win) {
+    const btn = win.document.querySelector('[data-print]');
+    if (btn) btn.addEventListener('click', () => win.print());
+  }
+
+  // Opens the report in its own window, the way Export does. Opened first,
+  // filled second: a window opened after an await is treated as a pop-up.
+  async function open(job, report, o) {
+    const opts = o || {};
+    const win = window.open('', '_blank');
+    if (!win) { toast(opts.preview ? 'Allow pop-ups to see the preview' : 'Allow pop-ups to export the PDF'); return null; }
+    const captions = await captionsFor(job.id);
+    win.document.write(pageHtml(job, report, { captions, preview: opts.preview }));
     win.document.close();
+    wirePrintButton(win);
     return win;
+  }
+
+  // The PDF that is emailed and put on the client's page: the same document,
+  // drawn inside the app (html2pdf needs it on screen; see report-print.js
+  // generateReportPdfBlob for why) and numbered at the foot of every page
+  // with the address and the date, which html2pdf cannot do from CSS.
+  // The page is drawn at this width. html2pdf copies it into a box as wide as
+  // A4 inside the margins (186 mm, about 703 px) and anything wider is cut
+  // off, so it must stay under that.
+  const PDF_WIDTH = 700;
+
+  async function generatePdfBlob(job, report) {
+    if (!window.html2pdf) throw new Error('PDF library not loaded');
+    const trackedUrls = [];
+    const captions = await captionsFor(job.id);
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;overflow:auto;';
+    const style = document.createElement('style');
+    style.textContent = STYLE;
+    const root = document.createElement('div');
+    root.className = 'cr-root cr-pdf';
+    root.style.cssText = `width:${PDF_WIDTH}px;margin:0;background:#fff;`;
+    root.innerHTML = `<div class="sheet">${buildHtml(job, report, { captions, trackedUrls })}</div>`;
+    overlay.append(style, root);
+    document.body.appendChild(overlay);
+    try {
+      await Promise.all(Array.from(root.querySelectorAll('img')).map((img) => (img.complete ? null : new Promise((resolve) => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      }))));
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      // The summary has a page to itself only when it fits on one: one that
+      // ran onto page 2 left the rest of page 2 empty before "What we found".
+      const pagePx = PDF_WIDTH * ((297 - 12 - 16) / (210 - 12 - 12));
+      const foundHead = root.querySelector('.cr-found');
+      if (foundHead && foundHead.getBoundingClientRect().top - root.getBoundingClientRect().top > pagePx) foundHead.classList.remove('break');
+      const footLeft = [addressFor(job, report), fmtDate(sec(report, 'clientDetails').inspectionDate)].filter(Boolean).join('  ·  ');
+      const worker = window.html2pdf().set({
+        margin: [12, 12, 16, 12],
+        filename: 'report.pdf',
+        image: { type: 'jpeg', quality: 0.92 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'], avoid: ['.cr-keep', '.photo-row', '.glance li', '.conds li', '.facts tr', '.sig', '.sig-label', 'h2', 'h3'] },
+      }).from(root).toPdf();
+      const pdf = await worker.get('pdf');
+      const pages = pdf.internal.getNumberOfPages();
+      const w = pdf.internal.pageSize.getWidth();
+      const h = pdf.internal.pageSize.getHeight();
+      for (let i = 1; i <= pages; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(93, 109, 99);
+        // jsPDF's built-in fonts cannot draw every character a name can hold;
+        // the address is kept to plain text so the footer never comes out garbled.
+        pdf.text(footLeft.replace(/[^\x20-\x7E·]/g, '').slice(0, 110), 12, h - 8);
+        pdf.text(`Page ${i} of ${pages}`, w - 12, h - 8, { align: 'right' });
+      }
+      return pdf.output('blob');
+    } finally {
+      overlay.remove();
+      trackedUrls.forEach((url) => URL.revokeObjectURL(url));
+    }
   }
 
   // The button on the report screen. Built here, not in index.html, so a
@@ -600,12 +739,48 @@
     btn.id = 'client-preview-btn';
     btn.className = 'btn btn-outline full';
     btn.textContent = 'Preview the new client layout';
-    btn.addEventListener('click', () => { open(job, report).catch((err) => { if (window.ErrorLog) window.ErrorLog.note(err, 'client report: preview'); toast('The preview could not be opened.'); }); });
+    btn.addEventListener('click', () => { open(job, report, { preview: true }).catch((err) => { if (window.ErrorLog) window.ErrorLog.note(err, 'client report: preview'); toast('The preview could not be opened.'); }); });
     anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+
+    // The PDF exactly as it would be emailed (v188), to compare with the one
+    // clients get today before switching over.
+    const oldSave = document.getElementById('client-preview-pdf-btn');
+    if (oldSave) oldSave.remove();
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.id = 'client-preview-pdf-btn';
+    save.className = 'link-btn full';
+    save.textContent = 'Save the new layout as a PDF';
+    save.addEventListener('click', async () => {
+      if (save.disabled) return;
+      save.disabled = true;
+      const label = save.textContent;
+      save.textContent = 'Making the PDF…';
+      try {
+        const blob = await generatePdfBlob(job, report);
+        const name = `${(addressFor(job, report) || 'Report').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)} - new layout.pdf`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        toast('PDF saved (new layout)');
+      } catch (err) {
+        if (window.ErrorLog) window.ErrorLog.note(err, 'client report: save PDF');
+        toast('The PDF could not be made: ' + (err.message || err));
+      } finally {
+        save.disabled = false;
+        save.textContent = label;
+      }
+    });
+    btn.parentNode.insertBefore(save, btn.nextSibling);
   }
 
   window.ReportClient = {
-    supports, glance, actions, cleared, conduciveFound, buildHtml, open, renderPreviewButton,
-    fmtDate, fmtTime, dueBy, SAID, STYLE,
+    supports, isLive, LIVE, glance, actions, cleared, conduciveFound, buildHtml, pageHtml, open, generatePdfBlob,
+    renderPreviewButton, wirePrintButton, fmtDate, fmtTime, dueBy, SAID, STYLE,
   };
 })();
