@@ -249,6 +249,7 @@
 
   async function deleteStatement() {
     if (!current) return;
+    if (!(await window.Common.adminOnlyDelete('a safety statement'))) return;
     const ok = await askConfirm(
       `${statementLabel(current)} will be deleted. If it was handed to a builder or a site, `
       + 'they keep their copy — this only removes yours.',

@@ -294,6 +294,7 @@
   }
 
   async function removeClient() {
+    if (!(await window.Common.adminOnlyDelete('a client'))) return;
     const jobs = await DB.getJobsForClient(current.id);
     const ok = await askConfirm(
       jobs.length

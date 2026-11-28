@@ -302,7 +302,7 @@ input:focus, textarea:focus {
   margin: 4px 0 0;
 }
 .build-version-label {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -414,7 +414,7 @@ input:focus, textarea:focus {
 }
 
 .job-item-type {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -573,7 +573,7 @@ input:focus, textarea:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 /* ---------- Zone coverage chips ---------- */
@@ -608,7 +608,7 @@ input:focus, textarea:focus {
   color: var(--text-dim);
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -644,7 +644,7 @@ input:focus, textarea:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: transparent;
   z-index: 2;
 }
@@ -1075,7 +1075,7 @@ select {
   align-items: center;
   padding: 4px 10px;
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -1282,7 +1282,7 @@ select {
 .identify-pest-sci { font-weight: 400; font-style: italic; color: var(--text-dim); }
 .identify-pest-confidence {
   align-self: flex-start;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1400,7 +1400,7 @@ select {
   margin: 16px 0 4px;
 }
 .xero-pill {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   padding: 4px 10px;
   border-radius: 999px;
@@ -1771,7 +1771,7 @@ select {
 .backlog-count {
   background: var(--warning); color: var(--accent-ink);
   border-radius: 999px; padding: 1px 8px;
-  font-size: 0.72rem; font-weight: 800;
+  font-size: 0.75rem; font-weight: 800;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 .backlog-hint { margin-top: 0; margin-bottom: 10px; text-align: left; padding: 0; font-size: 0.82rem; }
@@ -1946,7 +1946,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .audit-entry.audit-amendment { border-left-color: #c0552a; background: rgba(192, 85, 42, 0.10); }
 .audit-flag {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: #e08a5f;
@@ -1973,7 +1973,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 /* Compliance items are the ones that cost money later, so they never look
    like the same weight of problem as a missing nice-to-have. */
 .preflight-item.preflight-compliance { border-left-color: #c0552a; background: rgba(192,85,42,0.10); }
-.preflight-where { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.65; }
+.preflight-where { font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.65; }
 .preflight-what { font-weight: 500; }
 .preflight-why { font-size: 13px; opacity: 0.75; }
 
@@ -1999,7 +1999,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 }
 .doc-type-card.active { border-color: var(--accent); border-width: 2px; }
 .doc-type-title { font-weight: 600; font-size: 15px; }
-.doc-type-standard { font-size: 11px; letter-spacing: 0.04em; opacity: 0.6; font-family: ui-monospace, monospace; }
+.doc-type-standard { font-size: 12px; letter-spacing: 0.04em; opacity: 0.6; font-family: ui-monospace, monospace; }
 .doc-type-blurb { font-size: 13px; opacity: 0.75; }
 
 /* ---- Bait station records ---- */
@@ -2018,7 +2018,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .station-number { width: 64px; min-height: 40px; text-align: center; font-weight: 600; }
 .station-card-header .product-card-remove { margin-left: auto; }
 .station-chip-row { display: flex; flex-direction: column; gap: 4px; }
-.station-chip-label { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.6; }
+.station-chip-label { font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.6; }
 .station-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .station-chip {
   min-height: 40px; padding: 6px 11px; border-radius: 999px; font-size: 13px;
@@ -2028,7 +2028,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .station-chip.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 
 /* ---- Pesticide record table in the PDF ---- */
-.product-pdf-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+.product-pdf-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
 .product-pdf-table th, .product-pdf-table td { border: 1px solid #ccc; padding: 5px 6px; text-align: left; vertical-align: top; }
 .product-pdf-table th { background: #f2f2f2; }
 
@@ -2126,7 +2126,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   flex: 1;
   min-width: 0;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 #calendar-feed-generate,
 #calendar-feed-regenerate {
@@ -2187,7 +2187,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .build-version-label {
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -2483,7 +2483,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 }
 .reminders-section-head {
   margin: 12px 0 6px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -2652,7 +2652,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .stat-bad  { border-left: 3px solid var(--danger); }
 .stat-value { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .stat-label { font-size: 0.78rem; font-weight: 600; }
-.stat-sub { font-size: 0.72rem; color: var(--text-dim); }
+.stat-sub { font-size: 0.75rem; color: var(--text-dim); }
 
 .business-note {
   margin: 10px 2px 0;
@@ -2694,7 +2694,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
 .asset-history { list-style: none; padding: 4px 0 10px 54px; margin: -4px 0 8px; }
 .asset-history-row { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .asset-history-row:last-child { border-bottom: 0; }
-.asset-history-date { font-size: 0.72rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.asset-history-date { font-size: 0.75rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .asset-history-what { font-size: 0.85rem; }
 .asset-history-note { font-size: 0.78rem; color: var(--text-dim); }
 
@@ -2847,7 +2847,7 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
    don't know what" is not a question the app should leave somebody with. */
 .section-why {
   display: block;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--text-dim);
   margin-top: 2px;
   /* Wraps. It used to be one ellipsised line, which on a phone cut the answer
@@ -3003,9 +3003,9 @@ body:has(#job-form:not(.hidden)) .home-tabs { display: none; }
 .today-done { opacity: 0.55; }
 .today-time { flex: 0 0 62px; display: flex; flex-direction: column; gap: 2px; font-family: var(--font-readout); }
 .today-start { font-size: 1.05rem; font-weight: 800; color: var(--text); }
-.today-len { font-size: 0.72rem; color: var(--text-dim); }
+.today-len { font-size: 0.75rem; color: var(--text-dim); }
 .today-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.today-flag { color: var(--accent); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.today-flag { color: var(--accent); font-size: 0.75rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
 .today-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .today-name { font-weight: 700; font-size: 1.02rem; overflow-wrap: anywhere; }
 .today-address { color: var(--text-dim); font-size: 0.86rem; overflow-wrap: anywhere; }
@@ -3360,7 +3360,7 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 }
 .inspection-walk.hidden { display: none; }
 .walk-banner { color: #3dff88; font-weight: 650; font-size: 0.86rem; }
-.walk-meta { font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(226, 232, 240, 0.72); }
+.walk-meta { font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(226, 232, 240, 0.72); }
 .walk-title { font-size: 1.02rem; font-weight: 650; line-height: 1.3; }
 .walk-hint { font-size: 0.82rem; line-height: 1.4; color: rgba(226, 232, 240, 0.86); }
 /* Which rows of a nearly finished list are still unanswered (v178). */
@@ -3405,7 +3405,7 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 /* v143: area buttons, OK / Issue, inside checks, still-to-do list. */
 .walk-areas { display: flex; gap: 5px; }
 .walk-area {
-  flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 3px; font-size: 0.72rem; white-space: nowrap;
+  flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 3px; font-size: 0.75rem; white-space: nowrap;
   border-color: rgba(255, 255, 255, 0.2);
 }
 .walk-area.current { background: rgba(255, 255, 255, 0.22); border-color: #f8fafc; }
@@ -3415,24 +3415,24 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .walk-check { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
 .walk-check-text { flex: 1; min-width: 0; }
 .walk-check-label { font-size: 0.88rem; font-weight: 600; line-height: 1.25; }
-.walk-check-hint { font-size: 0.72rem; line-height: 1.3; color: rgba(226, 232, 240, 0.7); }
+.walk-check-hint { font-size: 0.75rem; line-height: 1.3; color: rgba(226, 232, 240, 0.7); }
 .walk-mini { flex: 0 0 auto; min-height: 40px; min-width: 52px; padding: 0 10px; font-size: 0.8rem; }
 .walk-mini-na { min-width: 44px; opacity: 0.75; }
 .walk-mini.chosen-na { background: var(--bg-elev); border-color: var(--text-dim); color: var(--text); opacity: 1; }
 .walk-check-gone .walk-check-label { text-decoration: line-through; opacity: 0.6; }
-.walk-check-need { font-size: 0.72rem; font-weight: 700; color: #fbbf24; }
+.walk-check-need { font-size: 0.75rem; font-weight: 700; color: #fbbf24; }
 .walk-tip-use { align-self: flex-start; min-height: 36px; }
 .walk-mini.chosen-ok { background: #3dff88; border-color: #3dff88; color: #032012; }
 .walk-mini.chosen-issue { background: #fbbf24; border-color: #fbbf24; color: #2b1a00; }
 /* v182: "What's in this photo?" — every item, one tap. */
-.walk-pick-area { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(226, 232, 240, 0.7); margin: 8px 0 4px; }
+.walk-pick-area { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(226, 232, 240, 0.7); margin: 8px 0 4px; }
 .walk-pick { display: flex; flex-wrap: wrap; gap: 6px; }
 .walk-pick-jump { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .walk-pick-item { min-height: 42px; padding: 0 12px; font-size: 0.84rem; flex: 0 1 auto; }
 .walk-pick-flagged { border-color: #fbbf24; }
 .walk-todo { display: flex; flex-direction: column; gap: 6px; }
 .walk-todo-item { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; padding: 6px 12px; line-height: 1.25; }
-.walk-todo-need { font-size: 0.72rem; font-weight: 400; color: rgba(226, 232, 240, 0.7); }
+.walk-todo-need { font-size: 0.75rem; font-weight: 400; color: rgba(226, 232, 240, 0.7); }
 
 /* v145: what kind of issue, on timber. */
 .walk-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -3531,7 +3531,7 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 .sop-row-code { font-family: var(--font-readout); font-size: .76rem; color: var(--text-dim); }
 .sop-row-title { font-weight: 650; font-size: .96rem; overflow-wrap: anywhere; }
 .sop-row-meta { font-size: .8rem; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.sop-pill { border-radius: 999px; padding: 1px 8px; font-size: .72rem; font-weight: 650; border: 1px solid currentColor; }
+.sop-pill { border-radius: 999px; padding: 1px 8px; font-size: 0.75rem; font-weight: 650; border: 1px solid currentColor; }
 .sop-pill-overdue { color: var(--danger); }
 .sop-pill-due-soon, .sop-pill-draft { color: var(--warning); }
 .sop-pill-ok { color: var(--accent); }
@@ -4027,3 +4027,17 @@ body.part-off-assistant #agent-open { display: none !important; }
 .parts-row input { width: 22px; height: 22px; flex: 0 0 22px; margin-top: 2px; accent-color: var(--accent); }
 .parts-words { display: flex; flex-direction: column; gap: 2px; }
 .parts-blurb { font-size: 0.82rem; line-height: 1.35; color: var(--text-dim); }
+
+/* ---------- Accessibility basics (audit, 28 Nov 2026) ----------
+   A clear ring on whatever the keyboard is on. Phone taps never show it
+   (:focus-visible is keyboard-only), so nothing changes for a technician on
+   site; an office laptop user can now see where they are. */
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Pinch-zoom is allowed again (index.html no longer sets maximum-scale).
+   That setting existed to stop iPhones zooming into a field when it is
+   tapped, which they do for any text under 16px. Fields are kept at 16px
+   or more on touch screens instead, which stops the jump the right way. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: max(16px, 1rem); }
+}

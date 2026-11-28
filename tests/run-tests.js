@@ -15358,6 +15358,107 @@
     }
   });
 
+  // ---------- v186: accessibility and security basics (audit, 28 Nov 2026) ----------
+
+  test('Accessibility: a question is announced as a dialog, named by its title, and Tab stays inside it', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const answer = win.__realDialog.confirm('Sign and finish this report?', { title: 'Sign off', okLabel: 'Sign', requireTick: 'I checked it' });
+    await wait(60);
+    const card = dialogCard(doc);
+    assert(card, 'the question is on screen');
+    assertEqual(card.getAttribute('role'), 'dialog', 'a screen reader is told a dialog appeared');
+    assertEqual(card.getAttribute('aria-modal'), 'true', 'and that the page behind it is out of reach');
+    const title = doc.getElementById(card.getAttribute('aria-labelledby'));
+    assert(title && title.textContent === 'Sign off', 'it is named by its title');
+    const msg = doc.getElementById(card.getAttribute('aria-describedby'));
+    assert(msg && /Sign and finish/.test(msg.textContent), 'and described by its question');
+    // Tab from the last control wraps to the first instead of leaving the dialog.
+    const tick = card.querySelector('input[type="checkbox"]');
+    tick.click();
+    await wait(20);
+    const cancel = dialogButton(doc, 'Cancel');
+    const ok = dialogButton(doc, 'Sign');
+    ok.focus();
+    doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    assertEqual(doc.activeElement, tick, 'Tab on the last button goes back to the first control in the dialog');
+    tick.focus();
+    doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+    assertEqual(doc.activeElement, ok, 'Shift+Tab on the first goes to the last');
+    cancel.click();
+    assertEqual(await answer, false);
+  });
+
+  test('Accessibility: messages are read out, pinch-zoom is allowed, and the keyboard focus can be seen', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.appToast('Report saved');
+    const toastEl = doc.getElementById('toast');
+    assertEqual(toastEl.getAttribute('aria-live'), 'polite', 'the message bar is a live region');
+    assertEqual(toastEl.getAttribute('role'), 'status');
+    const html = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const viewport = (html.match(/<meta name="viewport" content="([^"]+)"/) || [])[1] || '';
+    assert(viewport && !/maximum-scale|user-scalable=no/.test(viewport), 'nothing in the viewport stops pinch-zoom: ' + viewport);
+    // What is in force, not the stylesheet text: the parsed rule with a visible outline.
+    const rules = Array.from(doc.styleSheets).flatMap((s) => { try { return Array.from(s.cssRules); } catch (e) { return []; } });
+    assert(rules.some((r) => r.selectorText === ':focus-visible' && /solid/.test(r.style.outline || r.style.outlineStyle || '')),
+      'a :focus-visible rule with a visible outline is in force');
+  });
+
+  test('Security: every page limits what may run and where it may connect (Content-Security-Policy)', async () => {
+    for (const page of ['index.html', 'portal.html', 'join.html']) {
+      const html = await (await fetch('../' + page, { cache: 'reload' })).text();
+      const csp = (html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/) || [])[1] || '';
+      assert(csp, page + ' has a policy');
+      assert(/object-src 'none'/.test(csp) && /base-uri 'self'/.test(csp), page + ': no plugins, no base tag tricks');
+      assert(/connect-src 'self' https:\/\/\*\.supabase\.co/.test(csp), page + ': talks only to Scope, its database and named map services');
+      assert(!/connect-src[^;]*\s(https:|\*)(\s|;|$)/.test(csp), page + ': no blanket "any https site" connection');
+    }
+    const app = await (await fetch('../index.html', { cache: 'reload' })).text();
+    const appCsp = app.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
+    assert(/script-src 'self';/.test(appCsp), 'the app itself runs only its own script files, nothing inline');
+    const inline = app.replace(/<script[^>]*\bsrc=[^>]*>\s*<\/script>/g, '');
+    assert(!/<script/i.test(inline), 'and index.html has no inline script that the policy would block');
+  });
+
+  test('Security: only an admin deletes a shared client, enquiry or safety statement; a technician is told why', async () => {
+    const win = frame.contentWindow;
+    const original = win.Sync;
+    const realDialog = win.Dialog;
+    const said = [];
+    win.Dialog = Object.assign({}, realDialog, { alert: (m, o) => { said.push([m, o && o.title]); return Promise.resolve(); } });
+    try {
+      win.Sync = Object.assign({}, original || {}, { currentUser: () => ({ id: 't1', email: 'tech@example.com' }), isAdmin: () => false });
+      assertEqual(await win.Common.adminOnlyDelete('a client'), false, 'a technician does not delete');
+      assert(said.length === 1 && /Only an admin can delete a client/.test(said[0][0]) && said[0][1] === 'Ask an admin', 'and is told who can');
+      win.Sync = Object.assign({}, original || {}, { currentUser: () => ({ id: 'a1', email: 'boss@example.com' }), isAdmin: () => true });
+      assertEqual(await win.Common.adminOnlyDelete('a client'), true, 'an admin does');
+      win.Sync = Object.assign({}, original || {}, { currentUser: () => null, isAdmin: () => false });
+      assertEqual(await win.Common.adminOnlyDelete('a client'), true, 'a phone not signed in has no server rule to mirror');
+      for (const f of ['clients-ui.js', 'leads-ui.js', 'swms-ui.js']) {
+        const src = await (await fetch('../' + f, { cache: 'reload' })).text();
+        assert(/adminOnlyDelete\(/.test(src), f + ' asks before deleting');
+      }
+    } finally { win.Sync = original; win.Dialog = realDialog; }
+  });
+
+  test('Security: migration 050 is in the repository with every rule the server now keeps', async () => {
+    const sql = await (await fetch('../supabase-migration-050-records-kept.sql', { cache: 'reload' })).text();
+    const needles = [
+      ['before delete on public.reports', 'a signed report cannot be deleted (or removed with its job) for 3 years'],
+      ["interval '3 years'", 'the same 3 years the terms promise'],
+      ['86400000', 'with the same one-day way out as the app'],
+      ['create table if not exists public.report_events', 'a server-written record of signing, sending, changes and deletes'],
+      ['grant select on public.report_events to authenticated', 'members read it; nobody writes to it'],
+      ["e->>'event' = 'returned'", 'unsigning needs a reason on record'],
+      ['public.can_mark_deleted(table_name, record_id)', 'deletion markers are checked'],
+      ["'org admin or creator can delete '", 'shared lists: admin or creator deletes'],
+      ['"org admin can remove opt outs"', 'only an admin removes a STOP'],
+      ['revoke execute on function public.my_org_id() from public, anon', 'helpers need a login'],
+    ];
+    for (const [needle, why] of needles) assert(sql.includes(needle), why + ' (missing: ' + needle + ')');
+  });
+
   test('Keeping records: a signed report holds its job for 3 years, with a one-day way out for a report signed by mistake and never sent', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;

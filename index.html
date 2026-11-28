@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<!-- Only Scope's own files may run, and the page may only talk to Scope's
+     database and the map/weather services it uses (audit, 28 Nov 2026). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self' blob: data:; manifest-src 'self'; script-src 'self'; img-src 'self' data: blob: https://*.supabase.co https://server.arcgisonline.com https://maps.six.nsw.gov.au; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://nominatim.openstreetmap.org https://overpass-api.de https://maps.six.nsw.gov.au https://api.open-meteo.com https://server.arcgisonline.com" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Scope</title>
 <meta name="theme-color" content="#080b0a" />
 <meta name="description" content="Building/pest inspection field capture app" />
@@ -991,7 +994,7 @@
   </main>
 </section>
 
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
 <!-- error-log.js and theme.js are in the <head> (see there). version.js is the
      first of the scripts below; error-log.js reads APP_VERSION lazily. -->

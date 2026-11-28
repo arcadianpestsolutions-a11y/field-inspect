@@ -329,6 +329,7 @@
   }
 
   async function removeLead() {
+    if (!(await window.Common.adminOnlyDelete('an enquiry'))) return;
     const ok = await askConfirm(
       `${current.name || 'This enquiry'} will be deleted. If it became a job, the job stays.`,
       { title: 'Delete this enquiry?', okLabel: 'Delete', danger: true }

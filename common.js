@@ -17,7 +17,7 @@
 // Dialog by dialog.js. Loaded straight after html-safe.js and dialog.js.
 //
 // EXPOSES: window.Common = { toast, askConfirm, askPrompt, el, escapeHtml,
-//   fmtDay, money, pad2 }
+//   fmtDay, money, pad2, adminOnlyDelete }
 
 (() => {
   'use strict';
@@ -51,5 +51,22 @@
 
   const pad2 = (n) => String(n).padStart(2, '0');
 
-  window.Common = { toast, askConfirm, askPrompt, el, escapeHtml, fmtDay, money, pad2 };
+  // Only an admin deletes the shared lists (clients, enquiries, safety
+  // statements), and the server enforces it (migration 050). Asked before the
+  // delete, so a technician gets a reason instead of a record that quietly
+  // comes back on the next sync. Resolves true when the delete may go ahead.
+  // No signed-in session means no server rule to mirror: demo, a local-only
+  // phone, the test page.
+  async function adminOnlyDelete(what) {
+    const S = window.Sync;
+    if (window.IS_DEMO || !S || typeof S.isAdmin !== 'function') return true;
+    if (typeof S.currentUser === 'function' && !S.currentUser()) return true;
+    if (S.isAdmin()) return true;
+    const say = `Only an admin can delete ${what}. Ask whoever runs Scope for your business to delete it.`;
+    if (window.Dialog) await window.Dialog.alert(say, { title: 'Ask an admin' });
+    else toast(say);
+    return false;
+  }
+
+  window.Common = { toast, askConfirm, askPrompt, el, escapeHtml, fmtDay, money, pad2, adminOnlyDelete };
 })();

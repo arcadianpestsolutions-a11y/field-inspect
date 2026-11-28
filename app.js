@@ -251,8 +251,16 @@
   window.toastDurationFor = toastMs;
 
   function toast(msg) {
-    toastEl.textContent = msg;
+    // A polite live region, so a screen reader reads "Report saved" too
+    // (audit, 28 Nov). Set here as well as in index.html, for a device
+    // still holding an older cached page. Shown before the text changes:
+    // a change inside something hidden is not announced.
+    if (!toastEl.hasAttribute('aria-live')) {
+      toastEl.setAttribute('role', 'status');
+      toastEl.setAttribute('aria-live', 'polite');
+    }
     toastEl.classList.remove('hidden');
+    toastEl.textContent = msg;
     clearTimeout(toast._t);
     toast._t = setTimeout(() => toastEl.classList.add('hidden'), toastMs(msg));
   }
@@ -759,9 +767,15 @@
           { title: 'They asked us to stop', okLabel: 'Turn back on', cancelLabel: 'Leave it off' },
         );
         if (!ok) return;
-        const { error } = await window.supabaseClient
-          .from('comms_opt_outs').delete().eq('id', row.dataset.optOutId);
+        // .select(): a refused delete is not an error, it is zero rows. Only
+        // an admin may remove a STOP (migration 050).
+        const { data: removed, error } = await window.supabaseClient
+          .from('comms_opt_outs').delete().eq('id', row.dataset.optOutId).select('id');
         if (error) { toast('Could not turn it back on — check your connection.'); return; }
+        if (!removed || !removed.length) {
+          await window.Dialog.alert('Only an admin can turn messages back on for someone who texted STOP.', { title: 'Ask an admin' });
+          return;
+        }
         // Every job this person has, not just this one: the endpoint flagged
         // them all, and leaving any flagged would keep them silent.
         const tail = phoneTail(job.clientPhone);

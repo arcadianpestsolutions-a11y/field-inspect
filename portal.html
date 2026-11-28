@@ -2,6 +2,9 @@
 <html lang="en-AU">
 <head>
 <meta charset="UTF-8" />
+<!-- Only Scope's own files may run, and the page may only talk to Scope's
+     database and the map/weather services it uses (audit, 28 Nov 2026). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self' blob: data:; manifest-src 'self'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Your inspection report</title>
 <!--

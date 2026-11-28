@@ -783,6 +783,14 @@
         deleted_by: currentUserId(),
       });
       if (error) {
+        // Refused by the server (migration 050): only an admin marks jobs,
+        // reports and invoices deleted, and never a signed report that is
+        // being kept. Retrying would never succeed, so stop asking.
+        if (error.code === '42501' || /row-level security/i.test(error.message || '')) {
+          console.warn(`[sync] the server would not record the deletion of ${table} ${recordId}; it stays on other devices.`);
+          await DB.markDeletionSynced(`${table}:${recordId}`);
+          return false;
+        }
         if (/relation .* does not exist|could not find the table|schema cache/i.test(error.message || '')) {
           deletionsTableMissing = true;
           console.warn('[sync] deletions table not in the database yet — run supabase-migration-018-deletions.sql. '
@@ -854,6 +862,18 @@
     return suppressed;
   }
 
+  async function isKeptLocally(jobId) {
+    try {
+      const RA = window.ReportAssurance;
+      if (!RA || typeof RA.retention !== 'function') return false;
+      const report = await DB.getReport(jobId);
+      if (!report || !report.finalizedAt) return false;
+      const job = await DB.getJob(jobId).catch(() => null);
+      const keep = RA.retention(report, job);
+      return !!(keep && !keep.grace);
+    } catch (e) { return false; }
+  }
+
   async function applyRemoteTombstones() {
     if (!isReady() || deletionsTableMissing) return 0;
     try {
@@ -862,6 +882,10 @@
       const rows = await fetchAllRows(supabaseClient, 'deletions');
       let applied = 0;
       for (const row of rows) {
+        // Before anything is recorded: a signed report being kept (3 years) is not removed from this
+        // phone by a marker, whoever wrote it. The server refuses such
+        // markers since migration 050; this covers any written before.
+        if ((row.table_name === 'jobs' || row.table_name === 'reports') && await isKeptLocally(row.record_id)) continue;
         const known = await DB.isDeleted(row.table_name, row.record_id);
         await DB.recordRemoteDeletion(row.table_name, row.record_id, row.deleted_at);
         if (known) continue;

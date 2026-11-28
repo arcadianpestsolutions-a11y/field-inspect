@@ -63,16 +63,56 @@
   // Shared open/close plumbing: focus restore, Escape to cancel, and click
   // on the backdrop to cancel — the three things a person expects from a
   // dialog and would otherwise have to be re-implemented per dialog type.
+  //
+  // It is also announced as a dialog (audit, 28 Nov 2026): a screen reader
+  // used to get no sign a question had appeared, the sign-off tick included.
+  // The title names it, the message describes it, and Tab stays inside it
+  // until it is answered.
+  let dialogSeq = 0;
+  function labelForScreenReaders(overlay) {
+    const card = overlay.querySelector('.app-dialog-card') || overlay;
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    dialogSeq += 1;
+    const title = card.querySelector('h2');
+    const message = card.querySelector('.app-dialog-message');
+    if (title) {
+      title.id = title.id || `app-dialog-title-${dialogSeq}`;
+      card.setAttribute('aria-labelledby', title.id);
+    } else if (message) {
+      card.setAttribute('aria-label', 'Question');
+    }
+    if (message) {
+      message.id = message.id || `app-dialog-message-${dialogSeq}`;
+      card.setAttribute('aria-describedby', message.id);
+    }
+  }
+
+  function focusables(overlay) {
+    return Array.from(overlay.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    )).filter((el) => !el.disabled && el.offsetParent !== null);
+  }
+
   function present(overlay, { onCancel, initialFocus }) {
     const previouslyFocused = document.activeElement;
     openCount += 1;
+    labelForScreenReaders(overlay);
     document.body.appendChild(overlay);
     document.body.classList.add('dialog-open');
 
     function onKeyDown(e) {
-      if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+      if (e.key === 'Escape') { e.preventDefault(); onCancel(); return; }
+      if (e.key !== 'Tab') return;
+      const items = focusables(overlay);
+      if (!items.length) { e.preventDefault(); return; }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const inside = overlay.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
     }
-    overlay.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown);
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) onCancel(); });
 
     if (initialFocus) {
@@ -81,7 +121,7 @@
     }
 
     return function dismiss() {
-      overlay.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keydown', onKeyDown);
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       openCount = Math.max(0, openCount - 1);
       if (openCount === 0) document.body.classList.remove('dialog-open');
