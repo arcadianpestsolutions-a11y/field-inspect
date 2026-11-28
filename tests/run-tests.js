@@ -12483,7 +12483,12 @@
     const realFetch = win.fetch;
     const wasDemo = win.IS_DEMO;
     let calls = 0;
-    win.fetch = async (...args) => { calls++; return realFetch.apply(win, args); };
+    // Only lookups count: a background fetch of the app's own (sync, the
+    // test clock) landed in this window once on GitHub and failed it.
+    win.fetch = async (...args) => {
+      if (/nominatim|openstreetmap|nsw\.gov|six\.nsw|spatial/i.test(String(args[0]))) calls++;
+      return realFetch.apply(win, args);
+    };
     const job = await win.DB.addJob({ name: 'Demo Lookup Job', address: '14 Wattle Grove, Ingleburn NSW 2565', addressLat: -33.9989, addressLng: 150.8671 });
     try {
       win.IS_DEMO = true;
