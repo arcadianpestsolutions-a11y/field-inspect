@@ -2009,6 +2009,10 @@ body:has(.demo-banner) .view { height: auto; flex: 1; min-height: 0; }
   border: 1px solid var(--border, rgba(255,255,255,0.15));
 }
 .doc-type-card.active { border-color: var(--accent); border-width: 2px; }
+/* Offered no more: the job already has a different document (the reason is
+   written on the card). Still tappable, so the tap can say why. */
+.doc-type-card.doc-type-unavailable { opacity: 0.6; }
+.doc-type-card .doc-type-why { color: var(--warning); }
 .doc-type-title { font-weight: 600; font-size: 15px; }
 .doc-type-standard { font-size: 12px; letter-spacing: 0.04em; opacity: 0.6; font-family: ui-monospace, monospace; }
 .doc-type-blurb { font-size: 13px; opacity: 0.75; }

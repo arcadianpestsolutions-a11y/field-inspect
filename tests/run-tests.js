@@ -13070,6 +13070,28 @@
     doc.getElementById('doc-type-change').click();
     assert(choices.classList.contains('hidden'), 'Done closes them again');
     await win.DB.deleteJob(job.id);
+
+    // Once a report exists, the documents this job can no longer become say
+    // so on the card instead of being offered and refused (explorer 2).
+    const started = await win.DB.addJob({ name: 'Doc Started Job', jobType: 'termite' });
+    try {
+      await win.DB.saveReport({ jobId: started.id, sections: { clientDetails: { clientName: 'Started' } }, documentType: 'timber_pest_inspection', auditLog: [] });
+      await win.DB.updateJob(started.id, { status: 'review' });
+      await win.showJobViewById(started.id);
+      await waitFor(() => doc.getElementById('doc-type-change'), 'the document line is drawn');
+      doc.getElementById('doc-type-change').click();
+      const cards = Array.from(doc.querySelectorAll('.doc-type-choices .doc-type-card'));
+      const plan = cards.find((c) => /Action Plan/.test(c.textContent));
+      assert(plan, 'the plan is listed');
+      assert(plan.classList.contains('doc-type-unavailable') && plan.getAttribute('aria-disabled') === 'true', 'as unavailable');
+      assert(/Needs a separate job/.test(plan.textContent), `with the reason on the card: ${plan.textContent}`);
+      assert(win.getComputedStyle(plan).opacity < 1, 'and drawn quieter');
+      const current = cards.find((c) => c.classList.contains('active'));
+      assert(current && !current.classList.contains('doc-type-unavailable'), 'the document it has is not greyed');
+    } finally {
+      win.hideAllAppViews();
+      await win.DB.deleteJob(started.id);
+    }
   });
 
   test('Report: a progress card says what is left, and one button goes to it', async () => {
@@ -15869,6 +15891,13 @@
     await openInspection(win, doc, job, { guided: true });
     await snap(win, doc);
     await waitFor(() => !doc.getElementById('inspection-walk').classList.contains('hidden') && doc.querySelector('#inspection-walk .walk-check'), 'the outside list is up');
+    // Two fast taps on OK (explorer 2 saw a row left unanswered) keep the answer.
+    {
+      const r = (id) => doc.querySelector(`#inspection-walk .walk-check[data-item="${id}"]`);
+      r('weepHoles').querySelector('[data-result="ok"]').click();
+      r('weepHoles').querySelector('[data-result="ok"]').click();
+      assert(r('weepHoles').querySelector('[data-result="ok"]').classList.contains('chosen-ok'), 'a double-tap on OK leaves OK chosen');
+    }
     const input = doc.getElementById('inspection-camera-input');
     let opened = 0;
     input.click = () => { opened++; };

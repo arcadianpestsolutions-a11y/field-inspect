@@ -3033,11 +3033,17 @@
       const isCurrent = type.id === shownType.id;
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = 'doc-type-card' + (isCurrent ? ' active' : '');
+      // A document this job can no longer become is shown as such, with the
+      // reason, rather than offered and then refused on the tap (overnight
+      // run, 29 Nov 2026). The tap still answers, for anyone who tries.
+      const unavailable = !!(existing && currentId && currentId !== type.id);
+      card.className = 'doc-type-card' + (isCurrent ? ' active' : '') + (unavailable ? ' doc-type-unavailable' : '');
+      if (unavailable) card.setAttribute('aria-disabled', 'true');
       card.innerHTML =
         `<span class="doc-type-title">${escapeHtml(type.title)}</span>`
         + (type.standard ? `<span class="doc-type-standard">${escapeHtml(type.standard)}</span>` : '')
-        + `<span class="doc-type-blurb">${escapeHtml(type.blurb)}</span>`;
+        + `<span class="doc-type-blurb">${escapeHtml(type.blurb)}</span>`
+        + (unavailable ? `<span class="doc-type-blurb doc-type-why">Needs a separate job: this one already has its ${escapeHtml(window.ReportUI.documentTypeOf(existing, job).short)}.</span>` : '');
 
       card.addEventListener('click', async () => {
         // A report already exists and it is a different document — switching
