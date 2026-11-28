@@ -212,6 +212,10 @@ input:focus, textarea:focus {
   background: var(--bg-elev);
 }
 
+.address-suggestions.is-empty {
+  pointer-events: none;
+}
+
 .address-suggestion-empty {
   padding: 10px 12px;
   font-size: 0.85rem;
@@ -3513,6 +3517,7 @@ body.undo-open:not(.has-tabbar) .toast { bottom: calc(76px + var(--safe-bottom))
 }
 .invoice-referral-row.hidden { display: none; }
 .invoice-referral-row p { margin: 0; font-size: .9rem; line-height: 1.45; }
+.invoice-locked-note { margin: -4px 0 10px; font-size: .85rem; color: var(--text-dim); }
 .invoice-paid-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; font-size: .9rem; }
 .invoice-paid-text { color: var(--text-dim); }
 

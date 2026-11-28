@@ -73,6 +73,44 @@
     return out;
   }
 
+  // Job and client details drifting apart (break-it run, 28 Nov 2026): a
+  // phone fixed on the job stayed wrong on the client record, so the next job
+  // booked for them started from the old one. The job keeps its own copy on
+  // purpose (clients.js says why), so the client is never changed silently:
+  // this says what would change, only for what was edited just now, and the
+  // technician is asked.
+  function clientUpdateFor(client, before, after) {
+    if (!client) return null;
+    const C = window.Clients;
+    const phoneKey = (p) => (C ? C.normalisePhone(p) : str(p).replace(/\D/g, ''));
+    const emailKey = (e) => str(e).trim().toLowerCase();
+    const b = before || {};
+    const a = after || {};
+    const out = {};
+    const newPhone = str(a.clientPhone).trim();
+    const newEmail = str(a.clientEmail).trim();
+    if (newPhone && phoneKey(newPhone) !== phoneKey(b.clientPhone) && phoneKey(newPhone) !== phoneKey(client.phone)) out.phone = newPhone;
+    if (newEmail && emailKey(newEmail) !== emailKey(b.clientEmail) && emailKey(newEmail) !== emailKey(client.email)) out.email = newEmail;
+    return Object.keys(out).length ? out : null;
+  }
+
+  async function offerClientUpdate(before, after) {
+    if (!after || !after.clientId || !window.DB || !window.DB.getClient) return false;
+    const client = await window.DB.getClient(after.clientId);
+    const change = clientUpdateFor(client, before, after);
+    if (!change) return false;
+    const who = (window.Clients && window.Clients.labelFor(client)) || 'this client';
+    const what = [change.phone ? `phone ${change.phone}` : '', change.email ? `email ${change.email}` : ''].filter(Boolean).join(' and ');
+    const ask = window.Common && window.Common.askConfirm;
+    if (!ask) return false;
+    const yes = await ask(`Save the new ${what} on ${who}'s client record as well, for the next job booked for them? Reports already done keep the details they had.`,
+      { title: 'Update the client too?', okLabel: 'Update client', cancelLabel: 'Only this job' });
+    if (!yes) return false;
+    await window.DB.saveClient({ ...client, ...change });
+    if (window.Common.toast) window.Common.toast(`${who}'s client record updated too`);
+    return true;
+  }
+
   // tel: wants digits and a leading plus only. '' when there is nothing dialable.
   function telHref(phone) {
     const cleaned = str(phone).replace(/[^0-9+]/g, '');
@@ -203,8 +241,12 @@
             gone.code = 'JOB_DELETED';
             throw gone;
           }
+          const before = current;
           showView(next);
           if (hooks && hooks.onSaved) hooks.onSaved(next);
+          offerClientUpdate(before, next).catch((e) => {
+            if (window.ErrorLog) window.ErrorLog.note(e, 'job details: update the client too');
+          });
         } catch (err) {
           if (window.ErrorLog) window.ErrorLog.note(err, 'job details: save');
           note.textContent = window.DB.describeSaveFailure
@@ -225,5 +267,5 @@
     if (anchor) host.insertBefore(card, anchor); else host.insertBefore(card, host.firstChild);
   }
 
-  window.JobDetails = { LIMITS, clean, validate, changesFor, telHref, directionsUrl, render };
+  window.JobDetails = { LIMITS, clean, validate, changesFor, clientUpdateFor, offerClientUpdate, telHref, directionsUrl, render };
 })();

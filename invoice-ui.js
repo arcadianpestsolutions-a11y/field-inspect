@@ -162,6 +162,7 @@
 
       linesWrap.appendChild(card);
     });
+    applyLock();
   }
 
   async function renderXeroState() {
@@ -244,7 +245,38 @@
   // through Xero (cash, a transfer recorded nowhere else), and says so.
   const fmtDay = window.Common.fmtDay;
 
+  // A paid invoice is a record of money taken (break-it run, 28 Nov 2026):
+  // every field stayed editable after Mark as paid, so the amount on a paid
+  // invoice could be changed with nothing to show it ever said otherwise.
+  // Paid locks it; "Undo: not paid" unlocks it, which is a deliberate step.
+  const isLocked = (inv) => !!(inv && (inv.paidAt || String(inv.xeroStatus || '').toUpperCase() === 'PAID'));
+
+  function applyLock() {
+    if (!current) return;
+    const locked = isLocked(current);
+    const fields = [clientNameInput, clientEmailInput, propertyInput, issueDateInput, dueDateInput, gstCheckbox, addLineBtn]
+      .concat(Array.from(linesWrap.querySelectorAll('input, button, select, textarea')));
+    for (const f of fields) if (f) f.disabled = locked;
+    view.classList.toggle('invoice-locked', locked);
+    let note = el('invoice-locked-note');
+    if (!note && paidRow && paidRow.parentNode) {
+      note = document.createElement('p');
+      note.id = 'invoice-locked-note';
+      note.className = 'invoice-locked-note';
+      paidRow.parentNode.insertBefore(note, paidRow.nextSibling);
+    }
+    if (note) {
+      note.textContent = locked
+        ? (String(current.xeroStatus || '').toUpperCase() === 'PAID'
+          ? 'Paid, so it is locked. Any change is made in Xero.'
+          : 'Paid, so it is locked. To change it, tap "Undo: not paid" first.')
+        : '';
+      note.classList.toggle('hidden', !locked);
+    }
+  }
+
   function renderPaid() {
+    applyLock();
     if (!paidRow || !paidText || !paidBtn) return;
     const xeroPaid = String(current.xeroStatus || '').toUpperCase() === 'PAID';
     if (xeroPaid) {
@@ -329,6 +361,8 @@
         current.paidAt = Date.now();
         current.paidMethod = method;
       } else {
+        if (!await askConfirm('It will show as owed again, and its amounts can be changed.',
+          { title: 'Mark this invoice not paid?', okLabel: 'Not paid', cancelLabel: 'Keep it paid' })) return;
         current.paidAt = null;
         current.paidMethod = '';
       }

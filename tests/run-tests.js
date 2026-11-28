@@ -7411,6 +7411,162 @@
     await answer;
   });
 
+  // ---------- v188: the rest of the break-it run (28 Nov 2026) ----------
+
+  test('Dialog: the second tap of a double tap does not land on the screen underneath', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const D = win.__realDialog;
+    assert(typeof D.swallowsTap === 'function', 'dialog.js has the tap guard');
+    const answer = D.confirm('Delete this job?', { okLabel: 'Delete', danger: true });
+    await wait(50);
+    dialogButton(doc, 'Delete').click();
+    assertEqual(await answer, true, 'the first tap answers');
+    const now = Date.now();
+    const realTap = (target) => ({ isTrusted: true, target });
+    assert(D.swallowsTap(realTap(doc.body), now), 'a real tap straight after lands nowhere (it opened another job)');
+    assert(!D.swallowsTap({ isTrusted: false, target: doc.body }, now), 'a script click is never dropped');
+    assert(!D.swallowsTap(realTap(doc.body), now + 1000), 'a second later, taps work again');
+    const next = D.confirm('Another question?');
+    await wait(50);
+    assert(!D.swallowsTap(realTap(dialogButton(doc, 'OK') || dialogCard(doc)), now), 'a question that follows straight on can still be answered');
+    (dialogButton(doc, 'Cancel')).click();
+    await next;
+  });
+
+  test('New job: "No matches found" under the address does not eat the tap on the phone box', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const realGeo = win.Geo;
+    win.Geo = Object.assign({}, realGeo, { searchAddressCandidates: async () => [] });
+    try {
+      win.showJobListView();
+      await wait(150);
+      doc.getElementById('new-job-btn').click();
+      await wait(250);
+      const address = doc.getElementById('job-address');
+      const list = doc.getElementById('job-address-suggestions');
+      address.focus();
+      address.value = '1 Fake St';
+      address.dispatchEvent(new win.Event('input', { bubbles: true }));
+      await waitFor(() => !list.classList.contains('hidden') && /No matches/.test(list.textContent), 'the empty list is shown', 3000);
+      const phone = doc.getElementById('job-phone');
+      const p = phone.getBoundingClientRect();
+      const l = list.getBoundingClientRect();
+      const x = p.left + 20;
+      const y = p.top + 4;
+      assert(y >= l.top && y <= l.bottom, `the list is drawn over the phone box (list ${Math.round(l.top)}-${Math.round(l.bottom)}, tap at ${Math.round(y)}), so this tests something`);
+      assertEqual(doc.elementFromPoint(x, y), phone, 'a tap there reaches the phone box');
+    } finally {
+      win.Geo = realGeo;
+      doc.getElementById('job-form-cancel').click();
+    }
+  });
+
+  test('New job: the phone and email are checked the same way as Edit details', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(150);
+    doc.getElementById('new-job-btn').click();
+    await wait(250);
+    doc.getElementById('job-name').value = 'Bad Email Probe';
+    doc.getElementById('job-email').value = 'not-an-email';
+    doc.getElementById('job-form-save').click();
+    await wait(500);
+    assert(!(await win.DB.getJobs()).some((j) => j.name === 'Bad Email Probe'), 'not saved with a broken email');
+    assert(/email address does not look right/.test(doc.getElementById('toast').textContent), `and says why: ${doc.getElementById('toast').textContent}`);
+    assertEqual(doc.activeElement, doc.getElementById('job-email'), 'with the email box ready to fix');
+    doc.getElementById('job-email').value = '';
+    doc.getElementById('job-form-save').click();
+    await waitFor(async () => (await win.DB.getJobs()).some((j) => j.name === 'Bad Email Probe'), 'cleared, it saves', 3000);
+    const made = (await win.DB.getJobs()).find((j) => j.name === 'Bad Email Probe');
+    await win.DB.deleteJob(made.id);
+  });
+
+  test('Invoices: a paid invoice is locked until it is marked not paid', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Paid Lock Job', address: '3 Paid St' });
+    await win.InvoiceUI.open(job.id);
+    await wait(350);
+    const amount = () => doc.querySelector('#invoice-lines .invoice-line input[inputmode=decimal]');
+    assert(amount() && !amount().disabled, 'a draft can be changed');
+    doc.getElementById('invoice-paid-btn').click();
+    await waitFor(() => doc.querySelector('.paid-method-choice[data-method="Cash"]'), 'asked how it was paid');
+    doc.querySelector('.paid-method-choice[data-method="Cash"]').click();
+    await waitFor(async () => (await win.DB.getInvoicesForJob(job.id))[0].paidAt, 'marked paid');
+    await wait(100);
+    assert(amount().disabled, 'paid: the amount cannot be changed (break-it run: every field stayed editable)');
+    for (const id of ['invoice-client-name', 'invoice-issue-date', 'invoice-add-line', 'invoice-gst-registered']) {
+      assert(doc.getElementById(id).disabled, `paid: ${id} is locked`);
+    }
+    const note = doc.getElementById('invoice-locked-note');
+    assert(note && !note.classList.contains('hidden') && /Undo: not paid/.test(note.textContent), 'and it says how to change it');
+    const realConfirm = win.confirm;
+    win.confirm = () => false;
+    doc.getElementById('invoice-paid-btn').click();
+    await wait(300);
+    assert((await win.DB.getInvoicesForJob(job.id))[0].paidAt, 'Undo asks first: "Keep it paid" keeps it paid');
+    win.confirm = () => true;
+    doc.getElementById('invoice-paid-btn').click();
+    await waitFor(async () => !(await win.DB.getInvoicesForJob(job.id))[0].paidAt, 'not paid');
+    win.confirm = realConfirm;
+    await wait(100);
+    assert(!amount().disabled && note.classList.contains('hidden'), 'and it can be changed again');
+    doc.getElementById('invoice-back-btn').click();
+    await wait(300);
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Delete job: the question names a paid invoice that would go with it', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Paid Delete Job' });
+    await win.DB.saveInvoice({ id: win.DB.uid(), jobId: job.id, number: 'INV-2026-9911', lineItems: [], paidAt: Date.now(), paidMethod: 'Cash' });
+    await win.showJobViewById(job.id);
+    await wait(300);
+    const realConfirm = win.confirm;
+    let asked = '';
+    win.confirm = (m) => { asked = m; return false; };
+    try {
+      doc.getElementById('delete-job-btn').click();
+      await waitFor(() => asked, 'the delete question is asked');
+    } finally { win.confirm = realConfirm; }
+    assert(/a paid invoice \(INV-2026-9911\)/.test(asked), `it names the paid invoice: ${asked}`);
+    assert(await win.DB.getJob(job.id), 'and No keeps the job');
+    win.showJobListView();
+    await win.DB.deleteJob(job.id);
+  });
+
+  test('Job details: a phone fixed on the job is offered to the client record, never copied silently', async () => {
+    const win = frame.contentWindow;
+    const JD = win.JobDetails;
+    const client = { id: 'c1', name: 'Drift Client', phone: '', email: 'not-an-email' };
+    const before = { clientId: 'c1', clientPhone: '', clientEmail: 'not-an-email' };
+    const after = { clientId: 'c1', clientPhone: '0400 000 001', clientEmail: 'fixed@example.com' };
+    assertEqual(JSON.stringify(JD.clientUpdateFor(client, before, after)), JSON.stringify({ phone: '0400 000 001', email: 'fixed@example.com' }), 'what changed is offered');
+    assertEqual(JD.clientUpdateFor(client, after, after), null, 'nothing edited this time: nothing asked');
+    assertEqual(JD.clientUpdateFor({ ...client, phone: '0400000001' }, before, { ...after, clientEmail: 'not-an-email' }), null, 'the client already has it: nothing asked');
+    assertEqual(JD.clientUpdateFor(null, before, after), null, 'no client record: nothing asked');
+
+    const saved = await win.DB.saveClient({ id: win.DB.uid(), name: 'Drift Client', phone: '', email: 'not-an-email' });
+    const job = await win.DB.addJob({ name: 'Drift Job', clientId: saved.id, clientEmail: 'not-an-email' });
+    const realConfirm = win.confirm;
+    try {
+      win.confirm = () => false;
+      await JD.offerClientUpdate(job, { ...job, clientPhone: '0400 000 001' });
+      assertEqual((await win.DB.getClient(saved.id)).phone, '', '"Only this job" leaves the client alone');
+      win.confirm = () => true;
+      assert(await JD.offerClientUpdate(job, { ...job, clientPhone: '0400 000 001' }), 'Update client');
+      assertEqual((await win.DB.getClient(saved.id)).phone, '0400 000 001', 'puts the new phone on the client record');
+      assertEqual((await win.DB.getJob(job.id)).clientPhone || '', '', 'without touching any job');
+    } finally {
+      win.confirm = realConfirm;
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
   // ---------- iOS "add to home screen" notice (ios-install.js) ----------
 
   test('iOS notice: stays out of the way when the app is already installed, or not on iOS', () => {
@@ -12431,8 +12587,18 @@
     const greens = doc.querySelectorAll('#report-section-list .status-dot-green').length;
     // v169: what is left is counted in questions (finish-step.js); the bar
     // and the percentage still follow the ticks on the list underneath.
-    const left = win.ReportUI.finishQuestions().length;
-    assertEqual(doc.getElementById('report-progress-text').textContent, `${left} questions left`, 'the card counts the questions left');
+    // v188: every question left, and how many of them stop signing: the
+    // number Sign quotes (break-it run: 24 on the card, 22 on Sign).
+    const all = win.ReportUI.finishQuestions();
+    const left = all.filter((q) => !q.soft).length;
+    assertEqual(doc.getElementById('report-progress-text').textContent,
+      `${all.length} questions left` + (left < all.length ? `, ${left} before you can sign` : ''), 'the card gives both numbers');
+    // And Sign says the same number (break-it run: 24 on the card, 22 on Sign).
+    const finalizeBtn = doc.getElementById('finalize-report-btn');
+    assert(finalizeBtn && finalizeBtn.disabled && finalizeBtn.parentElement.classList.contains('finalize-wrap'), 'Sign is held back while questions are open');
+    finalizeBtn.parentElement.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    const said = doc.getElementById('toast').textContent;
+    if (!/walk-through/.test(said)) assert(said.includes(`: ${left} question`), `Sign quotes the same count (${left}): ${said}`);
     assertEqual(doc.getElementById('report-progress-pct').textContent, `${Math.round((greens / items) * 100)}%`, 'the percentage matches the ticks on the list');
     assertEqual(doc.getElementById('report-progress-fill').style.width, `${Math.round((greens / items) * 100)}%`, 'and the bar');
     const next = doc.getElementById('report-next-btn');
@@ -14828,7 +14994,9 @@
     await waitFor(() => doc.getElementById('report-progress'), 'the card is drawn');
     const n = win.ReportUI.finishQuestions().length;
     assert(n > 5, `a new report has questions left (${n})`);
-    assertEqual(doc.getElementById('report-progress-text').textContent, `${n} questions left`, 'the card counts them');
+    const must = win.ReportUI.finishQuestions().filter((q) => !q.soft).length;
+    assertEqual(doc.getElementById('report-progress-text').textContent,
+      `${n} questions left` + (must < n ? `, ${must} before you can sign` : ''), 'the card counts them, and those that stop signing');
     const start = doc.getElementById('report-next-btn');
     assertEqual(start.textContent, 'Answer them one at a time', 'and one button asks them');
     assert(doc.getElementById('finalize-report-btn').disabled, 'Sign and finish is locked while something must be answered');
@@ -14905,7 +15073,7 @@
     delete sections.findings.susceptibility;
     await win.DB.saveReport({ jobId: job.id, sections, documentType: 'timber_pest_inspection', finalizedAt: null, auditLog: [], schemaVersion: win.REPORT_SCHEMA_VERSION - 1 });
     await win.ReportUI.openReview(job.id);
-    await waitFor(() => doc.getElementById('report-progress-text').textContent === '3 questions left', 'three questions: two for the client, one that must be answered');
+    await waitFor(() => doc.getElementById('report-progress-text').textContent === '3 questions left, 1 before you can sign', 'three questions: two for the client, one that must be answered');
     assert(doc.getElementById('schema-mismatch-notice').classList.contains('hidden'), 'an unfinished report is not warned about an older question set');
 
     doc.getElementById('report-next-btn').click();

@@ -1444,6 +1444,19 @@
   async function createJobFromForm() {
     const name = jobNameInput.value.trim();
     if (!name) { toast('Enter a job name'); jobNameInput.focus(); return; }
+    // The same phone and email check as Edit details (break-it run, 28 Nov
+    // 2026): this form saved "not-an-email" without a word, and Edit details
+    // then refused it.
+    if (window.JobDetails && window.JobDetails.validate) {
+      const problem = window.JobDetails.validate({
+        name, phone: jobPhoneInput.value, email: isSubUser() ? '' : jobEmailInput.value,
+      });
+      if (problem) {
+        toast(problem);
+        (/email/i.test(problem) ? jobEmailInput : jobPhoneInput).focus();
+        return;
+      }
+    }
     const newScheduledAt = readScheduledAtFromForm();
     // How long, from the form (v163); an hour if the page has no such box.
     const newLength = window.BookingEdit ? window.BookingEdit.readNewJobLength() : 60;
@@ -1649,6 +1662,10 @@
     addressSuggestionItems = items;
     addressActiveIndex = -1;
     jobAddressSuggestions.innerHTML = '';
+    // "No matches found" has nothing to pick, so taps go straight through it
+    // (break-it run, 28 Nov 2026): it hung over the phone box, the first tap
+    // there landed on the message instead, and the number typed next was lost.
+    jobAddressSuggestions.classList.toggle('is-empty', items.length === 0);
 
     if (items.length === 0) {
       const li = document.createElement('li');
@@ -1761,9 +1778,19 @@
       else toast(msg);
       return;
     }
-    const question = keep && keep.grace
+    // A paid invoice goes with the job (break-it run, 28 Nov 2026: the
+    // question only mentioned photos and voice memos).
+    let paidNote = '';
+    try {
+      const invs = DB.getInvoicesForJob ? await DB.getInvoicesForJob(jobId) : [];
+      const paid = invs.filter((i) => i.paidAt || String(i.xeroStatus || '').toUpperCase() === 'PAID');
+      if (paid.length) {
+        paidNote = ` It has ${paid.length === 1 ? 'a paid invoice' : `${paid.length} paid invoices`} (${paid.map((i) => i.number).filter(Boolean).join(', ') || 'no number'}), which will be deleted too.`;
+      }
+    } catch (e) { /* the question still goes ahead without it */ }
+    const question = (keep && keep.grace
       ? 'This job has a report signed in the last day that has not been sent. Delete it only if it was signed by mistake: after a day, or once it is sent, a signed report is kept for 3 years.'
-      : 'Delete this job and all its photos and voice memos?';
+      : 'Delete this job and all its photos and voice memos?') + paidNote;
     if (!await askConfirm(question,
       { title: keep && keep.grace ? 'Delete a signed report?' : 'Delete job', okLabel: 'Delete', danger: true })) return;
     const doomed = await DB.getJob(jobId);

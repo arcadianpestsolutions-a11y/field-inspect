@@ -2663,7 +2663,12 @@
     card.dataset.finish = '1';
     next.classList.remove('hidden');
     if (must) {
-      text.textContent = `${n} question${n === 1 ? '' : 's'} left`;
+      // The number that stops signing (break-it run, 28 Nov 2026): the card
+      // said "24 questions left" while Sign said "22 still to answer", because
+      // the card also counted the client's signatures. Both numbers now: the
+      // walk-through counts down all of them, Sign quotes the second.
+      text.textContent = `${n} question${n === 1 ? '' : 's'} left`
+        + (must < n ? `, ${must} before you can sign` : '');
       next.textContent = n === 1 ? 'Answer it' : 'Answer them one at a time';
       return;
     }
@@ -3498,8 +3503,23 @@
     await finishShow(next.sectionId, next.fieldId);
   }
 
+  // "Needs an answer: ... Or tap Skip." is about the screen it was said on
+  // (break-it run, 28 Nov 2026): it stayed up for its few seconds after Next,
+  // so it read as a complaint about the new question nobody had touched yet,
+  // and after the answer was given it still said it was missing.
+  function clearFinishWarning() {
+    const t = document.getElementById('toast');
+    if (t && /Or tap Skip\.$/.test(t.textContent || '')) t.classList.add('hidden');
+  }
+  if (viewReportSection) {
+    const onAnswer = () => { if (finishRun) clearFinishWarning(); };
+    viewReportSection.addEventListener('input', onAnswer);
+    viewReportSection.addEventListener('change', onAnswer);
+  }
+
   async function finishShow(sectionId, fieldId) {
     if (!finishRun) return;
+    clearFinishWarning();
     finishRun.fieldId = fieldId;
     finishRun.busy = false;
     await openSectionEditor(sectionId, { finish: true });

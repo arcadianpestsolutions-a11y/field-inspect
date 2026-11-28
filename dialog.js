@@ -94,6 +94,27 @@
     )).filter((el) => !el.disabled && el.offsetParent !== null);
   }
 
+  // The second tap of a double tap (break-it run, 28 Nov 2026): tapping
+  // Delete twice deleted the job, then the second tap landed on the Jobs list
+  // that had just appeared under the finger and opened a different job. For a
+  // moment after a question closes, a real tap that lands outside any open
+  // question is dropped. Only real taps: a script's el.click() is not one.
+  const TAP_GUARD_MS = 450;
+  let tapGuardUntil = 0;
+  function swallowsTap(e, nowMs) {
+    if (!e || !e.isTrusted) return false;
+    if ((nowMs == null ? Date.now() : nowMs) >= tapGuardUntil) return false;
+    const t = e.target;
+    return !(t && t.closest && t.closest('.app-dialog'));
+  }
+  function guardTap(e) {
+    if (!swallowsTap(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+  }
+  document.addEventListener('click', guardTap, true);
+
   function present(overlay, { onCancel, initialFocus }) {
     const previouslyFocused = document.activeElement;
     openCount += 1;
@@ -123,6 +144,7 @@
     return function dismiss() {
       document.removeEventListener('keydown', onKeyDown);
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      tapGuardUntil = Date.now() + TAP_GUARD_MS;
       openCount = Math.max(0, openCount - 1);
       if (openCount === 0) document.body.classList.remove('dialog-open');
       if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
@@ -336,5 +358,5 @@
     });
   }
 
-  window.Dialog = { confirm, prompt, alert, photoFiling };
+  window.Dialog = { confirm, prompt, alert, photoFiling, swallowsTap };
 })();
