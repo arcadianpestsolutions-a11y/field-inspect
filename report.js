@@ -3577,6 +3577,7 @@
     finishRun = null;
     stopAutosave();
     applyFinishChrome();
+    if (window.Dialog && window.Dialog.armTapGuard) window.Dialog.armTapGuard();
     hide(viewReportSection);
     renderSectionList();
     show(viewReport);
@@ -4747,6 +4748,9 @@
   sectionSaveBtn.addEventListener('click', async () => {
     const saved = await commitSection();
     if (!saved) return;
+    // The list takes the button's place under the finger: a second tap of
+    // a double-tap must not open whichever row lands there (explorer 2).
+    if (window.Dialog && window.Dialog.armTapGuard) window.Dialog.armTapGuard();
     hide(viewReportSection);
     renderSectionList();
     show(viewReport);
@@ -4837,6 +4841,7 @@
     // "restore your unsaved work?" prompt the next time this section opens.
     stopAutosave();
     DB.deleteSectionDraft(currentReport.jobId, currentSectionId).catch(() => {});
+    if (window.Dialog && window.Dialog.armTapGuard) window.Dialog.armTapGuard();
     hide(viewReportSection);
     show(viewReport);
   });

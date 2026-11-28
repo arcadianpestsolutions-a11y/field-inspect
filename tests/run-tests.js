@@ -12410,6 +12410,16 @@
     assert(D.swallowsTap(tapAt(100, 100), now, { x: 110, y: 95 }), 'a tap on the same spot straight after is a ghost');
     assert(!D.swallowsTap(tapAt(100, 100), now, { x: 300, y: 500 }), 'a tap elsewhere is a real tap, and goes through');
     assert(D.swallowsTap({ isTrusted: true, target: frame.contentDocument.body }, now, { x: 300, y: 500 }), 'a tap with no position is still dropped, as before');
+    // A screen can arm the same guard itself when it changes under a finger
+    // (the section editor's Save & Back puts the section list there).
+    await wait(500);
+    const later = Date.now();
+    assert(!D.swallowsTap(tapAt(100, 100), later, null), 'the question is long closed');
+    D.armTapGuard();
+    assert(D.swallowsTap(tapAt(100, 100), later, null), 'armed by a screen: the next tap on the spot is dropped');
+    assert(!D.swallowsTap(tapAt(100, 100), later + 1000, null), 'and a second later it is not');
+    const src = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assertEqual((src.match(/Dialog\.armTapGuard\(\)/g) || []).length, 3, 'Save & Back, the Back arrow and the end of the finish step all arm it');
   });
 
   test('History: sketch marker data reads as a count, a monitoring job wears its own badge, and an odd year is said', async () => {

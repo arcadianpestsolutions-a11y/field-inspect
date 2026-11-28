@@ -372,5 +372,14 @@
     });
   }
 
-  window.Dialog = { confirm, prompt, alert, photoFiling, swallowsTap };
+  // The same guard, armed by a screen that is about to change under a
+  // finger (the section editor's Save & Back): a second tap on the same
+  // spot hit whatever row of the list took the button's place (explorer 2,
+  // 29 Nov 2026).
+  function armTapGuard() {
+    tapGuardUntil = Date.now() + TAP_GUARD_MS;
+    tapGuardAt = lastPointer;
+  }
+
+  window.Dialog = { confirm, prompt, alert, photoFiling, swallowsTap, armTapGuard };
 })();
