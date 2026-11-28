@@ -174,6 +174,26 @@
       values[field.id] = value;
       if (onFieldChange) onFieldChange(field, value, how || 'edit');
     }
+    // One chip above a date or time box that fills in the moment it is
+    // tapped. Local time, the way the box itself reads it.
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+    const localNow = () => { const d = new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+    function stampChip(field, input, label, make) {
+      const picks = document.createElement('div');
+      picks.className = 'quick-picks';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'quick-pick';
+      b.dataset.pick = label;
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        input.value = make();
+        setValue(field, input.value, 'tap');
+      });
+      picks.appendChild(b);
+      return picks;
+    }
     // A short list as large buttons rather than a dropdown, when the host asks
     // for it (the Finish step shows one question per screen).
     const selectAsButtons = typeof o.selectAsButtons === 'function' ? o.selectAsButtons : null;
@@ -476,12 +496,17 @@
         input.type = 'date';
         input.value = values[field.id] || '';
         input.addEventListener('input', () => setValue(field, input.value));
+        // "Today" as one tap (overnight run, 28 Nov 2026), except on a date
+        // that is in the future by its nature: a due date, a valid-until.
+        if (!/due|until|next/i.test(field.id)) row.appendChild(stampChip(field, input, 'Today', localToday));
         row.appendChild(input);
       } else if (field.type === 'time') {
         const input = document.createElement('input');
         input.type = 'time';
         input.value = values[field.id] || '';
         input.addEventListener('input', () => setValue(field, input.value));
+        // The time it is, as one tap: a finish time is almost always "now".
+        row.appendChild(stampChip(field, input, 'Now', localNow));
         row.appendChild(input);
       } else if (field.type === 'select' && selectAsButtons && selectAsButtons(field)) {
         const wrap = document.createElement('div');

@@ -15299,6 +15299,54 @@
     await win.DB.deleteJob(job.id);
   });
 
+  test('Dates and times: "Today" and "Now" are one tap, and a due date gets no "Today"', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Stamp Job', address: '4 Clock St', jobType: 'termite' });
+    try {
+      await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+      await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the report is open');
+      openReportSection(doc, 'Client Details');
+      await waitFor(() => editorOpen(doc) && doc.querySelector('[data-field-row="inspectionTime"] .quick-pick'), 'the chip is above the time box');
+      const timeRow = doc.querySelector('[data-field-row="inspectionTime"]');
+      const timeInput = timeRow.querySelector('input[type="time"]');
+      assertEqual(timeRow.querySelector('.quick-pick').textContent, 'Now');
+      timeInput.value = '';
+      timeRow.querySelector('.quick-pick').click();
+      const d = new win.Date();
+      const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      assert(timeInput.value === hhmm || /^\d\d:\d\d$/.test(timeInput.value), `one tap writes the time it is (${timeInput.value})`);
+      const dateRow = doc.querySelector('[data-field-row="inspectionDate"]');
+      const dateInput = dateRow.querySelector('input[type="date"]');
+      assertEqual(dateRow.querySelector('.quick-pick').textContent, 'Today');
+      dateInput.value = '';
+      dateRow.querySelector('.quick-pick').click();
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      assertEqual(dateInput.value, today, 'one tap writes today');
+      doc.getElementById('section-save-btn').click();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+      const saved = (await win.DB.getReport(job.id)).sections.clientDetails;
+      assertEqual(saved.inspectionDate, today, 'and it is what is kept');
+      assert(/^\d\d:\d\d$/.test(saved.inspectionTime), 'the time too');
+    } finally {
+      win.hideAllAppViews();
+      await win.DB.deleteJob(job.id);
+    }
+    // A date that is in the future by its nature offers no "Today".
+    const cert = await win.DB.addJob({ name: 'Stamp Cert Job', address: '5 Clock St', jobType: 'termite' });
+    try {
+      await win.ReportUI.openReview(cert.id, 'termite_certificate');
+      await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the certificate is open');
+      openReportSection(doc, 'Warranty & Next Inspection');
+      await waitFor(() => editorOpen(doc) && doc.querySelector('[data-field-row="nextInspectionDue"] input[type="date"]'), 'the due date is on screen');
+      assert(!doc.querySelector('[data-field-row="nextInspectionDue"] .quick-pick'), 'no "Today" on a due date');
+      assert(doc.querySelector('[data-field-row="warrantyStart"] .quick-pick'), 'but the day the warranty starts has one');
+    } finally {
+      win.hideAllAppViews();
+      await win.DB.deleteJob(cert.id);
+    }
+  });
+
   test('Report: the question-set warning is for signed reports, and questions are not in capitals', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
@@ -16881,9 +16929,11 @@
       findings: { liveTermitesFound: 'No', workingsFound: 'No' },
     });
     const making = win.ReportClient.generatePdfBlob(job, report);
-    await wait(30);
-    const banner = win.document.querySelector('.pdf-sheet-banner');
-    assert(banner && /Making the PDF/.test(banner.textContent), 'while it is drawn, the sheet over the app says what is happening');
+    // The sheet goes up once the captions are read, which takes longer on a
+    // slow machine, so this watches for it rather than peeking after a fixed wait.
+    let banner = null;
+    await waitFor(() => { banner = win.document.querySelector('.pdf-sheet-banner'); return !!banner; }, 'the sheet over the app went up', 8000);
+    assert(/Making the PDF/.test(banner.textContent), 'while it is drawn, the sheet says what is happening');
     const blob = await making;
     const head = await blob.slice(0, 5).text();
     assertEqual(head, '%PDF-', 'it is a PDF');
