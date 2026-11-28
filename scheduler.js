@@ -156,7 +156,7 @@
     return `${DOW[(d.getDay() + 6) % 7]} ${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`;
   }
 
-  const typeIcon = (job) => (job.jobType === 'pest_treatment' ? '🧪' : '🐜');
+  const typeIcon = (job) => (job.jobType === 'pest_treatment' ? '🧪' : (job.preferredDocumentType === 'termite_monitoring' ? '📍' : '🐜'));
 
   function jobsOn(date) {
     return jobs
@@ -678,7 +678,9 @@
     if (!(await confirmNoOverlap(job.id, when.getTime(), mins))) return;
     const booked = await bookJobAt(job, when.getTime(), mins);
     closePicker();
-    toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtSlot(slot)} (${mins} min)`);
+    // "4 hrs", the way the diary says it, not "(240 min)".
+    const length = window.BookingEdit && window.BookingEdit.lengthLabel ? window.BookingEdit.lengthLabel(mins) : `${mins} min`;
+    toast(`${job.name} booked ${fmtDayLabel(selected)} at ${fmtSlot(slot)} (${length})`);
     await refresh();
     offerBookingNotice((booked || job).id);
   }

@@ -3768,24 +3768,23 @@
       const identifyBtn = Array.from(doc.querySelectorAll('button')).find((b) => b.textContent.includes('Identify Pest'));
       assert(identifyBtn, 'Identify Pest button should render for pestPhotos');
       identifyBtn.click();
-      await wait(200);
-
-      assert(calledWith, 'window.AI.identifyPest was called');
+      // The photo is read and prepared first; on a busy run that takes longer
+      // than a fixed 200 ms (it failed once in a full headless run, 29 Nov 2026).
+      await waitFor(() => calledWith, 'window.AI.identifyPest was called', 4000);
       assertEqual(calledWith.count, 1, 'the one added photo is sent');
       assert(calledWith.options.includes('German Cockroaches'), 'targetPests options are passed through');
 
-      const card = doc.querySelector('.identify-pest-card');
-      assert(card && card.textContent.includes('German Cockroach'), 'the identification renders');
+      await waitFor(() => { const c = doc.querySelector('.identify-pest-card'); return c && c.textContent.includes('German Cockroach'); }, 'the identification renders', 4000);
 
       const applyBtn = doc.querySelector('.identify-pest-apply');
       assert(applyBtn, 'an apply button renders for the matched category');
       applyBtn.click();
-      await wait(200);
-
-      const checked = Array.from(doc.querySelectorAll('.checkbox-chip'))
-        .find((chip) => chip.textContent.includes('German Cockroaches'))
-        .querySelector('input[type="checkbox"]');
-      assert(checked && checked.checked, 'German Cockroaches is ticked in Target Pest(s) after applying');
+      const ticked = () => {
+        const chip = Array.from(doc.querySelectorAll('.checkbox-chip')).find((c) => c.textContent.includes('German Cockroaches'));
+        const box = chip && chip.querySelector('input[type="checkbox"]');
+        return !!(box && box.checked);
+      };
+      await waitFor(ticked, 'German Cockroaches is ticked in Target Pest(s) after applying', 4000);
     } finally {
       win.AI = origAI;
     }
@@ -12311,6 +12310,143 @@
     for (const j of made) await win.DB.deleteJob(j.id);
   });
 
+  test('New job: the agreement box ticked with no email still creates the job (explorer 2)', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    win.showJobListView();
+    await wait(150);
+    doc.getElementById('new-job-btn').click();
+    await wait(200);
+    setTextInput(win, doc.getElementById('job-name'), 'Agreement No Email Job');
+    setTextInput(win, doc.getElementById('job-address'), '7 Agree St');
+    const box = doc.getElementById('job-agreement');
+    assert(box && box.checked, 'the agreement box starts ticked for a timber pest inspection');
+    assertEqual(doc.getElementById('job-email').value, '', 'and no email is typed');
+    doc.getElementById('job-form-save').click();
+    await waitFor(async () => (await win.DB.getJobs()).some((j) => j.name === 'Agreement No Email Job'), 'the job is created', 5000);
+    await waitFor(() => navView(doc) === 'view-job', 'and opened');
+    win.hideAllAppViews();
+    win.showJobListView();
+    await wait(150);
+    for (const j of (await win.DB.getJobs()).filter((x) => x.name === 'Agreement No Email Job')) await win.DB.deleteJob(j.id);
+  });
+
+  test('Site sketch: a pad opened and left alone is not an unsaved change, and Clear asks first', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Untouched Sketch Job', address: '8 Pad St', addressLat: -34.05, addressLng: 150.7, jobType: 'termite' });
+    const realConfirm = win.confirm;
+    const asked = [];
+    win.confirm = (m) => { asked.push(String(m)); return false; };
+    try {
+      await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+      await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the report is open');
+      openReportSection(doc, 'Site Sketch (Mud Map)');
+      await waitFor(() => doc.querySelector('.sketch-canvas'), 'the pad is up');
+      await wait(900); // the map outline, if any, has had its moment to draw itself
+      doc.getElementById('section-back-btn').click();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'Back goes straight to the report');
+      assertEqual(asked.length, 0, 'with no "Discard unsaved work?" for a pad nobody touched');
+      // Draw a line, then Clear: it asks, and No keeps the drawing.
+      openReportSection(doc, 'Site Sketch (Mud Map)');
+      await waitFor(() => { const c = doc.querySelector('.sketch-canvas'); return c && c.getBoundingClientRect().width > 0; }, 'the pad is up again and laid out');
+      const pads = doc.querySelectorAll('.sketch-canvas');
+      assertEqual(pads.length, 1, 'one pad on screen');
+      const canvas = pads[0];
+      const r = canvas.getBoundingClientRect();
+      assert(r.width > 0 && r.height > 0, `the pad is laid out (${Math.round(r.width)}x${Math.round(r.height)})`);
+      const at = (fx, fy, type) => canvas.dispatchEvent(new win.MouseEvent(type, { bubbles: true, cancelable: true, clientX: r.left + r.width * fx, clientY: r.top + r.height * fy, buttons: 1 }));
+      at(0.2, 0.2, 'mousedown'); at(0.5, 0.5, 'mousemove'); at(0.6, 0.6, 'mousemove');
+      win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }));
+      await wait(100);
+      const inkBefore = canvas.toDataURL();
+      const clear = Array.from(doc.querySelectorAll('.sketch-field button')).filter((b) => b.textContent.trim() === 'Clear');
+      assertEqual(clear.length, 1, 'one Clear button');
+      clear[0].click();
+      await wait(150);
+      assert(asked.length === 1 && /Clear the drawing/.test(asked[0]), `Clear asks first: ${asked[0]}`);
+      assertEqual(canvas.toDataURL(), inkBefore, 'and "Keep it" keeps the drawing');
+      doc.getElementById('section-save-btn').click();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+    } finally {
+      win.confirm = realConfirm;
+      win.hideAllAppViews();
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
+  test('Today: the "Report" button on a card in review opens the report, not just the job', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const made = await win.DB.addJob({ name: 'Today Report Job', address: '5 Today Rd', scheduledAt: liveAt(10) });
+    const job = await win.DB.updateJob(made.id, { status: 'review' }) || await win.DB.getJob(made.id);
+    win.localStorage.setItem('scope-home-tab', 'today');
+    try {
+      win.showJobListView();
+      await wait(700);
+      await win.TodayUI.render([await win.DB.getJob(made.id)]);
+      const btn = doc.querySelector('#today-panel .today-btn-primary');
+      assertEqual(btn.textContent, 'Report', 'a job in review offers its report');
+      btn.click();
+      await waitFor(() => navView(doc) === 'view-report', 'and the report opens');
+    } finally {
+      win.localStorage.setItem('scope-home-tab', 'all');
+      win.hideAllAppViews();
+      win.showJobListView();
+      await wait(150);
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
+  test('Dialog tap guard: only a tap on the spot where the question closed is dropped', async () => {
+    const win = frame.contentWindow;
+    const D = win.Dialog.swallowsTap ? win.Dialog : win.__realDialog;
+    const p = D.confirm('Guard distance?');
+    await wait(50);
+    (dialogButton(frame.contentDocument, 'Cancel')).click();
+    await p;
+    const now = Date.now();
+    const tapAt = (x, y) => ({ isTrusted: true, target: frame.contentDocument.body, clientX: x, clientY: y });
+    assert(D.swallowsTap(tapAt(100, 100), now, { x: 110, y: 95 }), 'a tap on the same spot straight after is a ghost');
+    assert(!D.swallowsTap(tapAt(100, 100), now, { x: 300, y: 500 }), 'a tap elsewhere is a real tap, and goes through');
+    assert(D.swallowsTap({ isTrusted: true, target: frame.contentDocument.body }, now, { x: 300, y: 500 }), 'a tap with no position is still dropped, as before');
+  });
+
+  test('History: sketch marker data reads as a count, a monitoring job wears its own badge, and an odd year is said', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const src = await (await fetch('../report.js', { cache: 'reload' })).text();
+    assert(/startsWith\('\{"markers"'\)/.test(src), 'the audit summary knows marker data');
+    const job = await win.DB.addJob({ name: 'Badge Mon Job', address: '9 Badge St', jobType: 'termite', preferredDocumentType: 'termite_monitoring' });
+    try {
+      win.showJobListView();
+      await waitFor(() => Array.from(doc.querySelectorAll('#job-list .job-item')).some((li) => /Badge Mon Job/.test(li.textContent)), 'the job is listed');
+      const li = Array.from(doc.querySelectorAll('#job-list .job-item')).find((x) => /Badge Mon Job/.test(x.textContent));
+      assert(/Monitoring/.test(li.querySelector('.job-item-type').textContent), `a monitoring visit is not badged as a termite inspection: ${li.querySelector('.job-item-type').textContent}`);
+      // An odd year on a date question is said, not swallowed.
+      await win.ReportUI.openReview(job.id, 'timber_pest_inspection');
+      await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the report is open');
+      openReportSection(doc, 'Client Details');
+      await waitFor(() => doc.querySelector('[data-field-row="inspectionDate"] input[type="date"]'), 'the date box is up');
+      const toastEl = doc.getElementById('toast');
+      toastEl.textContent = '';
+      const dateInput = doc.querySelector('[data-field-row="inspectionDate"] input[type="date"]');
+      dateInput.value = '1901-05-05';
+      dateInput.dispatchEvent(new win.Event('input', { bubbles: true }));
+      dateInput.dispatchEvent(new win.Event('change', { bubbles: true }));
+      assert(/Check the year on "Inspection Date": 1901/.test(toastEl.textContent), `it says so: "${toastEl.textContent}"`);
+      const discard = expectQuestion(win, doc, 'Discard', true);
+      doc.getElementById('section-back-btn').click();
+      await discard();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'back on the report');
+    } finally {
+      win.hideAllAppViews();
+      win.showJobListView();
+      await wait(150);
+      await win.DB.deleteJob(job.id);
+    }
+  });
+
   test('Inputs: a box that is full says so instead of cutting the text in silence', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
@@ -16060,6 +16196,42 @@
     assert(B.checkWhen(at(2026, 10, 27), now).ask, 'yesterday is asked about, not refused (a visit that already happened)');
     assertEqual(B.checkWhen(at(2026, 10, 28, 7), now), '', 'earlier today is fine');
     assertEqual(B.checkWhen(at(2026, 11, 2), now), '', 'next week is fine');
+  });
+
+  test('Booking sheet: Save with the Day cleared says "Pick a day", on top of the sheet, and keeps the sheet', async () => {
+    // The AI explorer (29 Nov 2026) cleared the day, tapped Save and saw nothing.
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Blank Day Job', address: '2 Blank St', scheduledAt: new Date(2026, 11, 3, 9).getTime(), scheduledDurationMins: 60 });
+    const realAlert = win.alert;
+    const said = [];
+    try {
+      await win.showJobViewById(job.id);
+      await waitFor(() => doc.getElementById('job-booking-change'), 'the job screen offers Change time');
+      doc.getElementById('job-booking-change').click();
+      await waitFor(() => doc.getElementById('booking-edit-date'), 'the sheet opens');
+      setTextInput(win, doc.getElementById('booking-edit-date'), '');
+      win.alert = (m) => { said.push(String(m)); };
+      doc.querySelector('.booking-edit [data-action="booking-edit-save"]').click();
+      await wait(200);
+      // The sheet answers in its own line, under the fields, without a dialog.
+      const err = doc.querySelector('.booking-edit .tester-feedback-err');
+      assert(err && /Pick a day/.test(err.textContent), `the sheet says to pick a day: "${err && err.textContent}"`);
+      const cs = win.getComputedStyle(err);
+      assert(cs.display !== 'none' && cs.visibility !== 'hidden' && err.getBoundingClientRect().height > 0, 'and the line is drawn');
+      assertEqual(said.length, 0, 'no second message on top of it');
+      assert(doc.querySelector('.booking-edit'), 'the sheet is still there to fix');
+      assert(!doc.querySelector('.booking-edit [data-action="booking-edit-save"]').disabled, 'and Save works again');
+      assertEqual((await win.DB.getJob(job.id)).scheduledAt, new Date(2026, 11, 3, 9).getTime(), 'the booking is unchanged');
+    } finally {
+      win.alert = realAlert;
+      const cancel = doc.querySelector('.booking-edit [data-action="booking-edit-cancel"]');
+      if (cancel) { cancel.click(); await wait(150); }
+      win.hideAllAppViews();
+      win.showJobListView();
+      await wait(150);
+      await win.DB.deleteJob(job.id);
+    }
   });
 
   test('Back button: a bottom sheet (the booking sheet) is closed by Back, and the page under it stays', async () => {

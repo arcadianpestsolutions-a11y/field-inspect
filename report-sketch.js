@@ -17,13 +17,21 @@
 (() => {
   'use strict';
 
-  const { toast, askPrompt, fmtDay } = window.Common;
+  const { toast, askPrompt, askConfirm, fmtDay } = window.Common;
 
   function renderSketchField(field, host) {
     const job = () => host.job();
     const values = () => host.values();
     const wrap = document.createElement('div');
     wrap.className = 'sketch-field';
+    // Nothing is written into the section until the technician has touched
+    // the pad. The outline the map loader draws by itself was being saved as
+    // a sketch, so a section opened and left alone asked "Discard 1 unsaved
+    // change?" (overnight run, 29 Nov 2026).
+    let userActed = false;
+    wrap.addEventListener('pointerdown', () => { userActed = true; }, true);
+    wrap.addEventListener('touchstart', () => { userActed = true; }, { capture: true, passive: true });
+    wrap.addEventListener('click', () => { userActed = true; }, true);
 
     const canvas = document.createElement('canvas');
     canvas.width = 340;
@@ -60,6 +68,7 @@
     // PDF already use, and the markers as data so a later edit gets real
     // markers back instead of a picture of them.
     function saveSnapshot() {
+      if (!userActed) return;
       values()[field.id] = canvas.toDataURL('image/png');
       values().sketchData = markers.length ? JSON.stringify({ markers }) : '';
     }
@@ -459,9 +468,13 @@
     clearBtn.type = 'button';
     clearBtn.className = 'btn btn-secondary';
     clearBtn.textContent = 'Clear';
-    clearBtn.addEventListener('click', () => {
+    clearBtn.addEventListener('click', async () => {
       // Clear wipes the technician's own drawing and labels back to the base
       // layer — it does not lose an already-loaded backdrop or outline.
+      // Asked first (overnight run, 29 Nov 2026): one tap took minutes of
+      // drawing with no way back.
+      if (hasFreehandWork && !(await askConfirm('Your lines and labels go. Markers and the outline stay.',
+        { title: 'Clear the drawing?', okLabel: 'Clear', cancelLabel: 'Keep it', danger: true }))) return;
       inkCtx.clearRect(0, 0, ink.width, ink.height);
       hasFreehandWork = false;
       commit();

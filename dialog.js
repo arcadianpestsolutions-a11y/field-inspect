@@ -100,12 +100,25 @@
   // moment after a question closes, a real tap that lands outside any open
   // question is dropped. Only real taps: a script's el.click() is not one.
   const TAP_GUARD_MS = 450;
+  const TAP_GUARD_PX = 60;
   let tapGuardUntil = 0;
-  function swallowsTap(e, nowMs) {
+  // Where the finger was when the question closed: only a second tap on
+  // that same spot is a ghost. A deliberate tap elsewhere straight after
+  // Cancel (Save & Back, the Back arrow) was being dropped too (overnight
+  // run, 29 Nov 2026).
+  let lastPointer = null;
+  let tapGuardAt = null;
+  document.addEventListener('pointerdown', (e) => { if (e.isTrusted) lastPointer = { x: e.clientX, y: e.clientY }; }, true);
+  function swallowsTap(e, nowMs, at) {
     if (!e || !e.isTrusted) return false;
     if ((nowMs == null ? Date.now() : nowMs) >= tapGuardUntil) return false;
     const t = e.target;
-    return !(t && t.closest && t.closest('.app-dialog'));
+    if (t && t.closest && t.closest('.app-dialog')) return false;
+    const point = at === undefined ? tapGuardAt : at;
+    if (point && typeof e.clientX === 'number' && (e.clientX || e.clientY)) {
+      return Math.hypot(e.clientX - point.x, e.clientY - point.y) <= TAP_GUARD_PX;
+    }
+    return true;
   }
   function guardTap(e) {
     if (!swallowsTap(e)) return;
@@ -145,6 +158,7 @@
       document.removeEventListener('keydown', onKeyDown);
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       tapGuardUntil = Date.now() + TAP_GUARD_MS;
+      tapGuardAt = lastPointer;
       openCount = Math.max(0, openCount - 1);
       if (openCount === 0) document.body.classList.remove('dialog-open');
       if (previouslyFocused && typeof previouslyFocused.focus === 'function') {

@@ -1288,7 +1288,8 @@
       // A job with no name (an old import, or a synced row) must still be tappable.
       li.querySelector('.job-item-name').textContent = job.name || job.address || 'Unnamed job';
       li.querySelector('.status-badge').textContent = DB.JOB_STATUS_LABELS[job.status] || 'New';
-      li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment' : '🐜 Termite';
+      li.querySelector('.job-item-type').textContent = job.jobType === 'pest_treatment' ? '🧪 Pest Treatment'
+        : (job.preferredDocumentType === 'termite_monitoring' ? '📍 Monitoring' : '🐜 Termite');
       // A booked job already says when, in the badge on the right, so only the
       // address goes here. An unbooked one says when it was added, which is the
       // only date it has.

@@ -147,7 +147,16 @@
 
     const actions = el('div', { class: 'today-actions' });
     const open = el('button', { type: 'button', class: 'today-btn today-btn-primary', text: actionLabel(job) });
-    open.addEventListener('click', (e) => { e.stopPropagation(); openJob(job); });
+    open.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      // "Report" opens the report, not the job under it (overnight run, 29 Nov 2026).
+      if (job.status === 'review' && window.ReportUI && window.ReportUI.openReview) {
+        if (window.showJobViewById) await window.showJobViewById(job.id);
+        window.ReportUI.openReview(job.id);
+        return;
+      }
+      openJob(job);
+    });
     actions.appendChild(open);
     if (window.JobDetails) {
       const tel = window.JobDetails.telHref(job.clientPhone);

@@ -110,6 +110,10 @@ body {
   font-size: 0.78rem;
   color: var(--text-dim);
 }
+/* A name with no spaces in it (a pasted reference, say) ran the subtitle
+   out past the phone's edge and widened the whole report screen (overnight
+   run, 29 Nov 2026). It wraps instead; the h1 above it already clips. */
+.topbar-title .subtitle { display: block; overflow-wrap: anywhere; }
 
 .icon-btn {
   background: none;

@@ -400,7 +400,9 @@
         current = null;
       } else {
         // There is no Save button on purpose; say that it saved (v164).
-        toast(`Saved ${current.name || 'the enquiry'}`);
+        // A name is cut for the toast: a 300-character one filled the screen.
+        const shown = String(current.name || '').trim();
+        toast(`Saved ${shown ? (shown.length > 40 ? shown.slice(0, 39).trimEnd() + '…' : shown) : 'the enquiry'}`);
       }
     }
     await openBoard();

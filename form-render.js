@@ -496,6 +496,14 @@
         input.type = 'date';
         input.value = values[field.id] || '';
         input.addEventListener('input', () => setValue(field, input.value));
+        // A year typed as 1901 or 2099 is kept (the box is the record), but
+        // said (overnight run, 29 Nov 2026: 1901 went into a signed agreement
+        // date without a word).
+        input.addEventListener('change', () => {
+          const y = Number(String(input.value || '').slice(0, 4));
+          const thisYear = new Date().getFullYear();
+          if (y && (y < 2000 || y > thisYear + 10) && window.Common) window.Common.toast(`Check the year on "${field.label}": ${y}.`);
+        });
         // "Today" as one tap (overnight run, 28 Nov 2026), except on a date
         // the schema marks `future: true` (a due date, a valid-until).
         if (!field.future) row.appendChild(stampChip(field, input, 'Today', localToday));

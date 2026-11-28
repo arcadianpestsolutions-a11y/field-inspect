@@ -832,7 +832,7 @@
       } else if (step.kind === 'notes') {
         container.appendChild(el('div', 'walk-title', 'Inside: what blocked the view'));
         container.appendChild(el('div', 'walk-hint',
-          'Tick what stopped you seeing walls and floors. These go into the report. No photos of these.'));
+          'The usual things that hide walls and floors are ticked. Untick any that did not apply here. These go into the report. No photos of these.'));
         const chosen = new Set(state.notes || INSIDE_NOTES.map((n) => n.value));
         const list = el('div', 'walk-notes');
         for (const n of INSIDE_NOTES) {

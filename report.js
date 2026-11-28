@@ -394,6 +394,11 @@
     }
     const str = String(value);
     if (str.startsWith('data:image/')) return '(image)';
+    // Sketch marker data is JSON for the pad, not for a person (History
+    // showed the raw text; overnight run, 29 Nov 2026).
+    if (str.startsWith('{"markers"')) {
+      try { const n = JSON.parse(str).markers.length; return `${n} marker${n === 1 ? '' : 's'}`; } catch (e) { return '(markers)'; }
+    }
     return str.length > AUDIT_TEXT_LIMIT ? str.slice(0, AUDIT_TEXT_LIMIT) + '…' : str;
   }
 
@@ -4082,7 +4087,7 @@
       if (!products.length) {
         cardsWrap.appendChild(Object.assign(document.createElement('p'), {
           className: 'empty-hint',
-          textContent: 'No products recorded yet — tap "+ Add Product" for each one you applied.',
+          textContent: 'No products recorded yet — tap "+ Add Product" for each one.',
         }));
       }
 
