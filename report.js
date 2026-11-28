@@ -2069,9 +2069,13 @@
     if (entry.event === 'carried-forward') {
       const of = carriedDate(entry.basis);
       const plan = entry.sectionId === 'basis';
-      return `<strong>${plan ? 'Basis of the plan filled' : 'Property details carried forward'}</strong>${of ? ` from the inspection of ${escapeHtml(of)}` : ''}<br>`
+      const sketch = entry.sectionId === 'siteSketch';
+      const head = plan ? 'Basis of the plan filled' : (sketch ? 'Started from last visit\'s sketch' : 'Property details carried forward');
+      const meta = plan ? 'The findings of that signed report, restated.'
+        : (sketch ? 'Taken by a tap on the sketch pad, with that visit\'s markers, to be drawn over.' : 'Descriptions only: no finding is carried.');
+      return `<strong>${head}</strong>${of ? ` from the inspection of ${escapeHtml(of)}` : ''}<br>`
         + `<span class="audit-change">${escapeHtml(entry.to || '')}</span><br>`
-        + `<span class="audit-meta">${when}. ${plan ? 'The findings of that signed report, restated.' : 'Descriptions only: no finding is carried.'}</span>`;
+        + `<span class="audit-meta">${when}. ${meta}</span>`;
     }
     if (entry.event === 'carried-checked') {
       return `<strong>${entry.sectionId === 'basis' ? 'Basis of the plan read and confirmed' : 'Carried-forward property details checked'}</strong> — ${when} by ${who}`;
@@ -4535,7 +4539,31 @@
   // asks for the job and the section's answers through these two, so it
   // always reads the current ones.
   function renderSketchField(field) {
-    return window.ReportSketch.render(field, { job: () => currentJob, values: () => pendingSectionValues });
+    return window.ReportSketch.render(field, {
+      job: () => currentJob,
+      values: () => pendingSectionValues,
+      // Last visit's sketch of this property, for the inspection's own site
+      // sketch only. The pad offers it behind an explicit tap (overnight run,
+      // 28 Nov 2026), never carries it by itself: the picture holds that
+      // visit's markers.
+      previousSketch: async () => {
+        if (field.id !== 'sketchImage' || !currentReport) return null;
+        if ((currentReport.documentType || 'timber_pest_inspection') !== 'timber_pest_inspection') return null;
+        const previous = await previousInspectionFor(currentJob);
+        const from = previous && previous.sections && previous.sections.siteSketch;
+        if (!from || !String(from.sketchImage || '').startsWith('data:image/')) return null;
+        return {
+          image: from.sketchImage,
+          data: from.sketchData || '',
+          inspectionDate: String((previous.sections.clientDetails || {}).inspectionDate || ''),
+          fromJobId: previous.jobId,
+        };
+      },
+      carried: (prev) => {
+        if (!currentReport) return;
+        appendAudit(currentReport, { event: 'carried-forward', sectionId: 'siteSketch', to: 'Site Sketch', basis: prev.inspectionDate || '' });
+      },
+    });
   }
 
   function renderSummary() {

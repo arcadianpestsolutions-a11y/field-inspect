@@ -66,6 +66,9 @@
   // that never raises it cannot leave the next real Back press ignored.
   let ignoreUntil = 0;
   const IGNORE_WINDOW_MS = 700;
+  // The suite sets this itself (setHistory): a browser pane that clamps every
+  // timer to a second ran the 700 ms window out before a test could look.
+  let ignoreWindowMs = IGNORE_WINDOW_MS;
 
   const $ = (id) => document.getElementById(id);
   const shown = (el) => !!el && el.getBoundingClientRect().width > 1
@@ -110,7 +113,7 @@
       // Nothing left for Back to close: take our entry away, so the next press
       // leaves the app instead of seeming to do nothing.
       hasSentinel = false;
-      ignoreUntil = Date.now() + IGNORE_WINDOW_MS;
+      ignoreUntil = Date.now() + ignoreWindowMs;
       hist.back();
     }
   }
@@ -217,7 +220,10 @@
     isConsuming: () => Date.now() < ignoreUntil,
     // Passing nothing restores the default, which under test is a no-op: never
     // the real history, which a test iframe shares with the page that holds it.
-    setHistory(h) { hist = h || defaultHistory; hasSentinel = false; ignoreUntil = 0; },
+    setHistory(h, opts) {
+      hist = h || defaultHistory; hasSentinel = false; ignoreUntil = 0;
+      ignoreWindowMs = (opts && opts.ignoreWindowMs > 0) ? opts.ignoreWindowMs : IGNORE_WINDOW_MS;
+    },
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const { toast, askPrompt } = window.Common;
+  const { toast, askPrompt, fmtDay } = window.Common;
 
   function renderSketchField(field, host) {
     const job = () => host.job();
@@ -228,6 +228,43 @@
     } else {
       drawGrid();
       loadFootprintData(true);
+    }
+
+    // Last visit's sketch of this property as a starting point, behind a
+    // tap of its own: never carried by itself, because the picture holds
+    // that visit's markers. Offered only while this pad is blank. The host
+    // says whether there is one (report.js: the last finalized inspection
+    // at this address).
+    if (!existing && typeof host.previousSketch === 'function') {
+      host.previousSketch().then((prev) => {
+        if (!prev || !prev.image || hasFreehandWork || values()[field.id]) return;
+        const when = prev.inspectionDate ? ` (${fmtDay(prev.inspectionDate)})` : '';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'sketch-carry-btn';
+        btn.className = 'btn btn-outline full';
+        btn.textContent = `Start from last visit's sketch${when}`;
+        btn.addEventListener('click', () => {
+          const img = new Image();
+          img.onload = () => {
+            inkCtx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            hasFreehandWork = true;
+            // The markers come back live, under ids of their own, so they
+            // can be moved or deleted here without touching last visit's record.
+            try {
+              const parsed = JSON.parse(prev.data || '{}');
+              if (parsed && Array.isArray(parsed.markers)) markers = parsed.markers.map((m) => ({ ...m, id: DB.uid() }));
+            } catch (err) { /* the picture is still a start */ }
+            commit();
+            btn.remove();
+            hint.className = 'empty-hint';
+            hint.textContent = `Last visit's sketch${when}, as it was drawn then. Draw over it, tap a marker to move or delete it, or Clear to start again.`;
+            if (typeof host.carried === 'function') host.carried(prev);
+          };
+          img.src = prev.image;
+        });
+        wrap.insertBefore(btn, hint);
+      }).catch(() => { /* no earlier visit, or it could not be read */ });
     }
 
     function pos(e) {

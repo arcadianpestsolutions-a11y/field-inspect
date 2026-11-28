@@ -2797,7 +2797,8 @@
     });
 
     await win.InvoiceUI.open(job.id);
-    await wait(350);
+    await waitFor(() => !doc.getElementById('view-invoice').classList.contains('hidden')
+      && doc.getElementById('invoice-client-name').value === 'A Client', 'the invoice screen is up and filled in', 4000);
 
     assert(!doc.getElementById('view-invoice').classList.contains('hidden'), 'invoice view should be showing');
     assertEqual(doc.getElementById('invoice-client-name').value, 'A Client', 'client name prefilled');
@@ -11544,7 +11545,9 @@
     const doc = frame.contentDocument;
     await atJobList(win, doc);
     const rec = historyRecorder();
-    win.NavHistory.setHistory(rec);
+    // A long window: this test is about what happens INSIDE it, and a browser
+    // pane that clamps timers to a second would otherwise run it out first.
+    win.NavHistory.setHistory(rec, { ignoreWindowMs: 5000 });
     try {
       const a = await win.DB.addJob({ name: 'Race A', address: '6 Back St' });
       const b = await win.DB.addJob({ name: 'Race B', address: '7 Back St' });
@@ -11574,7 +11577,8 @@
     const doc = frame.contentDocument;
     await atJobList(win, doc);
     const rec = historyRecorder();
-    win.NavHistory.setHistory(rec);
+    // A short window: this test is about it ending.
+    win.NavHistory.setHistory(rec, { ignoreWindowMs: 200 });
     try {
       const a = await win.DB.addJob({ name: 'No Confirm A', address: '8 Back St' });
       await win.showJobViewById(a.id);
@@ -15951,6 +15955,56 @@
     win.hideAllAppViews();
     await win.DB.deleteJob(next.id);
     await win.DB.deleteJob(first.id);
+  });
+
+  test('Carry forward: last visit\'s sketch is offered as a start, on a tap, never by itself', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const first = await finishedInspection(win, 'Sketch Carry', '31 Sketch St, Camden', {});
+    const c = doc.createElement('canvas');
+    c.width = 34; c.height = 42;
+    const x = c.getContext('2d');
+    x.fillStyle = '#c00';
+    x.fillRect(0, 0, 34, 42);
+    const rep = await win.DB.getReport(first.id);
+    rep.sections.siteSketch = {
+      sketchImage: c.toDataURL('image/png'),
+      sketchData: JSON.stringify({ markers: [{ id: 'a', kind: 'bait', x: 0.3, y: 0.3, n: 1, note: '' }, { id: 'b', kind: 'bait', x: 0.6, y: 0.3, n: 2, note: '' }] }),
+    };
+    await win.DB.saveReport(rep);
+    const next = await win.DB.addJob({ name: 'Sketch Carry', address: '31 Sketch St, Camden', jobType: 'termite', recurringFromId: first.id });
+    try {
+      await win.ReportUI.openReview(next.id, 'timber_pest_inspection');
+      await waitFor(() => doc.querySelector('#report-section-list .report-section-item'), 'the report is open');
+      openReportSection(doc, 'Site Sketch (Mud Map)');
+      await waitFor(() => doc.getElementById('sketch-carry-btn'), 'the start-from-last-visit button is offered', 5000);
+      const btn = doc.getElementById('sketch-carry-btn');
+      assert(/Start from last visit's sketch \(12 Nov 2025\)/.test(btn.textContent), `named by its date: ${btn.textContent}`);
+      let saved = await win.DB.getReport(next.id);
+      assert(!saved || !saved.sections.siteSketch || !saved.sections.siteSketch.sketchImage, 'nothing is carried until it is tapped');
+      btn.click();
+      await waitFor(() => !doc.getElementById('sketch-carry-btn'), 'the button goes once used', 5000);
+      assert(/Last visit's sketch/.test(doc.querySelector('.sketch-field .empty-hint').textContent), 'the hint says what is on the pad');
+      doc.getElementById('section-save-btn').click();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'saved');
+      saved = await win.DB.getReport(next.id);
+      assert(String(saved.sections.siteSketch.sketchImage || '').startsWith('data:image/png'), 'the sketch is saved');
+      const markers = JSON.parse(saved.sections.siteSketch.sketchData).markers;
+      assertEqual(markers.length, 2, 'with last visit\'s stations as live markers');
+      assert(markers.every((m) => m.id !== 'a' && m.id !== 'b'), 'under ids of their own');
+      const line = saved.auditLog.find((e) => e.event === 'carried-forward' && e.sectionId === 'siteSketch');
+      assert(line && line.basis === '2025-11-12', 'and the audit trail says which visit it came from');
+      openReportSection(doc, 'Site Sketch (Mud Map)');
+      await waitFor(() => doc.querySelector('.sketch-canvas'), 'reopened');
+      await wait(500);
+      assert(!doc.getElementById('sketch-carry-btn'), 'no offer once this visit has a sketch of its own');
+      doc.getElementById('section-save-btn').click();
+      await waitFor(() => !doc.getElementById('view-report').classList.contains('hidden'), 'closed');
+    } finally {
+      win.hideAllAppViews();
+      await win.DB.deleteJob(next.id);
+      await win.DB.deleteJob(first.id);
+    }
   });
 
   test('Carry forward: the same address is enough, and saving the property section counts as having looked', async () => {
