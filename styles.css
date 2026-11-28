@@ -4041,3 +4041,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 @media (pointer: coarse) {
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: max(16px, 1rem); }
 }
+/* v186: the way out of the inspection that is not Finish. Quiet, under it. */
+.inspection-leave-btn {
+  margin: -6px 16px calc(12px + var(--safe-bottom));
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  text-decoration: underline;
+  min-height: 40px;
+}

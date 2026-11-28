@@ -22,8 +22,14 @@
   const MAX_UNIT_CENTS = 100000000; // $1,000,000.00 per unit
   const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
+  // "$1,234.50" and "-50" (a discount line) are prices; "abc-250" is not.
+  // Stripping every non-digit used to turn it into -250.00 (break-it test,
+  // v186). Only spaces, commas and a dollar sign are tidied away now;
+  // anything else makes it zero.
   function centsFromInput(value) {
-    const n = Number(String(value == null ? '' : value).replace(/[^0-9.\-]/g, ''));
+    const s = String(value == null ? '' : value).replace(/[\s,$]/g, '');
+    if (!/^-?(\d+\.?\d*|\.\d+)$/.test(s)) return 0;
+    const n = Number(s);
     if (!Number.isFinite(n)) return 0;
     return clamp(Math.round(n * 100), -MAX_UNIT_CENTS, MAX_UNIT_CENTS);
   }

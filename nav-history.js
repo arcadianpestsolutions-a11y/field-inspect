@@ -78,12 +78,16 @@
   const openDialog = () => document.querySelector('body > .app-dialog');
   const guardedOpen = () => GUARDED_MODALS.map($).find((m) => m && !m.classList.contains('hidden'));
   const openCloser = () => OVERLAY_CLOSERS.map($).find(shown);
+  // Bottom sheets built on the fly (the booking sheet, paid-by, feedback):
+  // Back cancels the sheet, not the page under it (break-it test, v186: Back
+  // took the job page away and left "Change the booking" floating on Today).
+  const openSheet = () => document.querySelector('body > .tester-feedback');
 
   // Is there something open that a Back press should close?
   function needsSentinel() {
     const view = currentView();
     if (!view) return false;
-    return !ROOT_VIEWS.has(view) || !!openDialog() || !!guardedOpen() || !!openCloser();
+    return !ROOT_VIEWS.has(view) || !!openDialog() || !!openSheet() || !!guardedOpen() || !!openCloser();
   }
 
   // Brings the sentinel in line with what is on screen. Cheap, and safe to call
@@ -121,8 +125,20 @@
         if (cancel) cancel.click();
         return 'closed a dialog';
       }
+      const sheetOpen = openSheet();
+      if (sheetOpen) {
+        const cancel = sheetOpen.querySelector('[data-action$="-cancel"]') || sheetOpen.querySelector('.btn-secondary');
+        if (cancel) cancel.click(); else sheetOpen.remove();
+        return 'closed a sheet';
+      }
       if (guardedOpen()) {
-        if (typeof window.appToast === 'function') window.appToast('Finish or cancel the inspection first.');
+        // Asks before leaving (app.js leaveInspection, v186): a stray Back
+        // must not drop the walk, and a deliberate one must have a way out.
+        if (typeof window.leaveInspection === 'function') {
+          window.leaveInspection();
+          return 'asked: leave the inspection?';
+        }
+        if (typeof window.appToast === 'function') window.appToast('Finish or leave the inspection first.');
         return 'ignored: inspection in progress';
       }
       const closer = openCloser();

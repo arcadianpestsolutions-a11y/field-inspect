@@ -259,7 +259,7 @@
       return;
     }
     const ok = await askConfirm(
-      `${current.name || 'This enquiry'} becomes a job, and the enquiry is kept against it.`,
+      `${String(values.name || current.name || '').trim() || 'This enquiry'} becomes a job, and the enquiry is kept against it.`,
       { title: 'Book it as a job?', okLabel: 'Create the job' }
     );
     if (!ok) return;

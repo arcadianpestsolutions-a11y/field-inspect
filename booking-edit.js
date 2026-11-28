@@ -9,7 +9,8 @@
 // Asks before landing on another job (Scheduler.confirmNoOverlap), and asks
 // before telling the client (BookingNotice), the same as every booking path.
 //
-// EXPOSES: window.BookingEdit = { render, pickTime, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength }
+// EXPOSES: window.BookingEdit = { render, pickTime, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength,
+//   resetNewJobLength, checkWhen, confirmWhen }
 (() => {
   'use strict';
 
@@ -67,11 +68,42 @@
   // The day / start / how-long sheet, shared by Change time on a job and by
   // booking the next visit (v164). onSave(when, mins) resolves true to close
   // the sheet, false to leave it open (a clash the person backed out of).
+  // A booking date a person could not have meant, or one in the past (v186).
+  // The break-it test booked 1 Jan 1901 without a word, and the job then said
+  // "Not booked yet" on one screen and "Missed 1 Jan 1901" on another.
+  // Returns '' when fine, or { refuse } / { ask } with the words to show.
+  function checkWhen(when, nowMs) {
+    const now = typeof nowMs === 'number' ? nowMs : Date.now();
+    if (!Number.isFinite(when)) return { refuse: 'Pick a day.' };
+    const d = new Date(when);
+    const soonest = new Date(now); soonest.setFullYear(soonest.getFullYear() - 1);
+    const latest = new Date(now); latest.setFullYear(latest.getFullYear() + 3);
+    if (when < soonest.getTime() || when > latest.getTime()) {
+      return { refuse: `${d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })} does not look right. Check the year.` };
+    }
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    if (when < today.getTime()) return { ask: 'That day has already gone. Book it in the past anyway (for a visit that already happened)?' };
+    return '';
+  }
+  async function confirmWhen(when) {
+    const c = checkWhen(when);
+    if (!c) return true;
+    if (c.refuse) {
+      if (window.Dialog) await window.Dialog.alert(c.refuse, { title: 'Check the date' });
+      return false;
+    }
+    return window.Dialog ? window.Dialog.confirm(c.ask, { title: 'A day in the past', okLabel: 'Book it anyway', cancelLabel: 'Change the date' }) : true;
+  }
+
   function sheet({ title, sub, base, mins: cur, saveLabel, onSave, onClose, extra }) {
     const overlay = el('div', 'tester-feedback booking-edit');
     overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
     const card = el('div', 'tester-feedback-card');
-    card.appendChild(el('h2', '', title));
+    const heading = el('h2', '', title);
+    heading.id = 'booking-edit-title';
+    overlay.setAttribute('aria-labelledby', heading.id);
+    card.appendChild(heading);
     if (sub) card.appendChild(el('p', 'tester-feedback-sub', sub));
 
     const dateLabel = el('label', 'tester-feedback-label', 'Day');
@@ -124,6 +156,7 @@
       const m = Number(time.value);
       const when = new Date(y, mo - 1, d, Math.floor(m / 60), m % 60, 0, 0).getTime();
       const mins = Number(len.value) || 60;
+      if (!(await confirmWhen(when))) return;
       if (!Number.isFinite(when)) { err.textContent = 'That day does not look right.'; return; }
       save.disabled = true;
       try {
@@ -244,6 +277,6 @@
     if (s) s.value = '60';
   }
 
-  window.BookingEdit = { render, pickTime, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength, resetNewJobLength };
+  window.BookingEdit = { render, pickTime, LENGTHS, lengthLabel, addLengthToNewJobForm, readNewJobLength, resetNewJobLength, checkWhen, confirmWhen };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addLengthToNewJobForm); else addLengthToNewJobForm();
 })();

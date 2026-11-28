@@ -1451,6 +1451,9 @@
       const clear = await window.Scheduler.confirmNoOverlap(null, newScheduledAt, newLength);
       if (!clear) return;
     }
+    // After the clash question: a day in the past or an impossible year (v186).
+    if (newScheduledAt && window.BookingEdit && window.BookingEdit.confirmWhen
+      && !(await window.BookingEdit.confirmWhen(newScheduledAt))) return;
     // A subcontractor starting a job for the business (v166): no client email
     // (the box is hidden, and the server would not keep one), no client
     // record, and nothing is sent to the client. The business sees the job
@@ -2603,6 +2606,48 @@
   };
   finishInspectionBtn.addEventListener('click', finishInspection);
   inspectionFinishBtn.addEventListener('click', finishInspection);
+
+  // A way out that is not "Finish" (v186). The break-it test found the front-
+  // photo step had only Take photo, Gallery and Finish: Back said "finish or
+  // cancel first" with nothing to cancel, so the only exit moved an empty job
+  // to Report review. Leaving keeps every photo and answer (the walk saves as
+  // it goes); Start inspection on the job carries on from the same step.
+  // Built here, not in index.html, so a stale cached page still gets it.
+  let inspectionLeaveBtn = document.getElementById('inspection-leave-btn');
+  if (!inspectionLeaveBtn && inspectionModal) {
+    inspectionLeaveBtn = document.createElement('button');
+    inspectionLeaveBtn.id = 'inspection-leave-btn';
+    inspectionLeaveBtn.type = 'button';
+    inspectionLeaveBtn.className = 'btn btn-secondary inspection-leave-btn';
+    inspectionLeaveBtn.textContent = 'Leave for now';
+    inspectionModal.appendChild(inspectionLeaveBtn);
+  }
+  let leavingInspection = false;
+  async function leaveInspection() {
+    if (leavingInspection || !inspectionModal || inspectionModal.classList.contains('hidden')) return false;
+    leavingInspection = true;
+    try {
+      const ok = await askConfirm(
+        'The photos and answers so far are kept. Tap Start inspection on the job to carry on from this step.',
+        { title: 'Leave the inspection for now?', okLabel: 'Leave for now', cancelLabel: 'Stay' },
+      );
+      if (!ok || inspectionModal.classList.contains('hidden')) return false;
+      const jobId = inspectionActiveJobId || currentJobId;
+      clearInterval(inspectionTimerInterval);
+      inspectionActiveJobId = null;
+      pendingShot = null;
+      showLastPhoto(null);
+      endPhotoWalk();
+      hide(inspectionModal);
+      if (jobId) await showJobView(jobId);
+      toast('Inspection left for now. Your photos are kept.');
+      return true;
+    } finally {
+      leavingInspection = false;
+    }
+  }
+  window.leaveInspection = leaveInspection;
+  if (inspectionLeaveBtn) inspectionLeaveBtn.addEventListener('click', () => leaveInspection());
 
   // ---------- Business details ----------
   // The name, licence number and phone that go on every document. These used

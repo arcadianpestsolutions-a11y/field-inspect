@@ -2759,6 +2759,10 @@
     assertEqual(INV.centsFromInput('1,234.56'), 123456, 'thousands separator');
     assertEqual(INV.centsFromInput(''), 0, 'empty');
     assertEqual(INV.centsFromInput('abc'), 0, 'garbage');
+    assertEqual(INV.centsFromInput('abc-250'), 0, 'letters round a number are not a negative price (break-it test, v186)');
+    assertEqual(INV.centsFromInput('12-3'), 0, 'a dash in the middle is not a number');
+    assertEqual(INV.centsFromInput('-50'), -5000, 'a typed discount line still works');
+    assertEqual(INV.centsFromInput(' $ 1,234.50 '), 123450, 'spaces, commas and a dollar sign are fine');
   });
 
   test('Invoicing: dates are local calendar dates, not UTC instants', () => {
@@ -11473,27 +11477,54 @@
     } finally { await atJobList(win, doc); win.NavHistory.setHistory(null); }
   });
 
-  test('Back button: it will not end an inspection by reflex', async () => {
+  test('Back button: it will not end an inspection by reflex, but it does offer the way out', async () => {
     const win = frame.contentWindow;
     const doc = frame.contentDocument;
     await atJobList(win, doc);
     const rec = historyRecorder();
     win.NavHistory.setHistory(rec);
     const modal = doc.getElementById('inspection-modal');
-    let said = '';
-    const realToast = win.appToast;
-    win.appToast = (m) => { said = m; };
+    let asked = '';
+    const realConfirm = win.confirm;
+    win.confirm = (m) => { asked = m; return false; }; // "Stay"
     try {
       modal.classList.remove('hidden');
       await waitFor(() => rec.pushes === 1, 'a live camera holds an entry too');
-      assertEqual(win.NavHistory.onPop(), 'ignored: inspection in progress');
-      assert(!modal.classList.contains('hidden'), 'the inspection is still running');
-      assert(/inspection/i.test(said), `and it says why: ${said}`);
+      assertEqual(win.NavHistory.onPop(), 'asked: leave the inspection?');
+      await waitFor(() => asked, 'Back asks whether to leave');
+      assert(/Leave the inspection for now\?/.test(asked) && /photos and answers so far are kept/i.test(asked), `and says nothing is lost: ${asked}`);
+      await wait(60);
+      assert(!modal.classList.contains('hidden'), 'answering Stay keeps the inspection running');
       assertEqual(win.NavHistory.hasSentinel(), true, 'the entry is kept, so the next press is caught as well');
     } finally {
-      modal.classList.add('hidden'); win.appToast = realToast;
+      modal.classList.add('hidden'); win.confirm = realConfirm;
       await wait(60); win.NavHistory.setHistory(null);
     }
+  });
+
+  test('Inspection: "Leave for now" gets out of the front-photo step without finishing, and Start carries on', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    const job = await win.DB.addJob({ name: 'Leave Walk Job', address: '3 Exit Rd' });
+    await win.showJobViewById(job.id);
+    await wait(150);
+    const start = doc.getElementById('start-inspection-btn');
+    const realConfirm = win.confirm;
+    win.confirm = () => true;
+    try {
+      start.click();
+      const modal = doc.getElementById('inspection-modal');
+      await waitFor(() => !modal.classList.contains('hidden'), 'the inspection opens');
+      const leave = doc.getElementById('inspection-leave-btn');
+      assert(leave && leave.offsetParent !== null, 'a Leave for now button is on the inspection screen');
+      const r = leave.getBoundingClientRect();
+      assertEqual(doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2), leave, 'and nothing covers it');
+      leave.click();
+      await waitFor(() => modal.classList.contains('hidden'), 'leaving closes the inspection');
+      const after = await win.DB.getJob(job.id);
+      assert(after.status !== 'review', 'the job is NOT moved to report review: ' + after.status);
+      await waitFor(() => navView(doc) === 'view-job', 'back on the job');
+    } finally { win.confirm = realConfirm; }
   });
 
   test('Back button: a Forward press onto the stale entry does not cost a second Back to leave', async () => {
@@ -15440,6 +15471,41 @@
         assert(/adminOnlyDelete\(/.test(src), f + ' asks before deleting');
       }
     } finally { win.Sync = original; win.Dialog = realDialog; }
+  });
+
+  test('Booking: an impossible year is refused, a past day is asked about, and today or later just books (break-it test)', async () => {
+    const win = frame.contentWindow;
+    const B = win.BookingEdit;
+    const now = new Date(2026, 10, 28, 10, 0).getTime();
+    const at = (y, m, d, h = 9) => new Date(y, m, d, h, 0).getTime();
+    assert(B.checkWhen(at(1901, 0, 1), now).refuse, '1 Jan 1901 is refused');
+    assert(/Check the year/.test(B.checkWhen(at(1901, 0, 1), now).refuse), 'and says what to check');
+    assert(B.checkWhen(at(2031, 0, 1), now).refuse, 'five years out is refused');
+    assert(B.checkWhen(at(2026, 10, 27), now).ask, 'yesterday is asked about, not refused (a visit that already happened)');
+    assertEqual(B.checkWhen(at(2026, 10, 28, 7), now), '', 'earlier today is fine');
+    assertEqual(B.checkWhen(at(2026, 11, 2), now), '', 'next week is fine');
+  });
+
+  test('Back button: a bottom sheet (the booking sheet) is closed by Back, and the page under it stays', async () => {
+    const win = frame.contentWindow;
+    const doc = frame.contentDocument;
+    await atJobList(win, doc);
+    const job = await win.DB.addJob({ name: 'Back Sheet Job', address: '4 Sheet St' });
+    await win.showJobViewById(job.id);
+    await wait(150);
+    const sheetEl = doc.createElement('div');
+    sheetEl.className = 'tester-feedback';
+    const cancel = doc.createElement('button');
+    cancel.className = 'btn btn-secondary';
+    cancel.dataset.action = 'probe-cancel';
+    let cancelled = false;
+    cancel.addEventListener('click', () => { cancelled = true; sheetEl.remove(); });
+    sheetEl.appendChild(cancel);
+    doc.body.appendChild(sheetEl);
+    assertEqual(win.NavHistory.handleBack(), 'closed a sheet', 'Back closes the sheet first');
+    assert(cancelled && !sheetEl.isConnected, 'through its own Cancel');
+    assertEqual(navView(doc), 'view-job', 'and the job page under it is still there');
+    await atJobList(win, doc);
   });
 
   test('Security: migration 050 is in the repository with every rule the server now keeps', async () => {
